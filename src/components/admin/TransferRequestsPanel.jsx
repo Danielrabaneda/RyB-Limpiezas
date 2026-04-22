@@ -82,27 +82,49 @@ export default function TransferRequestsPanel({ onActionComplete }) {
         {requests.map(req => (
           <div key={req.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50 transition-colors">
             <div className="flex items-center gap-2 xs:gap-4 flex-1">
-              <div className="flex flex-col items-center min-w-[50px]">
-                <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-lg shadow-inner">👤</div>
-                <div className="text-[10px] font-black text-slate-500 mt-1 truncate max-w-[60px]">{getOpName(req.fromUserId).split(' ')[0]}</div>
-              </div>
-              
-              <div className="text-amber-500 text-xl font-black shrink-0"> » </div>
-              
-              <div className="flex flex-col items-center min-w-[50px]">
-                <div className="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center text-lg shadow-inner">👷</div>
-                <div className="text-[10px] font-black text-blue-500 mt-1 truncate max-w-[60px]">{getOpName(req.toUserId).split(' ')[0]}</div>
-              </div>
+              {req.type === 'date_change' ? (
+                <div className="flex items-center gap-2">
+                  <div className="flex flex-col items-center min-w-[50px]">
+                    <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-lg shadow-inner">📅</div>
+                    <div className="text-[10px] font-black text-slate-500 mt-1 truncate max-w-[60px]">{getOpName(req.userId).split(' ')[0]}</div>
+                  </div>
+                  <div className="flex flex-col items-center px-2">
+                    <div className="text-[10px] text-slate-400 line-through">
+                      {req.oldDate?.toDate ? format(req.oldDate.toDate(), "d MMM", { locale: es }) : ''}
+                    </div>
+                    <div className="text-amber-500 text-lg font-black shrink-0 leading-none"> ↓ </div>
+                    <div className="text-sm font-black text-blue-600">
+                      {req.newDate?.toDate ? format(req.newDate.toDate(), "d MMM", { locale: es }) : ''}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="flex flex-col items-center min-w-[50px]">
+                    <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-lg shadow-inner">👤</div>
+                    <div className="text-[10px] font-black text-slate-500 mt-1 truncate max-w-[60px]">{getOpName(req.fromUserId).split(' ')[0]}</div>
+                  </div>
+                  
+                  <div className="text-amber-500 text-xl font-black shrink-0"> » </div>
+                  
+                  <div className="flex flex-col items-center min-w-[50px]">
+                    <div className="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center text-lg shadow-inner">👷</div>
+                    <div className="text-[10px] font-black text-blue-500 mt-1 truncate max-w-[60px]">{getOpName(req.toUserId).split(' ')[0]}</div>
+                  </div>
+                </>
+              )}
 
               <div className="ml-1 sm:ml-4 flex-1">
                 <div className="font-black text-slate-800 text-sm leading-tight">
-                  {req.type === 'single' ? 'Servicio Individual' : 
-                   req.type === 'day' ? `Día (${req.serviceCount} serv.)` : 
-                   `Semana (${req.serviceCount} serv.)`}
+                  {req.type === 'single' ? 'Traspaso de Servicio' : 
+                   req.type === 'day' ? `Traspaso Día (${req.serviceCount} serv.)` : 
+                   req.type === 'date_change' ? 'Cambio de Fecha' :
+                   `Traspaso Semana (${req.serviceCount} serv.)`}
                 </div>
                 <div className="text-right">
                   <div className="font-bold text-sm">
                     {(() => {
+                      if (req.type === 'date_change') return 'Reprogramación';
                       try {
                         if (req.date?.toDate) return format(req.date.toDate(), "d 'de' MMMM", { locale: es });
                         if (req.startDate?.toDate) return `${format(req.startDate.toDate(), "d/MM")} al ${format(req.endDate.toDate(), "d/MM")}`;

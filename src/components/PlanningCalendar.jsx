@@ -7,8 +7,9 @@ import {
 import { es } from 'date-fns/locale';
 import { getScheduledServicesRange, generateServicesForMonth } from '../services/scheduleService';
 import { getCommunities } from '../services/communityService';
-import { transferService, transferDay, transferWeek } from '../services/transferService';
+import { transferService, transferDay, transferWeek, rescheduleService } from '../services/transferService';
 import TransferModal from './TransferModal';
+import RescheduleModal from './RescheduleModal';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
@@ -23,6 +24,7 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
   
   // Transfer state
   const [transferModal, setTransferModal] = useState({ open: false, type: '', date: null, serviceId: null, fromUserId: null });
+  const [rescheduleModal, setRescheduleModal] = useState({ open: false, serviceId: null, currentDate: null });
   const [actionLoading, setActionLoading] = useState(false);
 
   useEffect(() => {
@@ -116,6 +118,28 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
     } catch (err) {
       console.error(err);
       alert('Error en el traspaso: ' + err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function handleRescheduleConfirm(newDate) {
+    if (!newDate) return;
+    setActionLoading(true);
+    try {
+      const role = isAdmin ? 'admin' : 'operario';
+      await rescheduleService({
+        serviceId: rescheduleModal.serviceId,
+        newDate,
+        requesterRole: role,
+        userId: userId || null
+      });
+      alert(isAdmin ? 'Fecha actualizada con éxito.' : 'Solicitud de cambio de fecha enviada al administrador.');
+      setRescheduleModal({ open: false, serviceId: null, currentDate: null });
+      await loadMonthData();
+    } catch (err) {
+      console.error(err);
+      alert('Error al cambiar fecha: ' + err.message);
     } finally {
       setActionLoading(false);
     }
@@ -314,6 +338,7 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
                         communityName={getCommunityName(s.communityId)} 
                         allTasks={allTasks}
                         onTransfer={() => setTransferModal({ open: true, type: 'single', serviceId: s.id, fromUserId: op.uid })}
+                        onReschedule={() => setRescheduleModal({ open: true, serviceId: s.id, currentDate: s.scheduledDate })}
                         isAdmin={isAdmin}
                       />
                     ))}
@@ -374,6 +399,7 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
                     communityName={getCommunityName(s.communityId)} 
                     allTasks={allTasks}
                     onTransfer={() => setTransferModal({ open: true, type: 'single', serviceId: s.id, fromUserId: userId })}
+                    onReschedule={() => setRescheduleModal({ open: true, serviceId: s.id, currentDate: s.scheduledDate })}
                     isOp 
                     isAdmin={isAdmin}
                   />
@@ -402,6 +428,16 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
             transferModal.type === 'day' ? `Traspasar Día ${format(transferModal.date || new Date(), 'dd/MM')}` :
             'Traspasar Semana Completa'
           }
+        />
+
+        {/* MODAL REPROGRAMAR FECHA */}
+        <RescheduleModal 
+          isOpen={rescheduleModal.open}
+          onClose={() => setRescheduleModal({ open: false, serviceId: null, currentDate: null })}
+          onConfirm={handleRescheduleConfirm}
+          loading={actionLoading}
+          currentDate={rescheduleModal.currentDate}
+          title="Mover de día"
         />
       </div>
 
@@ -567,25 +603,44 @@ function ServiceItem({ service, communityName, isOp = false, onTransfer, isAdmin
           <div className="service-community">{communityName}</div>
           {service.isTransferred && (
             <div className="text-[10px] text-amber-600 font-bold mt-1 uppercase tracking-wider">
-              🔄 Traspasado
+              🔄 Traspasado de usuario
+            </div>
+          )}
+          {service.rescheduleValidated === false && (
+            <div className="text-[10px] text-purple-600 font-bold mt-1 uppercase tracking-wider">
+              📅 Cambio de día pte. validación
             </div>
           )}
         </div>
         {getStatusBadge()}
       </div>
 
-      {(!isCompleted || isAdmin) && (
-        <button 
-          className="btn btn-ghost btn-xs mb-2"
-          onClick={(e) => {
-            e.stopPropagation();
-            onTransfer();
-          }}
-          style={{ color: 'var(--color-primary)', padding: 0 }}
-        >
-          🔄 {isCompleted ? 'Traspasar (Admin)' : 'Traspasar servicio'}
-        </button>
-      )}
+      <div className="flex gap-2 mb-2">
+        {(!isCompleted || isAdmin) && (
+          <button 
+            className="btn btn-ghost btn-xs flex-1"
+            onClick={(e) => {
+              e.stopPropagation();
+              onTransfer();
+            }}
+            style={{ color: 'var(--color-primary)', border: '1px solid var(--color-primary)', fontSize: '10px' }}
+          >
+            🔄 Traspasar
+          </button>
+        )}
+        {(!isCompleted || isAdmin) && (
+          <button 
+            className="btn btn-ghost btn-xs flex-1"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onReschedule) onReschedule();
+            }}
+            style={{ color: 'var(--color-primary)', border: '1px solid var(--color-primary)', fontSize: '10px' }}
+          >
+            📅 Mover día
+          </button>
+        )}
+      </div>
 
       <div className="service-tasks">
         <span className="service-task-chip flex items-center gap-1">📋 {taskName}</span>

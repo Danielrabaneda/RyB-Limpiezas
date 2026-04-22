@@ -94,12 +94,21 @@ function AdminLayout() {
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [globalSettings, setGlobalSettings] = useState(null);
+  const [pendingValidations, setPendingValidations] = useState(0);
 
   useEffect(() => {
     const unsub = onSnapshot(doc(db, 'settings', 'global'), (docSnap) => {
       if (docSnap.exists()) {
         setGlobalSettings(docSnap.data());
       }
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const q = query(collection(db, 'transfers'), where('status', '==', 'pending'));
+    const unsub = onSnapshot(q, (snap) => {
+      setPendingValidations(snap.size);
     });
     return () => unsub();
   }, []);
@@ -147,11 +156,16 @@ function AdminLayout() {
               key={item.path}
               to={item.path}
               end={item.exact}
-              className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}
+              className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''} flex items-center justify-between`}
               onClick={() => setSidebarOpen(false)}
             >
-              <span className="sidebar-link-icon">{item.icon}</span>
-              {item.label}
+              <div className="flex items-center gap-3">
+                <span className="sidebar-link-icon">{item.icon}</span>
+                {item.label}
+              </div>
+              {item.path === '/admin' && pendingValidations > 0 && (
+                <span className="badge bg-amber-500 text-white border-0 text-xs px-2 py-0.5 shadow-sm animate-pulse">{pendingValidations}</span>
+              )}
             </NavLink>
           ))}
         </nav>

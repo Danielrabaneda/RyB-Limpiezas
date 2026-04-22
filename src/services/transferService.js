@@ -6,8 +6,51 @@ import { db } from '../config/firebase';
 import { startOfDay, endOfDay, startOfWeek, endOfWeek } from 'date-fns';
 
 /**
- * Creates a transfer request and updates the services immediately.
+ * Reprograma un servicio a una nueva fecha.
  */
+export async function rescheduleService({ serviceId, newDate, requesterRole, userId }) {
+  const serviceRef = doc(db, 'scheduledServices', serviceId);
+  const serviceSnap = await getDoc(serviceRef);
+  if (!serviceSnap.exists()) throw new Error('Servicio no encontrado');
+  
+  const serviceData = serviceSnap.data();
+  if (requesterRole !== 'admin' && serviceData.status !== 'pending' && serviceData.status !== undefined) {
+    throw new Error('Solo se pueden reprogramar servicios que aún no han comenzado.');
+  }
+
+  const batch = writeBatch(db);
+  const startOfNewDate = startOfDay(newDate);
+  
+  if (requesterRole === 'admin') {
+    batch.update(serviceRef, {
+      scheduledDate: Timestamp.fromDate(startOfNewDate),
+      updatedAt: serverTimestamp()
+    });
+  } else {
+    const transferData = {
+      serviceId,
+      userId,
+      newDate: Timestamp.fromDate(startOfNewDate),
+      oldDate: serviceData.scheduledDate,
+      type: 'date_change',
+      status: 'pending',
+      requestedBy: requesterRole,
+      createdAt: serverTimestamp(),
+    };
+    const transferRef = await addDoc(collection(db, 'transfers'), transferData);
+    
+    batch.update(serviceRef, {
+      scheduledDate: Timestamp.fromDate(startOfNewDate),
+      originalDate: serviceData.scheduledDate,
+      rescheduleId: transferRef.id,
+      rescheduleValidated: false,
+      updatedAt: serverTimestamp()
+    });
+  }
+
+  await batch.commit();
+}
+
 export async function transferService({ serviceId, fromUserId, toUserId, requesterRole }) {
   const serviceRef = doc(db, 'scheduledServices', serviceId);
   const serviceSnap = await getDoc(serviceRef);
@@ -174,15 +217,28 @@ export async function approveTransfer(transferId) {
   const batch = writeBatch(db);
   batch.update(transferRef, { status: 'approved', validatedAt: serverTimestamp() });
 
-  // Update all associated services
-  const q = query(
-    collection(db, 'scheduledServices'),
-    where('transferId', '==', transferId)
-  );
-  const servicesSnap = await getDocs(q);
-  servicesSnap.forEach(d => {
-    batch.update(d.ref, { transferValidated: true });
-  });
+  const data = transferSnap.data();
+
+  if (data.type === 'date_change') {
+    const q = query(
+      collection(db, 'scheduledServices'),
+      where('rescheduleId', '==', transferId)
+    );
+    const servicesSnap = await getDocs(q);
+    servicesSnap.forEach(d => {
+      batch.update(d.ref, { rescheduleValidated: true });
+    });
+  } else {
+    // Update all associated services for user transfer
+    const q = query(
+      collection(db, 'scheduledServices'),
+      where('transferId', '==', transferId)
+    );
+    const servicesSnap = await getDocs(q);
+    servicesSnap.forEach(d => {
+      batch.update(d.ref, { transferValidated: true });
+    });
+  }
 
   await batch.commit();
 }
@@ -197,21 +253,37 @@ export async function rejectTransfer(transferId) {
   
   batch.update(transferRef, { status: 'rejected', validatedAt: serverTimestamp() });
 
-  // Return all associated services to original user
-  const q = query(
-    collection(db, 'scheduledServices'),
-    where('transferId', '==', transferId)
-  );
-  const servicesSnap = await getDocs(q);
-  servicesSnap.forEach(d => {
-    batch.update(d.ref, { 
-      assignedUserId: data.fromUserId,
-      isTransferred: false,
-      transferValidated: false,
-      transferId: null,
-      originalAssignedUserId: null
+  if (data.type === 'date_change') {
+    const q = query(
+      collection(db, 'scheduledServices'),
+      where('rescheduleId', '==', transferId)
+    );
+    const servicesSnap = await getDocs(q);
+    servicesSnap.forEach(d => {
+      batch.update(d.ref, { 
+        scheduledDate: data.oldDate,
+        rescheduleValidated: false,
+        rescheduleId: null,
+        originalDate: null
+      });
     });
-  });
+  } else {
+    // Return all associated services to original user
+    const q = query(
+      collection(db, 'scheduledServices'),
+      where('transferId', '==', transferId)
+    );
+    const servicesSnap = await getDocs(q);
+    servicesSnap.forEach(d => {
+      batch.update(d.ref, { 
+        assignedUserId: data.fromUserId,
+        isTransferred: false,
+        transferValidated: false,
+        transferId: null,
+        originalAssignedUserId: null
+      });
+    });
+  }
 
   await batch.commit();
 }
