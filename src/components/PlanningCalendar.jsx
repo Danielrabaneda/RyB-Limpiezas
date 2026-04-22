@@ -576,7 +576,7 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
   );
 }
 
-function ServiceItem({ service, communityName, isOp = false, onTransfer, isAdmin, allTasks = [] }) {
+function ServiceItem({ service, communityName, isOp = false, onTransfer, onReschedule, isAdmin, allTasks = [] }) {
   const isCompleted = service.status === 'completed';
   const isInProgress = service.status === 'in_progress' || service.status === 'started';
   
