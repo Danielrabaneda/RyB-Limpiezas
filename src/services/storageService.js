@@ -8,7 +8,11 @@ export async function uploadPhoto(file, userId, serviceId) {
   const path = `evidence/${userId}/${serviceId}/${fileName}`;
   const storageRef = ref(storage, path);
   
-  await uploadBytes(storageRef, file);
+  const metadata = {
+    contentType: file.type || 'image/jpeg'
+  };
+  
+  await uploadBytes(storageRef, file, metadata);
   const url = await getDownloadURL(storageRef);
   return url;
 }

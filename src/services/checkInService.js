@@ -100,21 +100,27 @@ export async function deleteCheckIn(id) {
   await deleteDoc(doc(db, 'checkIns', id));
 }
 
-export async function getActiveCheckIn(userId) {
-  // Simplificado para evitar índices compuestos
+export async function getAllOpenCheckIns(userId) {
   const q = query(
     collection(db, 'checkIns'),
     where('userId', '==', userId)
   );
   const snap = await getDocs(q);
-  if (snap.empty) return null;
-  
-  // Buscar el que no tenga checkOutTime
-  const active = snap.docs
+  return snap.docs
     .map(d => ({ id: d.id, ...d.data() }))
-    .find(c => c.checkOutTime === null);
-    
-  return active || null;
+    .filter(c => c.checkOutTime === null);
+}
+
+export async function getActiveCheckIn(userId) {
+  const open = await getAllOpenCheckIns(userId);
+  if (open.length === 0) return null;
+  
+  // Return the most recent one
+  return open.sort((a, b) => {
+    const aTime = a.checkInTime?.toDate ? a.checkInTime.toDate() : new Date(a.checkInTime);
+    const bTime = b.checkInTime?.toDate ? b.checkInTime.toDate() : new Date(b.checkInTime);
+    return bTime - aTime;
+  })[0];
 }
 
 

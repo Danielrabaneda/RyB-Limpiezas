@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getOperarios, toggleUserActive, resetPassword } from '../../services/authService';
+import { getOperarios, toggleUserActive, resetPassword, deleteOperario } from '../../services/authService';
 import { useAuth } from '../../contexts/AuthContext';
 
 export default function OperariosPage() {
@@ -9,6 +9,17 @@ export default function OperariosPage() {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', password: '', phone: '' });
   const [saving, setSaving] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState({ 
+    open: false, 
+    operario: null, 
+    inputName: '',
+    options: {
+      deleteHistory: false,
+      deleteMaterials: false,
+      deleteReports: false
+    }
+  });
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => { loadOperarios(); }, []);
 
@@ -52,6 +63,33 @@ export default function OperariosPage() {
       alert('Email de reset de contraseña enviado a ' + email);
     } catch (err) {
       alert('Error: ' + err.message);
+    }
+  }
+
+  async function handleDeleteOperario() {
+    if (!deleteConfirm.operario) return;
+    const op = deleteConfirm.operario;
+    
+    // Verificar que el nombre coincide
+    if (deleteConfirm.inputName.trim().toLowerCase() !== op.name.trim().toLowerCase()) {
+      alert('El nombre no coincide. Escríbelo exactamente para confirmar.');
+      return;
+    }
+
+    setDeleting(true);
+    try {
+      await deleteOperario(op.uid, deleteConfirm.options);
+      setDeleteConfirm({ 
+        open: false, 
+        operario: null, 
+        inputName: '', 
+        options: { deleteHistory: false, deleteMaterials: false, deleteReports: false } 
+      });
+      await loadOperarios();
+    } catch (err) {
+      alert('Error al eliminar: ' + err.message);
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -104,6 +142,18 @@ export default function OperariosPage() {
                       <button className="btn btn-ghost btn-sm" onClick={() => handleResetPassword(op.email)}>
                         🔑 Reset
                       </button>
+                      <button 
+                        className="btn btn-ghost btn-sm" 
+                        onClick={() => setDeleteConfirm({ 
+                          open: true, 
+                          operario: op, 
+                          inputName: '',
+                          options: { deleteHistory: false, deleteMaterials: false, deleteReports: false }
+                        })}
+                        style={{ color: 'var(--color-danger)' }}
+                      >
+                        🗑️ Eliminar
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -149,6 +199,150 @@ export default function OperariosPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CONFIRMACIÓN DE ELIMINACIÓN */}
+      {deleteConfirm.open && deleteConfirm.operario && (
+        <div className="modal-overlay" onClick={() => setDeleteConfirm({ open: false, operario: null, inputName: '', options: { deleteHistory: false, deleteMaterials: false, deleteReports: false } })}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
+            <div className="modal-header">
+              <h3 className="modal-title" style={{ color: 'var(--color-danger)' }}>⚠️ Eliminar operario</h3>
+              <button className="btn btn-ghost btn-sm" onClick={() => setDeleteConfirm({ open: false, operario: null, inputName: '', options: { deleteHistory: false, deleteMaterials: false, deleteReports: false } })}>✕</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ 
+                background: 'linear-gradient(135deg, #fef2f2, #fee2e2)', 
+                border: '1px solid #fca5a5',
+                borderRadius: 'var(--radius-lg)', 
+                padding: 'var(--space-4)', 
+                marginBottom: 'var(--space-4)' 
+              }}>
+                <p style={{ fontWeight: 700, color: '#991b1b', marginBottom: 'var(--space-2)' }}>
+                  ¿Estás seguro de que quieres eliminar a este operario?
+                </p>
+                <p style={{ fontSize: 'var(--font-sm)', color: '#7f1d1d' }}>
+                  Esta acción <strong>no se puede deshacer</strong>. Se eliminará:
+                </p>
+                <ul style={{ fontSize: 'var(--font-sm)', color: '#7f1d1d', paddingLeft: '1.2rem', marginTop: 'var(--space-2)', lineHeight: 1.8 }}>
+                  <li>El perfil del operario</li>
+                  <li>Sus asignaciones de comunidades</li>
+                  <li>Sus servicios programados pendientes</li>
+                </ul>
+              </div>
+
+              <div style={{ 
+                background: 'var(--bg-subtle)', 
+                borderRadius: 'var(--radius-lg)',
+                padding: 'var(--space-3)',
+                marginBottom: 'var(--space-4)',
+                textAlign: 'center'
+              }}>
+                <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginBottom: 'var(--space-1)' }}>Operario a eliminar:</div>
+                <div style={{ fontSize: 'var(--font-lg)', fontWeight: 800 }}>{deleteConfirm.operario.name}</div>
+                <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>{deleteConfirm.operario.email}</div>
+              </div>
+
+              <div style={{ marginBottom: 'var(--space-5)' }}>
+                <p style={{ fontWeight: 600, fontSize: 'var(--font-sm)', marginBottom: 'var(--space-3)', color: 'var(--text-main)' }}>
+                  Opciones adicionales de borrado:
+                </p>
+                
+                <div className="flex flex-col gap-3">
+                  <label className="flex items-center gap-3 p-3 border rounded-xl cursor-pointer hover:bg-gray-50 transition-colors" style={{ borderColor: 'var(--color-border)' }}>
+                    <input 
+                      type="checkbox" 
+                      checked={deleteConfirm.options.deleteHistory}
+                      onChange={e => setDeleteConfirm(prev => ({
+                        ...prev,
+                        options: { ...prev.options, deleteHistory: e.target.checked }
+                      }))}
+                      style={{ width: 18, height: 18 }}
+                    />
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 'var(--font-sm)' }}>Borrar historial de trabajo</div>
+                      <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>Fichajes, jornadas y registros de km.</div>
+                    </div>
+                  </label>
+
+                  <label className="flex items-center gap-3 p-3 border rounded-xl cursor-pointer hover:bg-gray-50 transition-colors" style={{ borderColor: 'var(--color-border)' }}>
+                    <input 
+                      type="checkbox" 
+                      checked={deleteConfirm.options.deleteMaterials}
+                      onChange={e => setDeleteConfirm(prev => ({
+                        ...prev,
+                        options: { ...prev.options, deleteMaterials: e.target.checked }
+                      }))}
+                      style={{ width: 18, height: 18 }}
+                    />
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 'var(--font-sm)' }}>Borrar solicitudes de materiales</div>
+                      <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>Histórico de pedidos de productos.</div>
+                    </div>
+                  </label>
+
+                  <label className="flex items-center gap-3 p-3 border rounded-xl cursor-pointer hover:bg-gray-50 transition-colors" style={{ borderColor: 'var(--color-border)' }}>
+                    <input 
+                      type="checkbox" 
+                      checked={deleteConfirm.options.deleteReports}
+                      onChange={e => setDeleteConfirm(prev => ({
+                        ...prev,
+                        options: { ...prev.options, deleteReports: e.target.checked }
+                      }))}
+                      style={{ width: 18, height: 18 }}
+                    />
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 'var(--font-sm)' }}>Borrar informes enviados</div>
+                      <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>Incidencias y partes de trabajo.</div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" style={{ fontWeight: 600 }}>
+                  Escribe el nombre del operario para confirmar:
+                </label>
+                <input 
+                  className="form-input" 
+                  placeholder={deleteConfirm.operario.name}
+                  value={deleteConfirm.inputName}
+                  onChange={e => setDeleteConfirm(prev => ({ ...prev, inputName: e.target.value }))}
+                  style={{ 
+                    borderColor: deleteConfirm.inputName.trim().toLowerCase() === deleteConfirm.operario.name.trim().toLowerCase()
+                      ? 'var(--color-danger)' 
+                      : 'var(--color-border)'
+                  }}
+                />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button 
+                className="btn btn-secondary" 
+                onClick={() => setDeleteConfirm({ 
+                  open: false, 
+                  operario: null, 
+                  inputName: '',
+                  options: { deleteHistory: false, deleteMaterials: false, deleteReports: false }
+                })}
+              >
+                Cancelar
+              </button>
+              <button 
+                className="btn" 
+                onClick={handleDeleteOperario}
+                disabled={deleting || deleteConfirm.inputName.trim().toLowerCase() !== deleteConfirm.operario.name.trim().toLowerCase()}
+                style={{ 
+                  background: 'var(--color-danger)', 
+                  color: 'white', 
+                  border: 'none',
+                  opacity: deleteConfirm.inputName.trim().toLowerCase() !== deleteConfirm.operario.name.trim().toLowerCase() ? 0.4 : 1
+                }}
+              >
+                {deleting ? '⏳ Eliminando...' : '🗑️ Eliminar definitivamente'}
+              </button>
+            </div>
           </div>
         </div>
       )}

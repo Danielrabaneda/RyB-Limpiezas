@@ -6,17 +6,22 @@ import { db } from '../config/firebase';
 import { 
   startOfDay, endOfDay, addDays, format, getDay, getDate, getMonth,
   startOfWeek, endOfWeek, eachDayOfInterval, startOfMonth, endOfMonth,
-  isSameDay, getWeekOfMonth, isWithinInterval
+  isSameDay, isSameWeek, getWeekOfMonth, isWithinInterval, lastDayOfMonth
 } from 'date-fns';
 
 // ==================== SCHEDULED SERVICES ====================
 export async function createScheduledService(data) {
+  let scheduledDate = data.scheduledDate;
+  if (!(scheduledDate instanceof Timestamp)) {
+    scheduledDate = Timestamp.fromDate(new Date(scheduledDate));
+  }
+
   const ref = await addDoc(collection(db, 'scheduledServices'), {
     communityId: data.communityId,
     communityTaskId: data.communityTaskId,
-    taskName: data.taskName || '', // Añadido para visibilidad directa
+    taskName: data.taskName || '', 
     assignedUserId: data.assignedUserId,
-    scheduledDate: Timestamp.fromDate(new Date(data.scheduledDate)),
+    scheduledDate,
     flexibleWeek: data.flexibleWeek || false,
     status: 'pending',
     createdAt: serverTimestamp(),
@@ -24,117 +29,280 @@ export async function createScheduledService(data) {
   return { id: ref.id, ...data };
 }
 
-export async function getScheduledServicesForDate(userId, date) {
-  const weekStart = startOfWeek(date, { weekStartsOn: 1 });
-  const startQuery = Timestamp.fromDate(startOfDay(weekStart));
-  const endQuery = Timestamp.fromDate(endOfDay(date));
-
-  console.log(`[Schedule] Buscando servicios para ${userId} desde el inicio de la semana hasta el día ${date.toISOString()}`);
-
+export async function deleteFutureServicesForTask(taskId) {
   try {
-    const q1 = query(
+    const now = Timestamp.fromDate(startOfDay(new Date()));
+    const q = query(
       collection(db, 'scheduledServices'),
-      where('assignedUserId', '==', userId),
-      where('scheduledDate', '>=', startQuery),
-      where('scheduledDate', '<=', endQuery),
-      orderBy('scheduledDate')
+      where('communityTaskId', '==', taskId),
+      where('scheduledDate', '>=', now),
+      where('status', '==', 'pending')
     );
-    const snap1 = await getDocs(q1);
-    const results1 = snap1.docs.map(d => ({ id: d.id, ...d.data() }));
-
-    let results2 = [];
-    try {
-      const q2 = query(
-        collection(db, 'scheduledServices'),
-        where('companionIds', 'array-contains', userId),
-        where('scheduledDate', '>=', startQuery),
-        where('scheduledDate', '<=', endQuery),
-        orderBy('scheduledDate')
-      );
-      const snap2 = await getDocs(q2);
-      results2 = snap2.docs.map(d => ({ id: d.id, ...d.data(), isCompanion: true }));
-    } catch (idxError) {
-      console.warn("[Schedule] Missing composite index for companionIds. Fetching without date filter.", idxError);
-      const q2fallback = query(
-        collection(db, 'scheduledServices'),
-        where('companionIds', 'array-contains', userId)
-      );
-      const snap2 = await getDocs(q2fallback);
-      results2 = snap2.docs.map(d => ({ id: d.id, ...d.data(), isCompanion: true })).filter(svc => {
-        const d = svc.scheduledDate.toDate().getTime();
-        return d >= startQuery.toDate().getTime() && d <= endQuery.toDate().getTime();
-      });
-    }
-
-    // Merge and deduplicate
-    const allResults = [...results1];
-    const existingIds = new Set(results1.map(r => r.id));
-    for (const r2 of results2) {
-      if (!existingIds.has(r2.id)) {
-        allResults.push(r2);
-      }
-    }
-
-    // Sort combined array
-    allResults.sort((a, b) => a.scheduledDate.toDate().getTime() - b.scheduledDate.toDate().getTime());
     
-    // In memory filter:
-    const todayStart = startOfDay(date).getTime();
-    const todayEnd = endOfDay(date).getTime();
+    const snap = await getDocs(q);
+    if (snap.empty) return 0;
+    
+    const batch = writeBatch(db);
+    snap.docs.forEach(d => {
+      batch.delete(d.ref);
+    });
+    
+    await batch.commit();
+    console.log(`[Schedule] Eliminados ${snap.size} servicios futuros pendientes para la tarea ${taskId}`);
+    return snap.size;
+  } catch (error) {
+    console.error('[Schedule] Error eliminando servicios futuros:', error);
+    throw error;
+  }
+}
 
-    const filtered = allResults.filter(svc => {
-      const svcDate = svc.scheduledDate.toDate().getTime();
-      const isToday = svcDate >= todayStart && svcDate <= todayEnd;
+/**
+ * Deletes ALL scheduledServices linked to a task, regardless of status or date.
+ * Use this when permanently removing a task and its full calendar history.
+ */
+export async function deleteAllServicesForTask(taskId) {
+  try {
+    const q = query(
+      collection(db, 'scheduledServices'),
+      where('communityTaskId', '==', taskId)
+    );
+    const snap = await getDocs(q);
+    if (snap.empty) return 0;
+
+    // Process in batches of 490 to stay under Firestore's 500-op limit
+    let batch = writeBatch(db);
+    let count = 0;
+    let total = 0;
+    for (const d of snap.docs) {
+      batch.delete(d.ref);
+      count++;
+      total++;
+      if (count >= 490) {
+        await batch.commit();
+        batch = writeBatch(db);
+        count = 0;
+      }
+    }
+    if (count > 0) await batch.commit();
+    console.log(`[Schedule] Eliminados ${total} servicios (todos) para la tarea ${taskId}`);
+    return total;
+  } catch (error) {
+    console.error('[Schedule] Error eliminando todos los servicios de la tarea:', error);
+    throw error;
+  }
+}
+
+
+export async function getScheduledServicesForDate(userId, date = new Date()) {
+  try {
+    const startOfTarget = startOfDay(date);
+    
+    console.log(`[Schedule] Fetching services for ${userId} on ${format(startOfTarget, 'yyyy-MM-dd')}`);
+
+    // 1. Fetch my own services
+    const qOwn = query(
+      collection(db, 'scheduledServices'),
+      where('assignedUserId', '==', userId)
+    );
+    
+    // 2. Fetch services where I am explicitly listed as companion
+    const qExplicitCompanion = query(
+      collection(db, 'scheduledServices'),
+      where('companionIds', 'array-contains', userId)
+    );
+
+    // 3. Fetch services from workdays where I am/was a companion today
+    const qAllWorkdaysAsCompanion = query(
+      collection(db, 'workdays'),
+      where('currentCompanionId', '==', userId)
+    );
+
+    let results1 = [];
+    let results2 = [];
+    let results3 = [];
+
+    try {
+      const [snapOwn, snapExplicit, snapWorkdays] = await Promise.all([
+        getDocs(qOwn),
+        getDocs(qExplicitCompanion),
+        getDocs(qAllWorkdaysAsCompanion)
+      ]);
+
+      results1 = snapOwn.docs.map(d => ({ id: d.id, ...d.data() }));
+      results2 = snapExplicit.docs.map(d => ({ id: d.id, ...d.data(), isCompanion: true }));
+
+      // Filter workdays to only those of "today"
+      const relevantTitularIds = [...new Set(snapWorkdays.docs
+        .filter(d => {
+          const wdDate = d.data().date?.toDate ? d.data().date.toDate() : new Date(d.data().date);
+          return isSameDay(wdDate, date);
+        })
+        .map(d => d.data().userId)
+      )];
+
+      if (relevantTitularIds.length > 0) {
+        for (const titularId of relevantTitularIds) {
+          const qTitular = query(
+            collection(db, 'scheduledServices'),
+            where('assignedUserId', '==', titularId)
+          );
+          const snapTitular = await getDocs(qTitular);
+          results3.push(...snapTitular.docs.map(d => ({ id: d.id, ...d.data(), isCompanion: true })));
+        }
+      }
+    } catch (err) {
+      console.warn("[Schedule] Primary retrieval failed, attempting fallback:", err.message);
+      const snapFallback = await getDocs(query(collection(db, 'scheduledServices'), where('assignedUserId', '==', userId)));
+      results1 = snapFallback.docs.map(d => ({ id: d.id, ...d.data() }));
+    }
+
+    const uniqueMap = new Map();
+    const allFetched = [...results1, ...results2, ...results3];
+
+    for (const svc of allFetched) {
+      const existing = uniqueMap.get(svc.id);
+      if (!existing) {
+        uniqueMap.set(svc.id, svc);
+      } else {
+        const statusPriority = { 'completed': 3, 'in_progress': 2, 'started': 2, 'pending': 1, 'cancelled': 0 };
+        const currentPrio = statusPriority[svc.status] || 0;
+        const existingPrio = statusPriority[existing.status] || 0;
+        
+        if (currentPrio > existingPrio) {
+          uniqueMap.set(svc.id, svc);
+        } else if (currentPrio === existingPrio && !existing.isCompanion && svc.isCompanion) {
+          uniqueMap.set(svc.id, { ...existing, isCompanion: true });
+        }
+      }
+    }
+
+    const targetDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(date);
+
+    const filtered = Array.from(uniqueMap.values()).filter(svc => {
+      const svcDateRaw = svc.scheduledDate instanceof Timestamp ? svc.scheduledDate.toDate() : new Date(svc.scheduledDate);
       
-      // Check if it was modified (e.g. completed) today
-      const updatedAt = svc.updatedAt?.toDate ? svc.updatedAt.toDate().getTime() : 0;
-      const wasModifiedToday = updatedAt >= todayStart && updatedAt <= todayEnd;
+      // Strict day check with timezone robustness
+      const svcDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(svcDateRaw);
+      const isToday = svcDateStr === targetDateStr;
       
-      // Companion filter: if user is companion, they should only see it if they haven't left or it was today
-      if (svc.companionIds?.includes(userId)) {
-        const myLog = svc.companionLogs?.find(log => log.userId === userId);
-        // If I have left already (leftAt exists), I only see it if it was today (to see summary)
-        if (myLog?.leftAt && !isToday) return false;
-        // If I haven't joined yet (no log) and it's not today, shouldn't see it (unless flexible?)
-        // Actually, companions only see what they are currently on or did today.
-        if (!myLog && !isToday) return false;
+      // Flexible week logic
+      const isFlexiblePending = svc.flexibleWeek && 
+        svc.status === 'pending' && 
+        isSameWeek(svcDateRaw, date, { weekStartsOn: 1 });
+      
+      // Edge case: services completed/started today even if scheduled for another day
+      let wasModifiedToday = false;
+      if (svc.updatedAt) {
+        const updatedDate = svc.updatedAt.toDate ? svc.updatedAt.toDate() : new Date(svc.updatedAt);
+        wasModifiedToday = isSameDay(updatedDate, date);
       }
 
+      const isModifiedToday = wasModifiedToday;
+      const isInProgress = svc.status === 'in_progress';
+      
       if (isToday) return true;
-      
-      // If it was completed or worked on today, show it even if it was scheduled for earlier
-      if (wasModifiedToday && (svc.status === 'completed' || svc.status === 'in_progress')) return true;
+      if (isInProgress) return true; // Always show active services
+      if (isModifiedToday && svc.status === 'completed') return true;
+      if (isFlexiblePending) return true;
 
-      // If it's a flexible task from earlier this week and not completed
-      if (svc.flexibleWeek && svc.status !== 'completed' && svc.status !== 'missed') {
-         return true;
-      }
       return false;
     });
 
-    console.log(`[Schedule] Resultados encontrados hoy o pendientes flexibles: ${filtered.length}`);
+    filtered.sort((a, b) => {
+      const dateA = (a.scheduledDate instanceof Timestamp ? a.scheduledDate.toDate() : new Date(a.scheduledDate));
+      const dateB = (b.scheduledDate instanceof Timestamp ? b.scheduledDate.toDate() : new Date(b.scheduledDate));
+      return dateA.getTime() - dateB.getTime();
+    });
+
+    console.log(`[Schedule] Found ${allFetched.length} raw docs, ${filtered.length} matched for ${format(date, 'yyyy-MM-dd')}`);
     return filtered;
   } catch (error) {
-    console.error(`[Schedule] Error en getScheduledServicesForDate:`, error);
-    throw error;
+    console.error(`[Schedule] Error in getScheduledServicesForDate:`, error);
+    return [];
   }
 }
 
 export async function getScheduledServicesForWeek(userId, date) {
   const weekStart = startOfWeek(date, { weekStartsOn: 1 });
   const weekEnd = endOfWeek(date, { weekStartsOn: 1 });
-  const start = Timestamp.fromDate(startOfDay(weekStart));
-  const end = Timestamp.fromDate(endOfDay(weekEnd));
+  const startRange = startOfDay(weekStart).getTime();
+  const endRange = endOfDay(weekEnd).getTime();
   
-  const q = query(
-    collection(db, 'scheduledServices'),
-    where('assignedUserId', '==', userId),
-    where('scheduledDate', '>=', start),
-    where('scheduledDate', '<=', end),
-    orderBy('scheduledDate')
-  );
-  const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  try {
+    // Fetch everything for these relevant users without date filters to avoid index errors
+    const qOwn = query(collection(db, 'scheduledServices'), where('assignedUserId', '==', userId));
+    const qCompanion = query(collection(db, 'scheduledServices'), where('companionIds', 'array-contains', userId));
+    const qWorkdays = query(
+      collection(db, 'workdays'),
+      where('currentCompanionId', '==', userId),
+      where('status', '==', 'active')
+    );
+
+    const [snapOwn, snapCompanion, snapWorkdays] = await Promise.all([
+      getDocs(qOwn),
+      getDocs(qCompanion),
+      getDocs(qWorkdays)
+    ]);
+
+    const resultsMap = new Map();
+    const allFetched = [...snapOwn.docs, ...snapCompanion.docs];
+    
+    // Add titulars from active workdays
+    if (!snapWorkdays.empty) {
+      for (const wdDoc of snapWorkdays.docs) {
+        const titularId = wdDoc.data().userId;
+        const qTitular = query(collection(db, 'scheduledServices'), where('assignedUserId', '==', titularId));
+        const snapTitular = await getDocs(qTitular);
+        allFetched.push(...snapTitular.docs);
+      }
+    }
+
+    allFetched.forEach(d => {
+      const svc = { id: d.id, ...d.data() };
+      const svcDateRaw = svc.scheduledDate instanceof Timestamp ? svc.scheduledDate.toDate() : new Date(svc.scheduledDate);
+      const svcTime = svcDateRaw.getTime();
+
+      // Check range in memory
+      if (svcTime < startRange || svcTime > endRange) return;
+
+      const svcDateStr = format(svcDateRaw, 'yyyy-MM-dd');
+      const existing = Array.from(resultsMap.values()).find(s => {
+        const sDate = s.scheduledDate instanceof Timestamp ? s.scheduledDate.toDate() : new Date(s.scheduledDate);
+        const sDateStr = format(sDate, 'yyyy-MM-dd');
+        return sDateStr === svcDateStr && s.communityId === svc.communityId && s.communityTaskId === svc.communityTaskId;
+      });
+
+      if (!existing) {
+        resultsMap.set(svc.id, svc);
+      } else {
+        const statusPriority = { 'completed': 3, 'in_progress': 2, 'started': 2, 'pending': 1 };
+        if ((statusPriority[svc.status] || 0) > (statusPriority[existing.status] || 0)) {
+          resultsMap.delete(existing.id);
+          resultsMap.set(svc.id, svc);
+        }
+      }
+    });
+
+    const allServices = Array.from(resultsMap.values());
+    allServices.sort((a, b) => {
+      const timeA = (a.scheduledDate instanceof Timestamp ? a.scheduledDate.toDate() : new Date(a.scheduledDate)).getTime();
+      const timeB = (b.scheduledDate instanceof Timestamp ? b.scheduledDate.toDate() : new Date(b.scheduledDate)).getTime();
+      return timeA - timeB;
+    });
+    return allServices;;
+  } catch (error) {
+    console.error("Error in getScheduledServicesForWeek:", error);
+    // Fallback to basic query if complex fails or for simplicity
+    const q = query(
+      collection(db, 'scheduledServices'),
+      where('assignedUserId', '==', userId),
+      where('scheduledDate', '>=', start),
+      where('scheduledDate', '<=', end),
+      orderBy('scheduledDate')
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  }
 }
 
 export async function getScheduledServicesRange(startDate, endDate, filters = {}) {
@@ -194,10 +362,99 @@ export async function deleteScheduledServicesByCommunity(communityId) {
   return snap.size;
 }
 
+export async function deleteFutureServicesForUserInCommunity(userId, communityId) {
+  try {
+    const now = Timestamp.fromDate(startOfDay(new Date()));
+    const q = query(
+      collection(db, 'scheduledServices'),
+      where('assignedUserId', '==', userId),
+      where('communityId', '==', communityId),
+      where('scheduledDate', '>=', now),
+      where('status', '==', 'pending')
+    );
+    
+    const snap = await getDocs(q);
+    if (snap.empty) return 0;
+    
+    const batch = writeBatch(db);
+    snap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+    console.log(`[Schedule] Eliminados ${snap.size} servicios futuros para el usuario ${userId} en comunidad ${communityId}`);
+    return snap.size;
+  } catch (error) {
+    console.error('[Schedule] Error eliminando servicios por usuario:', error);
+    throw error;
+  }
+}
+
+// ==================== CLEANUP DUPLICATES ====================
+/**
+ * Finds and removes duplicate scheduledServices documents.
+ * A duplicate is defined as two docs with the same (communityTaskId, assignedUserId, date).
+ * When duplicates are found, the one with a non-pending status is kept (already worked);
+ * if both are pending, the oldest (by createdAt) is kept.
+ * Returns the number of deleted documents.
+ */
+export async function cleanupDuplicateScheduledServices() {
+  console.log('[Cleanup] Buscando servicios duplicados...');
+  const snap = await getDocs(collection(db, 'scheduledServices'));
+  const docs = snap.docs.map(d => ({ id: d.id, ref: d.ref, ...d.data() }));
+  console.log(`[Cleanup] Total documentos: ${docs.length}`);
+
+  // Group by unique key
+  const groups = {};
+  for (const svc of docs) {
+    const dateObj = svc.scheduledDate?.toDate ? svc.scheduledDate.toDate() : new Date(svc.scheduledDate);
+    const dateStr = format(dateObj, 'yyyy-MM-dd');
+    const key = `${svc.communityTaskId}_${svc.assignedUserId}_${dateStr}`;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(svc);
+  }
+
+  const duplicateGroups = Object.entries(groups).filter(([, svcs]) => svcs.length > 1);
+  console.log(`[Cleanup] Grupos con duplicados: ${duplicateGroups.length}`);
+
+  let totalDeleted = 0;
+  let batch = writeBatch(db);
+  let batchCount = 0;
+
+  for (const [key, svcs] of duplicateGroups) {
+    // Sort: non-pending first (already worked), then by createdAt asc (oldest first)
+    const sorted = [...svcs].sort((a, b) => {
+      const aWorked = a.status !== 'pending' ? 0 : 1;
+      const bWorked = b.status !== 'pending' ? 0 : 1;
+      if (aWorked !== bWorked) return aWorked - bWorked;
+      const aTime = a.createdAt?.toDate?.()?.getTime() || 0;
+      const bTime = b.createdAt?.toDate?.()?.getTime() || 0;
+      return aTime - bTime;
+    });
+
+    const [keep, ...toDelete] = sorted;
+    console.log(`[Cleanup] Conservando ${keep.id} (${keep.status}), eliminando ${toDelete.length} duplicado(s) para clave: ${key}`);
+
+    for (const del of toDelete) {
+      batch.delete(del.ref);
+      batchCount++;
+      totalDeleted++;
+      // Firestore batch limit is 500 operations
+      if (batchCount >= 490) {
+        await batch.commit();
+        batch = writeBatch(db);
+        batchCount = 0;
+      }
+    }
+  }
+
+  if (batchCount > 0) await batch.commit();
+  console.log(`[Cleanup] Limpieza completada. ${totalDeleted} duplicados eliminados.`);
+  return totalDeleted;
+}
+
 // ==================== GENERATE SERVICES ====================
 /**
  * Generates services for a specific date range
  */
+
 export async function generateServicesForRange(startDate, endDate) {
   try {
     const days = eachDayOfInterval({ start: startOfDay(startDate), end: startOfDay(endDate) });
@@ -315,7 +572,9 @@ export async function generateServicesForTask(taskId, startDate = new Date(), en
     const existingKeys = new Set(existingSnap.docs.map(doc => {
       const data = doc.data();
       const date = data.scheduledDate.toDate ? data.scheduledDate.toDate() : new Date(data.scheduledDate);
-      return `${data.assignedUserId}_${format(date, 'yyyy-MM-dd')}`;
+      // IMPORTANT: include communityTaskId in key (same format as generateServicesForRange)
+      // to avoid blocking creation of a second task from the same community on the same day
+      return `${data.communityTaskId}_${data.assignedUserId}_${format(date, 'yyyy-MM-dd')}`;
     }));
 
     let createdCount = 0;
@@ -326,7 +585,7 @@ export async function generateServicesForTask(taskId, startDate = new Date(), en
       const dayStr = format(day, 'yyyy-MM-dd');
 
       for (const target of targetUsers) {
-        const key = `${target.userId}_${dayStr}`;
+        const key = `${task.id}_${target.userId}_${dayStr}`;
         if (existingKeys.has(key)) continue;
 
         await createScheduledService({
@@ -334,11 +593,11 @@ export async function generateServicesForTask(taskId, startDate = new Date(), en
           communityTaskId: task.id,
           taskName: task.taskName,
           assignedUserId: target.userId,
-          scheduledDate: startOfDay(day).toISOString(),
+          scheduledDate: Timestamp.fromDate(startOfDay(day)),
           flexibleWeek: task.flexibleWeek || false,
         });
         createdCount++;
-        existingKeys.add(key);
+        existingKeys.add(key); // key already includes task.id
       }
     }
     return createdCount;
@@ -362,7 +621,7 @@ export async function generateServicesForDays(daysAhead = 14) {
   return generateServicesForRange(new Date(), addDays(new Date(), daysAhead));
 }
 
-function shouldScheduleOnDay(task, date) {
+export function shouldScheduleOnDay(task, date) {
   const dayOfWeek = getDay(date); // 0=Sunday, 1=Monday...
   const dayOfMonth = getDate(date);
   const currentMonthIdx = getMonth(date); // 0-11
@@ -392,14 +651,21 @@ function shouldScheduleOnDay(task, date) {
 
   // 3. Month and Week Filters
   // Filter by Month of Year if specified (task.monthOfYear is 0-indexed: 0-11)
-  if (task.monthOfYear !== undefined && task.monthOfYear !== null) {
+  if (task.monthOfYear !== undefined && task.monthOfYear !== null && task.monthOfYear !== '') {
     if (currentMonthIdx !== parseInt(task.monthOfYear)) return false;
   }
 
   // Filter by Week of Month if specified
   if (task.weekOfMonth) {
     const weekNum = getWeekOfMonth(date, { weekStartsOn: 1 });
-    if (weekNum !== parseInt(task.weekOfMonth)) return false;
+    if (parseInt(task.weekOfMonth) === 5) {
+      // 5 significa "Última semana"
+      const lastDay = lastDayOfMonth(date);
+      const lastWeekNum = getWeekOfMonth(lastDay, { weekStartsOn: 1 });
+      if (weekNum !== lastWeekNum) return false;
+    } else {
+      if (weekNum !== parseInt(task.weekOfMonth)) return false;
+    }
   }
 
   if (task.flexibleWeek) {
@@ -434,6 +700,19 @@ function shouldScheduleOnDay(task, date) {
   }
 
   // 4. Frequency Logic (Only for period or periodic modes)
+  
+  const isDefaultDay = () => {
+    if (task.weekOfMonth) {
+      const mon = startOfWeek(date, { weekStartsOn: 1 });
+      let anchorDate = mon;
+      if (getMonth(mon) !== currentMonthIdx) {
+        anchorDate = new Date(date.getFullYear(), currentMonthIdx, 1);
+      }
+      return isSameDay(date, anchorDate);
+    }
+    return dayOfMonth === 1;
+  };
+
   switch (task.frequencyType) {
     case 'weekly':
       // Schedule on specified weekDays (1=Lun, 2=Mar, etc.)
@@ -463,35 +742,34 @@ function shouldScheduleOnDay(task, date) {
       if (task.monthDays && task.monthDays.length > 0) {
         return task.monthDays.includes(dayOfMonth);
       }
-      // Default: 1st of month
-      return dayOfMonth === 1;
+      return isDefaultDay();
 
     case 'bimonthly': 
       if (taskStart) {
         const monthDiff = (date.getFullYear() - taskStart.getFullYear()) * 12 + (date.getMonth() - taskStart.getMonth());
         if (monthDiff % 2 !== 0) return false;
       } else if (currentMonth % 2 === 0) return false;
-      return task.monthDays?.length > 0 ? task.monthDays.includes(dayOfMonth) : dayOfMonth === 1;
+      return task.monthDays?.length > 0 ? task.monthDays.includes(dayOfMonth) : isDefaultDay();
 
     case 'trimonthly':
       if (taskStart) {
         const monthDiff = (date.getFullYear() - taskStart.getFullYear()) * 12 + (date.getMonth() - taskStart.getMonth());
         if (monthDiff % 3 !== 0) return false;
       } else if (currentMonth % 3 !== 0) return false;
-      return task.monthDays?.length > 0 ? task.monthDays.includes(dayOfMonth) : dayOfMonth === 1;
+      return task.monthDays?.length > 0 ? task.monthDays.includes(dayOfMonth) : isDefaultDay();
 
     case 'semiannual':
       if (taskStart) {
         const monthDiff = (date.getFullYear() - taskStart.getFullYear()) * 12 + (date.getMonth() - taskStart.getMonth());
         if (monthDiff % 6 !== 0) return false;
       } else if (currentMonth % 6 !== 0) return false;
-      return task.monthDays?.length > 0 ? task.monthDays.includes(dayOfMonth) : dayOfMonth === 1;
+      return task.monthDays?.length > 0 ? task.monthDays.includes(dayOfMonth) : isDefaultDay();
 
     case 'annual':
       if (taskStart) {
         if (date.getMonth() !== taskStart.getMonth()) return false;
       } else if (currentMonth !== 1) return false;
-      return task.monthDays?.length > 0 ? task.monthDays.includes(dayOfMonth) : dayOfMonth === 1;
+      return task.monthDays?.length > 0 ? task.monthDays.includes(dayOfMonth) : isDefaultDay();
       
     case 'custom':
       // Custom freq: frequencyValue times per month

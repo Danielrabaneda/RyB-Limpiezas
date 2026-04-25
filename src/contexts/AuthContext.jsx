@@ -73,16 +73,36 @@ export function AuthProvider({ children }) {
   }
 
   useEffect(() => {
+    // Safety timeout to prevent startup hangs
+    const safetyTimer = setTimeout(() => {
+      setLoading(prev => {
+        if (prev) {
+          console.warn('AuthContext safety timeout reached - forcing loading to false');
+          return false;
+        }
+        return prev;
+      });
+    }, 10000); // 10 seconds
+
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      console.log('Auth state changed:', user ? 'Logged in' : 'Logged out');
       setCurrentUser(user);
       if (user) {
-        await fetchUserProfile(user.uid);
+        try {
+          await fetchUserProfile(user.uid);
+        } catch (err) {
+          console.error('Error fetching user profile during init:', err);
+        }
       } else {
         setUserProfile(null);
       }
       setLoading(false);
+      clearTimeout(safetyTimer);
     });
-    return unsubscribe;
+    return () => {
+      unsubscribe();
+      clearTimeout(safetyTimer);
+    };
   }, []);
 
   const value = {

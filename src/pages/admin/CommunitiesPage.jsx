@@ -1,12 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
 import { getCommunities, createCommunity, updateCommunity, deleteCommunity } from '../../services/communityService';
-import { getCommunityTasks, createCommunityTask, deleteCommunityTask } from '../../services/taskService';
+import { getCommunityTasks, createCommunityTask, updateCommunityTask, deleteCommunityTask } from '../../services/taskService';
 import { getAssignmentsForCommunity, createAssignment, deleteAssignment } from '../../services/taskService';
 import { getOperarios } from '../../services/authService';
-import { generateServicesForTask } from '../../services/scheduleService';
+import { generateServicesForTask, deleteAllServicesForTask } from '../../services/scheduleService';
 import { format } from 'date-fns';
+import { transferPermanent } from '../../services/transferService';
+import { useAuth } from '../../contexts/AuthContext';
+import TransferModal from '../../components/TransferModal';
 
 export default function CommunitiesPage() {
+  const { userProfile } = useAuth();
   const [communities, setCommunities] = useState([]);
   const [operarios, setOperarios] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -14,9 +18,12 @@ export default function CommunitiesPage() {
   const [editingCommunity, setEditingCommunity] = useState(null);
   const [selectedCommunity, setSelectedCommunity] = useState(null);
   const [communityTasks, setCommunityTasks] = useState([]);
+  const [reassignModal, setReassignModal] = useState({ open: false, task: null });
+  const [actionLoading, setActionLoading] = useState(false);
   const [assignments, setAssignments] = useState([]);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
+  const [editingTask, setEditingTask] = useState(null); // null = create mode, task = edit mode
 
   // Form state
   const [form, setForm] = useState({
@@ -186,37 +193,67 @@ export default function CommunitiesPage() {
     await loadData();
   }
 
-  async function handleAddTask(e) {
-    e.preventDefault();
-    try {
-      const newTask = await createCommunityTask({
-        communityId: selectedCommunity.id,
-        taskName: taskForm.taskName,
-        assignedUserId: taskForm.assignedUserId || null,
-        frequencyValue: parseInt(taskForm.frequencyValue) || 1,
-        weekDays: taskForm.weekDays,
-        monthDays: taskForm.monthDays.map(Number),
-        frequencyType: taskForm.serviceMode === 'once' ? 'once' : (taskForm.serviceMode === 'range' ? 'range' : taskForm.frequencyType),
-        punctualDate: taskForm.serviceMode === 'once' ? taskForm.punctualDate : null,
-        startDate: taskForm.startDate || null,
-        endDate: taskForm.endDate || null,
-        weekOfMonth: taskForm.weekOfMonth ? parseInt(taskForm.weekOfMonth) : null,
-        monthOfYear: taskForm.monthOfYear !== '' ? parseInt(taskForm.monthOfYear) : null,
-        serviceMode: taskForm.serviceMode || 'periodic',
-        flexibleWeek: taskForm.flexibleWeek || false,
-      });
+  function openEditTaskModal(task) {
+    setEditingTask(task);
+    setTaskForm({
+      taskName: task.taskName || '',
+      frequencyType: task.frequencyType || 'weekly',
+      frequencyValue: task.frequencyValue || 1,
+      weekDays: task.weekDays || [],
+      monthDays: task.monthDays || [],
+      serviceMode: task.serviceMode || 'periodic',
+      punctualDate: task.punctualDate ? (typeof task.punctualDate === 'string' ? task.punctualDate : format(task.punctualDate.toDate?.() || new Date(task.punctualDate), 'yyyy-MM-dd')) : format(new Date(), 'yyyy-MM-dd'),
+      startDate: task.startDate ? (typeof task.startDate === 'string' ? task.startDate : format(task.startDate.toDate?.() || new Date(task.startDate), 'yyyy-MM-dd')) : '',
+      endDate: task.endDate ? (typeof task.endDate === 'string' ? task.endDate : format(task.endDate.toDate?.() || new Date(task.endDate), 'yyyy-MM-dd')) : '',
+      weekOfMonth: task.weekOfMonth != null ? String(task.weekOfMonth) : '',
+      monthOfYear: task.monthOfYear != null ? String(task.monthOfYear) : '',
+      assignedUserId: task.assignedUserId || '',
+      flexibleWeek: task.flexibleWeek || false,
+    });
+    setShowTaskModal(true);
+  }
 
-      // Generar servicios inmediatamente para esta tarea
-      if (newTask?.id) {
-        await generateServicesForTask(newTask.id);
+  function openCreateTaskModal() {
+    setEditingTask(null);
+    setTaskForm({
+      taskName: '', frequencyType: 'weekly', frequencyValue: 1, weekDays: [], monthDays: [],
+      serviceMode: 'periodic', punctualDate: format(new Date(), 'yyyy-MM-dd'),
+      startDate: '', endDate: '', weekOfMonth: '', monthOfYear: '', assignedUserId: '', flexibleWeek: false,
+    });
+    setShowTaskModal(true);
+  }
+
+  async function handleSaveTask(e) {
+    e.preventDefault();
+    const taskData = {
+      communityId: selectedCommunity.id,
+      taskName: taskForm.taskName,
+      assignedUserId: taskForm.assignedUserId || null,
+      frequencyValue: parseInt(taskForm.frequencyValue) || 1,
+      weekDays: taskForm.weekDays,
+      monthDays: taskForm.monthDays.map(Number),
+      frequencyType: taskForm.serviceMode === 'once' ? 'once' : (taskForm.serviceMode === 'range' ? 'range' : taskForm.frequencyType),
+      punctualDate: taskForm.serviceMode === 'once' ? taskForm.punctualDate : null,
+      startDate: taskForm.startDate || null,
+      endDate: taskForm.endDate || null,
+      weekOfMonth: taskForm.weekOfMonth ? parseInt(taskForm.weekOfMonth) : null,
+      monthOfYear: taskForm.monthOfYear !== '' ? parseInt(taskForm.monthOfYear) : null,
+      serviceMode: taskForm.serviceMode || 'periodic',
+      flexibleWeek: taskForm.flexibleWeek || false,
+    };
+
+    try {
+      if (editingTask) {
+        // UPDATE existing task — regenerates future services automatically inside updateCommunityTask
+        await updateCommunityTask(editingTask.id, taskData);
+      } else {
+        // CREATE new task + generate services
+        const newTask = await createCommunityTask(taskData);
+        if (newTask?.id) await generateServicesForTask(newTask.id);
       }
 
       setShowTaskModal(false);
-      setTaskForm({ 
-        taskName: '', frequencyType: 'weekly', frequencyValue: 1, weekDays: [], monthDays: [], 
-        serviceMode: 'periodic', punctualDate: format(new Date(), 'yyyy-MM-dd'),
-        startDate: '', endDate: '', weekOfMonth: '', monthOfYear: '', assignedUserId: '', flexibleWeek: false 
-      });
+      setEditingTask(null);
       const tasks = await getCommunityTasks(selectedCommunity.id);
       setCommunityTasks(tasks);
     } catch (err) {
@@ -224,11 +261,65 @@ export default function CommunitiesPage() {
     }
   }
 
-  async function handleRemoveTask(taskId) {
-    await deleteCommunityTask(taskId);
-    const tasks = await getCommunityTasks(selectedCommunity.id);
-    setCommunityTasks(tasks);
+  async function handleRemoveTask(task) {
+    // Step 1: choose deletion mode
+    const deleteAll = window.confirm(
+      `¿Eliminar la tarea "${task.taskName}"?\n\n` +
+      `• ACEPTAR → Eliminar tarea + TODO el historial de servicios\n` +
+      `• CANCELAR → Ir al siguiente paso para eliminar solo futuros`
+    );
+
+    if (!deleteAll) {
+      // Step 1b: user chose "only future" path — ask one final confirmation
+      const confirmFuture = window.confirm(
+        `Se eliminarán solo los servicios FUTUROS PENDIENTES de "${task.taskName}" y se desactivará la tarea.\n\n¿Confirmar?`
+      );
+      if (!confirmFuture) return;
+    } else {
+      // Safety confirm before wiping all history
+      const confirmAll = window.confirm(
+        `⚠️ ATENCIÓN: Se borrarán PERMANENTEMENTE todos los registros históricos de "${task.taskName}" (servicios completados incluidos).\n\n¿Estás seguro?`
+      );
+      if (!confirmAll) return;
+    }
+
+
+    try {
+      if (deleteAll) {
+        await deleteAllServicesForTask(task.id);
+      }
+      await deleteCommunityTask(task.id);
+      const tasks = await getCommunityTasks(selectedCommunity.id);
+      setCommunityTasks(tasks);
+    } catch (err) {
+      alert('Error al eliminar: ' + err.message);
+    }
   }
+
+  const handlePermanentReassign = async (toUserId) => {
+    if (!toUserId || !reassignModal.task) return;
+    setActionLoading(true);
+    try {
+      await transferPermanent({
+        communityTaskId: reassignModal.task.id,
+        fromUserId: reassignModal.task.assignedUserId,
+        toUserId,
+        adminUserId: userProfile.uid
+      });
+      
+      alert('Tarea reasignada permanentemente. Se han regenerado los servicios futuros.');
+      setReassignModal({ open: false, task: null });
+      // Refresh tasks
+      const tasks = await getCommunityTasks(selectedCommunity.id);
+      setCommunityTasks(tasks);
+    } catch (err) {
+      alert('Error en reasignación: ' + err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+
 
   async function handleAssignOperario(e) {
     e.preventDefault();
@@ -390,7 +481,7 @@ export default function CommunitiesPage() {
             <div className="card">
               <div className="card-header">
                 <h3 className="card-title">📋 Tareas configuradas</h3>
-                <button className="btn btn-primary btn-sm" onClick={() => setShowTaskModal(true)}>➕ Añadir</button>
+                <button className="btn btn-primary btn-sm" onClick={openCreateTaskModal}>➕ Añadir</button>
               </div>
               {communityTasks.length === 0 ? (
                 <p className="text-muted text-sm">No hay tareas configuradas</p>
@@ -415,7 +506,26 @@ export default function CommunitiesPage() {
                           {task.startDate && task.frequencyType !== 'range' && task.frequencyType !== 'once' && ` (Inicia: ${safeFormat(task.startDate, 'MM/yyyy')})`}
                         </div>
                       </div>
-                      <button className="btn btn-ghost btn-sm" onClick={() => handleRemoveTask(task.id)}>✕</button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          title="Reasignar permanentemente"
+                          onClick={() => setReassignModal({ open: true, task })}
+                          style={{ fontSize: '0.8rem' }}
+                        >🔁</button>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          title="Editar tarea"
+                          onClick={() => openEditTaskModal(task)}
+                          style={{ fontSize: '0.8rem' }}
+                        >✏️</button>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          title="Eliminar tarea"
+                          onClick={() => handleRemoveTask(task)}
+                          style={{ color: '#dc2626', fontSize: '0.8rem' }}
+                        >🗑️</button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -574,10 +684,10 @@ export default function CommunitiesPage() {
         <div className="modal-overlay" onClick={() => setShowTaskModal(false)}>
           <div className="modal" style={{ maxWidth: '600px' }} onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h3 className="modal-title">Añadir tarea</h3>
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowTaskModal(false)}>✕</button>
+              <h3 className="modal-title">{editingTask ? '✏️ Editar tarea' : '➕ Nueva tarea'}</h3>
+              <button className="btn btn-ghost btn-sm" onClick={() => { setShowTaskModal(false); setEditingTask(null); }}>✕</button>
             </div>
-            <form onSubmit={handleAddTask}>
+            <form onSubmit={handleSaveTask}>
               <div className="modal-body">
                 <div className="form-group">
                   <label className="form-label">Nombre de la tarea</label>
@@ -753,8 +863,8 @@ export default function CommunitiesPage() {
                 )}
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowTaskModal(false)}>Cancelar</button>
-                <button type="submit" className="btn btn-primary">Guardar tarea</button>
+                <button type="button" className="btn btn-secondary" onClick={() => { setShowTaskModal(false); setEditingTask(null); }}>Cancelar</button>
+                <button type="submit" className="btn btn-primary">{editingTask ? 'Guardar cambios' : 'Crear tarea'}</button>
               </div>
             </form>
           </div>
@@ -789,6 +899,16 @@ export default function CommunitiesPage() {
           </div>
         </div>
       )}
+
+      {/* Modal: Permanent Reassign */}
+      <TransferModal
+        isOpen={reassignModal.open}
+        onClose={() => setReassignModal({ open: false, task: null })}
+        onConfirm={handlePermanentReassign}
+        loading={actionLoading}
+        title={`Reasignar PERMANENTEMENTE: ${reassignModal.task?.taskName}`}
+        excludeUserId={reassignModal.task?.assignedUserId}
+      />
     </div>
   );
 }

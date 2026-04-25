@@ -3,8 +3,8 @@ import {
   query, where, orderBy, serverTimestamp
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { generateServicesForTask, generateServicesForRange } from './scheduleService';
-import { startOfMonth, endOfMonth } from 'date-fns';
+import { generateServicesForTask, generateServicesForRange, deleteFutureServicesForTask, deleteFutureServicesForUserInCommunity } from './scheduleService';
+import { startOfMonth, endOfMonth, addDays } from 'date-fns';
 
 // ==================== TASK TEMPLATES ====================
 export async function createTaskTemplate(data) {
@@ -69,11 +69,32 @@ export async function getCommunityTasks(communityId) {
 
 export async function updateCommunityTask(id, data) {
   await updateDoc(doc(db, 'communityTasks', id), { ...data, updatedAt: serverTimestamp() });
-  // Optionally re-generate? Probably better to do it manually if frequency changes.
+  
+  // Clean up future pending services and regenerate them with new settings
+  try {
+    await deleteFutureServicesForTask(id);
+    
+    // Fetch the updated task to regenerate services
+    const updatedTaskSnap = await getDoc(doc(db, 'communityTasks', id));
+    if (updatedTaskSnap.exists() && updatedTaskSnap.data().active !== false) {
+      const updatedTask = { id: updatedTaskSnap.id, ...updatedTaskSnap.data() };
+      const start = startOfMonth(new Date());
+      const end = endOfMonth(addDays(new Date(), 45)); // Generate for next month and a half
+      await generateServicesForTask(updatedTask, start, end);
+    }
+  } catch (err) {
+    console.error('Error updating services for modified task:', err);
+  }
 }
 
 export async function deleteCommunityTask(id) {
-  await updateDoc(doc(db, 'communityTasks', id), { active: false });
+  await updateDoc(doc(db, 'communityTasks', id), { active: false, updatedAt: serverTimestamp() });
+  // Clean up future pending services to avoid duplicates or residues
+  try {
+    await deleteFutureServicesForTask(id);
+  } catch (err) {
+    console.error('Error cleaning up services for deleted task:', err);
+  }
 }
 
 // ==================== ASSIGNMENTS ====================
@@ -118,5 +139,15 @@ export async function getAssignmentsForUser(userId) {
 }
 
 export async function deleteAssignment(id) {
-  await updateDoc(doc(db, 'assignments', id), { active: false });
+  try {
+    const snap = await getDoc(doc(db, 'assignments', id));
+    if (snap.exists()) {
+      const { userId, communityId } = snap.data();
+      await updateDoc(doc(db, 'assignments', id), { active: false, updatedAt: serverTimestamp() });
+      await deleteFutureServicesForUserInCommunity(userId, communityId);
+    }
+  } catch (err) {
+    console.error('Error deleting assignment and cleaning services:', err);
+    await updateDoc(doc(db, 'assignments', id), { active: false });
+  }
 }

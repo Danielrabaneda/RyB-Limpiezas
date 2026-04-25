@@ -5,7 +5,7 @@ import { getCommunities } from '../../services/communityService';
 import { getOperarios } from '../../services/authService';
 import { getScheduledServicesRange } from '../../services/scheduleService';
 import { getCheckInsRange } from '../../services/checkInService';
-import { generateServicesForDays, generateServicesForRange } from '../../services/scheduleService';
+import { generateServicesForDays, generateServicesForRange, cleanupDuplicateScheduledServices } from '../../services/scheduleService';
 import { startOfDay, endOfDay, subDays, format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import PlanningCalendar from '../../components/PlanningCalendar';
@@ -140,6 +140,23 @@ export default function DashboardPage() {
         >
           <span style={{ fontSize: '1.5rem' }}>👷</span>
           <span className="text-xs font-bold uppercase tracking-wider">Operarios</span>
+        </button>
+        <button 
+          onClick={async () => {
+            if (!window.confirm('¿Eliminar servicios duplicados de la base de datos? Esta operación no se puede deshacer.')) return;
+            try {
+              const n = await cleanupDuplicateScheduledServices();
+              alert(`✅ Limpieza completada. ${n} duplicado(s) eliminado(s).`);
+              loadDashboard();
+            } catch (err) {
+              alert('❌ Error durante la limpieza: ' + err.message);
+            }
+          }}
+          className="btn btn-ghost p-4 flex flex-col items-center gap-2 border border-slate-100 hover:border-red-200 hover:bg-red-50 shadow-sm"
+          style={{ height: 'auto', background: 'white' }}
+        >
+          <span style={{ fontSize: '1.5rem' }}>🧹</span>
+          <span className="text-xs font-bold uppercase tracking-wider" style={{ color: '#dc2626' }}>Limpiar Dup.</span>
         </button>
       </div>
 

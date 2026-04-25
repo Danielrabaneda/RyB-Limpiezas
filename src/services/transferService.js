@@ -4,6 +4,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { startOfDay, endOfDay, startOfWeek, endOfWeek } from 'date-fns';
+import { deleteFutureServicesForTask, generateServicesForTask } from './scheduleService';
 
 /**
  * Reprograma un servicio a una nueva fecha.
@@ -198,6 +199,45 @@ export async function transferWeek({ dateInWeek, fromUserId, toUserId, requester
 
   await batch.commit();
   return transferRef.id;
+}
+
+/**
+ * ADMIN ONLY — Permanently reassigns a community task to a different operario.
+ * - Updates communityTask.assignedUserId
+ * - Deletes all future pending services for this task
+ * - Regenerates services with the new operario
+ * - Creates an audit record in 'transfers' collection
+ */
+export async function transferPermanent({ communityTaskId, fromUserId, toUserId, adminUserId }) {
+  const taskRef = doc(db, 'communityTasks', communityTaskId);
+  const taskSnap = await getDoc(taskRef);
+  if (!taskSnap.exists()) throw new Error('Tarea no encontrada');
+
+  const taskData = taskSnap.data();
+
+  // 1. Update the task assignment
+  await updateDoc(taskRef, {
+    assignedUserId: toUserId || null,
+    updatedAt: serverTimestamp(),
+  });
+
+  // 2. Create audit trail
+  await addDoc(collection(db, 'transfers'), {
+    communityTaskId,
+    communityId: taskData.communityId,
+    taskName: taskData.taskName,
+    fromUserId,
+    toUserId: toUserId || null,
+    type: 'permanent',
+    status: 'approved', // Admin-initiated, auto-approved
+    requestedBy: 'admin',
+    adminUserId,
+    createdAt: serverTimestamp(),
+  });
+
+  // 3. Delete future pending services and regenerate with new assignment
+  await deleteFutureServicesForTask(communityTaskId);
+  await generateServicesForTask(communityTaskId);
 }
 
 export async function getPendingTransfers() {

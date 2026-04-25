@@ -227,9 +227,9 @@ export default function HistoryPage() {
           {weekDays.map(day => {
             const dayServices = services.filter(s => {
               const sDate = s.scheduledDate?.toDate ? s.scheduledDate.toDate() : new Date(s.scheduledDate);
-              return isSameDay(sDate, day);
+              return format(sDate, 'yyyy-MM-dd') === format(day, 'yyyy-MM-dd');
             });
-            const isToday = isSameDay(day, new Date());
+            const isToday = format(day, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd');
 
             return (
               <div key={day.toISOString()} className="card" style={{
@@ -288,40 +288,80 @@ export default function HistoryPage() {
         /* VISTA DE JORNADA (HORAS) */
         <div className="flex flex-col gap-3">
           {weekDays.slice().reverse().map(day => {
-            const dayWorkday = workdays.find(wd => {
+            const targetDayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(day);
+            const daySessions = workdays.filter(wd => {
               const wdDate = wd.date?.toDate ? wd.date.toDate() : new Date(wd.date);
-              return isSameDay(wdDate, day);
+              const wdDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(wdDate);
+              return wdDateStr === targetDayStr;
             });
 
+            if (daySessions.length === 0) {
+              return (
+                <div key={day.toISOString()} className="card" style={{ padding: 'var(--space-4)', opacity: 0.7 }}>
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <div className="font-bold text-sm text-slate-500">
+                        {format(day, 'EEEE d', { locale: es })}
+                      </div>
+                      <div className="text-xs text-muted italic">No hay registro</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
+            const dayTotalMinutes = daySessions.reduce((acc, s) => acc + (s.totalMinutes || 0), 0);
+            const isAnyActive = daySessions.some(s => s.status === 'active');
+            
+            // Encontrar la primera entrada y la última salida para mostrar el rango general
+            const sortedSessions = [...daySessions].sort((a, b) => {
+              const aTime = a.startTime?.toDate ? a.startTime.toDate() : new Date(a.startTime);
+              const bTime = b.startTime?.toDate ? b.startTime.toDate() : new Date(b.startTime);
+              return aTime - bTime;
+            });
+            
+            const firstStart = sortedSessions[0].startTime;
+            const lastEnd = sortedSessions[sortedSessions.length - 1].endTime;
+
             return (
-              <div key={day.toISOString()} className="card" style={{ padding: 'var(--space-4)' }}>
+              <div key={day.toISOString()} className="card" style={{ 
+                padding: 'var(--space-4)',
+                borderLeft: isAnyActive ? '4px solid var(--color-warning)' : 'none'
+              }}>
                 <div className="flex justify-between items-center">
                   <div>
                     <div className="font-bold text-sm">
                       {format(day, 'EEEE d', { locale: es })}
                     </div>
-                    {dayWorkday ? (
-                      <div className="text-xs text-muted">
-                        Entrada: {safeFormatDate(dayWorkday.startTime)} | 
-                        Salida: {safeFormatDate(dayWorkday.endTime)}
-                      </div>
-                    ) : (
-                      <div className="text-xs text-muted italic">No hay registro</div>
-                    )}
-                  </div>
-                  {dayWorkday && (
-                    <div style={{ textAlign: 'right' }}>
-                      <div className="font-black text-primary">
-                        {dayWorkday.totalMinutes ? formatMinutes(dayWorkday.totalMinutes) : '-'}
-                      </div>
-                      <span className="badge badge-sm" style={{ 
-                        background: dayWorkday.status === 'completed' ? '#dcfce7' : '#fff7ed',
-                        color: dayWorkday.status === 'completed' ? '#166534' : '#9a3412'
-                      }}>
-                        {dayWorkday.status === 'active' ? 'En curso' : 'Listo'}
-                      </span>
+                    <div className="text-xs text-muted">
+                      {daySessions.length > 1 ? (
+                        <span className="flex flex-col gap-0.5 mt-1">
+                          {daySessions.map((s, idx) => (
+                            <span key={s.id} className="block">
+                              Sesión {idx + 1}: {safeFormatDate(s.startTime)} - {safeFormatDate(s.endTime)} ({formatMinutes(s.totalMinutes || 0)})
+                            </span>
+                          ))}
+                        </span>
+                      ) : (
+                        <span>
+                          Entrada: {safeFormatDate(daySessions[0].startTime)} | 
+                          Salida: {safeFormatDate(daySessions[0].endTime)}
+                        </span>
+                      )}
                     </div>
-                  )}
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div className="font-black text-primary text-lg">
+                      {formatMinutes(dayTotalMinutes)}
+                    </div>
+                    <span className="badge badge-sm" style={{ 
+                      background: !isAnyActive ? '#dcfce7' : '#fff7ed',
+                      color: !isAnyActive ? '#166534' : '#9a3412',
+                      fontWeight: 700
+                    }}>
+                      {isAnyActive ? 'En curso' : 'Completada'}
+                    </span>
+                  </div>
                 </div>
               </div>
             );

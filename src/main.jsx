@@ -11,4 +11,7 @@ createRoot(document.getElementById('root')).render(
   <StrictMode>
     <App />
   </StrictMode>,
-)
+);
+
+// Señalizar que la aplicación se ha montado correctamente
+window.dispatchEvent(new CustomEvent('app-mounted'));

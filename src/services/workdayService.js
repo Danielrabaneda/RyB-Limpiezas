@@ -1,9 +1,10 @@
 import { 
-  collection, doc, addDoc, updateDoc, getDocs,
-  query, where, orderBy, serverTimestamp, Timestamp, limit, deleteDoc
+  collection, doc, addDoc, updateDoc, getDocs, getDoc,
+  query, where, orderBy, serverTimestamp, Timestamp, limit, deleteDoc, arrayUnion
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { startOfDay, endOfDay, differenceInMinutes } from 'date-fns';
+import { startOfDay, endOfDay, differenceInMinutes, format } from 'date-fns';
+import { calculateDailyMileage } from './mileageService';
 
 const COLLECTION_NAME = 'workdays';
 
@@ -24,6 +25,7 @@ export async function startWorkday(userId, userName = 'Operario') {
     endTime: null,
     totalMinutes: 0,
     status: 'active',
+    currentCompanionId: null, // <--- Added to track global companion
     createdAt: serverTimestamp(),
   });
   return ref.id;
@@ -35,25 +37,55 @@ export async function endWorkday(workdayId) {
   const workdayRef = doc(db, COLLECTION_NAME, workdayId);
   
   // Get workday data to calculate duration
-  const snap = await getDocs(query(
-    collection(db, COLLECTION_NAME),
-    where('__name__', '==', workdayId)
-  ));
+  const workdaySnap = await getDoc(workdayRef);
   
   let duration = 0;
-  if (!snap.empty) {
-    const data = snap.docs[0].data();
-    if (data.startTime) {
-      const startTimeDate = data.startTime.toDate ? data.startTime.toDate() : new Date(data.startTime);
+  let workdayData = null;
+  if (workdaySnap.exists()) {
+    workdayData = workdaySnap.data();
+    if (workdayData.startTime) {
+      const startTimeDate = workdayData.startTime.toDate ? workdayData.startTime.toDate() : new Date(workdayData.startTime);
       duration = differenceInMinutes(endTime, startTimeDate);
     }
+  }
+  
+  // Auto-close active car session if any
+  let updatedCarSessions = workdayData?.carSessions || [];
+  if (workdayData?.carActive) {
+    updatedCarSessions = updatedCarSessions.map(session => {
+      if (!session.endTime) {
+        return { ...session, endTime: Timestamp.fromDate(endTime) };
+      }
+      return session;
+    });
   }
   
   await updateDoc(workdayRef, {
     endTime: Timestamp.fromDate(endTime),
     totalMinutes: duration,
     status: 'completed',
+    carActive: false,
+    carSessions: updatedCarSessions,
   });
+  
+  // Trigger mileage calculation
+  // Usamos la fecha "lógica" de la jornada (workdayData.date) para que el kilometraje 
+  // se guarde en el día correcto, incluso si la jornada termina después de medianoche.
+  const logicalDate = workdayData?.date?.toDate ? workdayData.date.toDate() : endTime;
+  
+  if (workdayData?.userId) {
+    try {
+      await calculateDailyMileage(
+        workdayData.userId,
+        logicalDate,
+        workdayData.userName || 'Operario',
+        updatedCarSessions
+      );
+      console.log('[Workday] Kilometraje procesado automáticamente al finalizar jornada');
+    } catch (err) {
+      console.error('[Workday] Error calculando kilometraje:', err);
+    }
+  }
   
   return { duration };
 }
@@ -120,3 +152,147 @@ export async function getWorkdaysForOperario(userId, startDate, endDate) {
   return getWorkdaysForAdmin(startDate, endDate, userId);
 }
 
+/**
+ * Gets a summary of all workdays (active or completed) for a specific date.
+ * Useful for aggregating hours from multiple sessions in one day.
+ */
+export async function getWorkdaysSummaryForDate(userId, date = new Date()) {
+  // Query only by userId to avoid composite index requirements
+  const q = query(
+    collection(db, COLLECTION_NAME),
+    where('userId', '==', userId)
+  );
+  
+  const snap = await getDocs(q);
+  const allWorkdays = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  
+  // Robust date filtering using Madrid timezone strings
+  const targetDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(date);
+  
+  const todayWorkdays = allWorkdays.filter(wd => {
+    try {
+      const wdDateRaw = wd.date?.toDate ? wd.date.toDate() : new Date(wd.date);
+      const wdDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(wdDateRaw);
+      return wdDateStr === targetDateStr;
+    } catch (e) {
+      return false;
+    }
+  });
+  
+  let totalMinutes = 0;
+  let hasActive = false;
+  let activeWorkday = null;
+  let firstStartTime = null;
+  
+  const now = new Date();
+  
+  // Sort by startTime to find the absolute first start of the day
+  const sortedWorkdays = [...todayWorkdays].sort((a, b) => {
+    const aTime = a.startTime?.toDate ? a.startTime.toDate() : new Date(a.startTime);
+    const bTime = b.startTime?.toDate ? b.startTime.toDate() : new Date(b.startTime);
+    return aTime - bTime;
+  });
+
+  if (sortedWorkdays.length > 0) {
+    const first = sortedWorkdays[0];
+    firstStartTime = first.startTime?.toDate ? first.startTime.toDate() : new Date(first.startTime);
+  }
+
+  for (const wd of todayWorkdays) {
+    if (wd.status === 'active') {
+      hasActive = true;
+      activeWorkday = wd;
+      const startTime = wd.startTime?.toDate ? wd.startTime.toDate() : new Date(wd.startTime);
+      totalMinutes += Math.max(0, differenceInMinutes(now, startTime));
+    } else {
+      totalMinutes += (Number(wd.totalMinutes) || 0);
+    }
+  }
+  
+  return {
+    totalMinutes,
+    hasActive,
+    activeWorkday,
+    firstStartTime,
+    count: todayWorkdays.length,
+    allSessions: todayWorkdays // Optional: return all sessions for detailed UI
+  };
+}
+
+export async function updateWorkdayCompanion(workdayId, companionId) {
+  const workdayRef = doc(db, COLLECTION_NAME, workdayId);
+  await updateDoc(workdayRef, {
+    currentCompanionId: companionId,
+    updatedAt: serverTimestamp()
+  });
+}
+
+/**
+ * Finds all active workdays where the specified user is a companion.
+ */
+export async function getActiveWorkdaysForCompanion(userId) {
+  const q = query(
+    collection(db, COLLECTION_NAME),
+    where('currentCompanionId', '==', userId),
+    where('status', '==', 'active')
+  );
+  
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+// ==================== CAR SESSION MANAGEMENT ====================
+
+/**
+ * Activates car mode for the current workday.
+ * Creates a new car session with startTime = now.
+ */
+export async function activateCar(workdayId) {
+  const workdayRef = doc(db, COLLECTION_NAME, workdayId);
+  const now = Timestamp.fromDate(new Date());
+  
+  await updateDoc(workdayRef, {
+    carActive: true,
+    carActiveSince: now,
+    carSessions: arrayUnion({ startTime: now, endTime: null }),
+    updatedAt: serverTimestamp()
+  });
+}
+
+/**
+ * Deactivates car mode for the current workday.
+ * Closes the active car session.
+ */
+export async function deactivateCar(workdayId) {
+  const workdayRef = doc(db, COLLECTION_NAME, workdayId);
+  const now = new Date();
+  
+  // Get current sessions and close the open one
+  const workdaySnap = await getDoc(workdayRef);
+  if (!workdaySnap.exists()) return;
+  
+  const data = workdaySnap.data();
+  const updatedSessions = (data.carSessions || []).map(session => {
+    if (!session.endTime) {
+      return { ...session, endTime: Timestamp.fromDate(now) };
+    }
+    return session;
+  });
+  
+  await updateDoc(workdayRef, {
+    carActive: false,
+    carActiveSince: null,
+    carSessions: updatedSessions,
+    updatedAt: serverTimestamp()
+  });
+}
+
+/**
+ * Gets car sessions for a specific workday.
+ */
+export async function getCarSessions(workdayId) {
+  const workdayRef = doc(db, COLLECTION_NAME, workdayId);
+  const snap = await getDoc(workdayRef);
+  if (!snap.exists()) return [];
+  return snap.data().carSessions || [];
+}

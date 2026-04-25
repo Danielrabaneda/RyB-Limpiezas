@@ -1,3 +1,10 @@
+import React, { useState, useEffect, lazy, Suspense } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { collection, query, where, limit, getDocs, onSnapshot, orderBy, doc } from 'firebase/firestore';
+import { db } from './config/firebase';
+import './index.css';
+
 // ==================== ERROR BOUNDARY ====================
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -33,27 +40,25 @@ class ErrorBoundary extends React.Component {
   }
 }
 
-import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate, NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { AuthProvider, useAuth } from './contexts/AuthContext';
-import LoginPage from './pages/auth/LoginPage';
-import RegisterPage from './pages/auth/RegisterPage';
-import SetupPage from './pages/auth/SetupPage';
-import DashboardPage from './pages/admin/DashboardPage';
-import CommunitiesPage from './pages/admin/CommunitiesPage';
-import OperariosPage from './pages/admin/OperariosPage';
-import ReportsPage from './pages/admin/ReportsPage';
-import InventoryPage from './pages/admin/InventoryPage';
-import ControlHorarioPage from './pages/admin/ControlHorarioPage';
-import TodayPage from './pages/operario/TodayPage';
-import ServiceDetailPage from './pages/operario/ServiceDetailPage';
-import HistoryPage from './pages/operario/HistoryPage';
-import GeolocationTracker from './components/operario/GeolocationTracker';
-import SettingsPage from './pages/admin/SettingsPage';
-import { useState, useEffect } from 'react';
-import { collection, query, where, limit, getDocs, onSnapshot, orderBy, doc } from 'firebase/firestore';
-import { db } from './config/firebase';
-import './index.css';
+// Lazy loaded pages
+const LoginPage = lazy(() => import('./pages/auth/LoginPage'));
+const RegisterPage = lazy(() => import('./pages/auth/RegisterPage'));
+const SetupPage = lazy(() => import('./pages/auth/SetupPage'));
+const DashboardPage = lazy(() => import('./pages/admin/DashboardPage'));
+const CommunitiesPage = lazy(() => import('./pages/admin/CommunitiesPage'));
+const OperariosPage = lazy(() => import('./pages/admin/OperariosPage'));
+const ReportsPage = lazy(() => import('./pages/admin/ReportsPage'));
+const KilometrajePage = lazy(() => import('./pages/admin/KilometrajePage'));
+const InventoryPage = lazy(() => import('./pages/admin/InventoryPage'));
+const ControlHorarioPage = lazy(() => import('./pages/admin/ControlHorarioPage'));
+const TodayPage = lazy(() => import('./pages/operario/TodayPage'));
+const ServiceDetailPage = lazy(() => import('./pages/operario/ServiceDetailPage'));
+const HistoryPage = lazy(() => import('./pages/operario/HistoryPage'));
+const SettingsPage = lazy(() => import('./pages/admin/SettingsPage'));
+
+// Components
+const GeolocationTracker = lazy(() => import('./components/operario/GeolocationTracker'));
+const PermissionsCheck = lazy(() => import('./components/operario/PermissionsCheck'));
 
 // Función para actualizar el número en el icono (Badge)
 const updateIconBadge = (count) => {
@@ -69,17 +74,59 @@ const updateIconBadge = (count) => {
 // ==================== ROUTE GUARDS ====================
 function ProtectedRoute({ children, requiredRole }) {
   const { currentUser, userProfile, loading } = useAuth();
+  const [showEmergencyButton, setShowEmergencyButton] = useState(false);
+
+  useEffect(() => {
+    let timer;
+    if (loading) {
+      timer = setTimeout(() => {
+        setShowEmergencyButton(true);
+      }, 7000); // 7 seconds
+    }
+    return () => clearTimeout(timer);
+  }, [loading]);
 
   if (loading) {
     return (
       <div className="loading-page">
         <div className="spinner"></div>
-        <p className="text-muted">Cargando...</p>
+        <p className="text-muted">Iniciando sesión...</p>
+        {showEmergencyButton && (
+          <div className="mt-8 animate-fadeIn text-center px-6">
+            <p className="text-xs text-red-500 mb-4">¿Tarda demasiado? La conexión puede ser inestable.</p>
+            <button 
+              className="btn btn-secondary btn-sm"
+              onClick={() => window.location.reload()}
+            >
+              🔄 Recargar página
+            </button>
+            <p className="mt-4 text-[10px] text-muted">
+              Si el problema persiste, cierra la app y vuelve a abrirla.
+            </p>
+          </div>
+        )}
       </div>
     );
   }
 
   if (!currentUser) return <Navigate to="/login" />;
+  
+  if (!userProfile && !loading) {
+    return (
+      <div className="loading-page px-6 text-center">
+        <div style={{ fontSize: '3rem' }}>🔍</div>
+        <h3 className="font-bold mt-4">Perfil no encontrado</h3>
+        <p className="text-sm text-muted mb-6">No hemos podido cargar tus datos de usuario.</p>
+        <button 
+          className="btn btn-primary"
+          onClick={() => window.location.reload()}
+        >
+          🔄 Reintentar conexión
+        </button>
+      </div>
+    );
+  }
+
   if (requiredRole && userProfile?.role !== requiredRole) {
     return <Navigate to={userProfile?.role === 'admin' ? '/admin' : '/operario'} />;
   }
@@ -124,6 +171,7 @@ function AdminLayout() {
     { path: '/admin/operarios', icon: '👷', label: 'Operarios' },
     { path: '/admin/control-horario', icon: '⏱️', label: 'Control Horario' },
     { path: '/admin/informes', icon: '📈', label: 'Informes' },
+    { path: '/admin/kilometraje', icon: '🚗', label: 'Kilometraje' },
     { path: '/admin/ajustes', icon: '⚙️', label: 'Ajustes' },
   ];
 
@@ -209,7 +257,6 @@ function AdminLayout() {
 }
 
 // ==================== OPERARIO LAYOUT ====================
-import PermissionsCheck from './components/operario/PermissionsCheck';
 
 function OperarioLayout() {
   const { userProfile, logout } = useAuth();
@@ -392,53 +439,63 @@ export default function App() {
         <AuthProvider>
           <NotificationManager />
           <BadgeManager />
-          <GeolocationTracker />
-          <Routes>
-          {/* Public */}
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
-          <Route path="/setup" element={<SetupPage />} />
+          <Suspense fallback={null}>
+            <GeolocationTracker />
+          </Suspense>
+          <Suspense fallback={
+            <div className="loading-page">
+              <div className="spinner"></div>
+              <p className="text-muted">Cargando sección...</p>
+            </div>
+          }>
+            <Routes>
+              {/* Public */}
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/register" element={<RegisterPage />} />
+              <Route path="/setup" element={<SetupPage />} />
 
-          {/* Root */}
-          <Route path="/" element={<RootRedirect />} />
+              {/* Root */}
+              <Route path="/" element={<RootRedirect />} />
 
-          {/* Admin */}
-          <Route
-            path="/admin"
-            element={
-              <ProtectedRoute requiredRole="admin">
-                <AdminLayout />
-              </ProtectedRoute>
-            }
-          >
-            <Route index element={<DashboardPage />} />
-            <Route path="comunidades" element={<CommunitiesPage />} />
-            <Route path="operarios" element={<OperariosPage />} />
-            <Route path="control-horario" element={<ControlHorarioPage />} />
-            <Route path="informes" element={<ReportsPage />} />
-            <Route path="inventory" element={<InventoryPage />} />
-            <Route path="ajustes" element={<SettingsPage />} />
-          </Route>
+              {/* Admin */}
+              <Route
+                path="/admin"
+                element={
+                  <ProtectedRoute requiredRole="admin">
+                    <AdminLayout />
+                  </ProtectedRoute>
+                }
+              >
+                <Route index element={<DashboardPage />} />
+                <Route path="comunidades" element={<CommunitiesPage />} />
+                <Route path="operarios" element={<OperariosPage />} />
+                <Route path="control-horario" element={<ControlHorarioPage />} />
+                <Route path="informes" element={<ReportsPage />} />
+                <Route path="kilometraje" element={<KilometrajePage />} />
+                <Route path="inventory" element={<InventoryPage />} />
+                <Route path="ajustes" element={<SettingsPage />} />
+              </Route>
 
-          {/* Operario */}
-          <Route
-            path="/operario"
-            element={
-              <ProtectedRoute requiredRole="operario">
-                <OperarioLayout />
-              </ProtectedRoute>
-            }
-          >
-            <Route index element={<TodayPage />} />
-            <Route path="servicio/:serviceId" element={<ServiceDetailPage />} />
-            <Route path="historial" element={<HistoryPage />} />
-          </Route>
+              {/* Operario */}
+              <Route
+                path="/operario"
+                element={
+                  <ProtectedRoute requiredRole="operario">
+                    <OperarioLayout />
+                  </ProtectedRoute>
+                }
+              >
+                <Route index element={<TodayPage />} />
+                <Route path="servicio/:serviceId" element={<ServiceDetailPage />} />
+                <Route path="historial" element={<HistoryPage />} />
+              </Route>
 
-          {/* Catch-all */}
-          <Route path="*" element={<Navigate to="/" />} />
-        </Routes>
-      </AuthProvider>
-    </BrowserRouter>
+              {/* Catch-all */}
+              <Route path="*" element={<Navigate to="/" />} />
+            </Routes>
+          </Suspense>
+        </AuthProvider>
+      </BrowserRouter>
     </ErrorBoundary>
   );
 }
