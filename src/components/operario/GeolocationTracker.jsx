@@ -107,14 +107,13 @@ export default function GeolocationTracker() {
               
               localStorage.setItem(`detected_exit_${activeSvc.id}`, now);
               
-              sendNotification(`🏃 Has salido de ${activeSvc.communityName}`, {
-                body: `Se ha detectado tu salida. ¿Quieres finalizar el servicio?`,
-                tag: `exit-${activeSvc.id}`
-              });
+              const title = `🏃 Has salido de ${activeSvc.communityName}`;
+              const body = `Se ha detectado tu salida. ¿Quieres finalizar el servicio?`;
 
               createSystemNotification(
                 userProfile.uid,
-                `Has salido del área de ${activeSvc.communityName}. No olvides finalizar el servicio.`,
+                title,
+                body,
                 'warning',
                 activeSvc.id
               );
@@ -140,14 +139,13 @@ export default function GeolocationTracker() {
 
               localStorage.setItem(`detected_entry_${closest.id}`, now);
 
-              sendNotification(`📍 Has llegado a ${closest.communityName}`, {
-                body: `¿Quieres iniciar el servicio? Estás en la ubicación.`,
-                tag: `entry-${closest.id}`
-              });
+              const title = `📍 Has llegado a ${closest.communityName}`;
+              const body = `¿Quieres iniciar el servicio? Estás en la ubicación.`;
 
               createSystemNotification(
                 userProfile.uid,
-                `📍 Estás en ${closest.communityName}. Pulsa para iniciar el servicio.`,
+                title,
+                body,
                 'success',
                 closest.id
               );

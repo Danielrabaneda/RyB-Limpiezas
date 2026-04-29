@@ -107,7 +107,7 @@ export async function getAllOpenCheckIns(userId) {
   );
   const snap = await getDocs(q);
   return snap.docs
-    .map(d => ({ id: d.id, ...d.data() }))
+    .map(d => ({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }))
     .filter(c => c.checkOutTime === null);
 }
 
@@ -117,8 +117,8 @@ export async function getActiveCheckIn(userId) {
   
   // Return the most recent one
   return open.sort((a, b) => {
-    const aTime = a.checkInTime?.toDate ? a.checkInTime.toDate() : new Date(a.checkInTime);
-    const bTime = b.checkInTime?.toDate ? b.checkInTime.toDate() : new Date(b.checkInTime);
+    const aTime = a.checkInTime ? (a.checkInTime.toDate ? a.checkInTime.toDate() : new Date(a.checkInTime)) : new Date();
+    const bTime = b.checkInTime ? (b.checkInTime.toDate ? b.checkInTime.toDate() : new Date(b.checkInTime)) : new Date();
     return bTime - aTime;
   })[0];
 }

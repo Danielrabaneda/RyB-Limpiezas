@@ -5,7 +5,7 @@ import {
   getDay, isToday
 } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { getScheduledServicesRange, generateServicesForMonth } from '../../services/scheduleService';
+import { getScheduledServicesRange, generateServicesForMonth, syncServicesForMonth } from '../../services/scheduleService';
 
 export default function DashboardCalendar({ operarios }) {
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -41,6 +41,20 @@ export default function DashboardCalendar({ operarios }) {
       await loadMonthData();
     } catch (err) {
       alert('Error generis servicios');
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function handleSync() {
+    if (!confirm(`¿Actualizar y sincronizar servicios para todo el mes de ${format(currentMonth, 'MMMM', { locale: es })}?`)) return;
+    setGenerating(true);
+    try {
+      const result = await syncServicesForMonth(currentMonth);
+      alert(`Sincronización completada:\n${result.createdCount} creados.\n${result.deletedCount} obsoletos eliminados.`);
+      await loadMonthData();
+    } catch (err) {
+      alert('Error al actualizar servicios');
     } finally {
       setGenerating(false);
     }
@@ -83,13 +97,24 @@ export default function DashboardCalendar({ operarios }) {
               <button className="btn btn-ghost btn-sm" onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}>▶</button>
             </div>
           </div>
-          <button 
-            className="btn btn-primary btn-sm"
-            onClick={handleGenerate}
-            disabled={generating}
-          >
-            {generating ? '⌛...' : '📅 Generar este mes'}
-          </button>
+          <div className="flex gap-2">
+            <button 
+              className="btn btn-primary btn-sm"
+              onClick={handleGenerate}
+              disabled={generating}
+              title="Genera servicios faltantes sin borrar nada"
+            >
+              {generating ? '⌛...' : '📅 Generar mes'}
+            </button>
+            <button 
+              className="btn btn-outline btn-sm"
+              onClick={handleSync}
+              disabled={generating}
+              title="Sincroniza: quita servicios obsoletos y añade modificaciones"
+            >
+              {generating ? '⌛...' : '🔄 Actualizar mes'}
+            </button>
+          </div>
         </div>
 
         <div className="calendar-grid">

@@ -12,6 +12,7 @@ import TransferModal from '../../components/TransferModal';
 export default function CommunitiesPage() {
   const { userProfile } = useAuth();
   const [communities, setCommunities] = useState([]);
+  const [searchTerm, setSearchTerm] = useState('');
   const [operarios, setOperarios] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -391,6 +392,11 @@ export default function CommunitiesPage() {
     }
   };
 
+  const filteredCommunities = Array.isArray(communities) ? communities.filter(comm => 
+    (comm.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (comm.address || '').toLowerCase().includes(searchTerm.toLowerCase())
+  ) : [];
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center p-20 text-center">
@@ -412,11 +418,37 @@ export default function CommunitiesPage() {
       <div className="grid" style={{ gridTemplateColumns: '1fr 1.5fr', gap: 'var(--space-6)' }}>
         {/* Community list */}
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          <div style={{ padding: 'var(--space-4) var(--space-5)', borderBottom: '1px solid var(--color-border)' }}>
-            <h3 className="font-semibold">📋 Listado ({communities.length})</h3>
+          <div style={{ padding: 'var(--space-4) var(--space-5)', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <h3 className="font-semibold">📋 Listado ({filteredCommunities.length !== communities.length ? `${filteredCommunities.length}/${communities.length}` : communities.length})</h3>
           </div>
+          
+          <div style={{ padding: 'var(--space-3) var(--space-5)', borderBottom: '1px solid var(--color-border)', background: 'var(--color-bg-light)' }}>
+            <div style={{ position: 'relative' }}>
+              <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>🔍</span>
+              <input
+                type="text"
+                placeholder="Buscar comunidad..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px 8px 32px',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--color-border)',
+                  background: 'var(--color-surface)',
+                  color: 'var(--color-text)',
+                  fontSize: '0.875rem',
+                  outline: 'none',
+                  transition: 'border-color 0.2s'
+                }}
+                onFocus={(e) => e.target.style.borderColor = 'var(--color-primary)'}
+                onBlur={(e) => e.target.style.borderColor = 'var(--color-border)'}
+              />
+            </div>
+          </div>
+
           <div style={{ maxHeight: '600px', overflowY: 'auto' }}>
-            {Array.isArray(communities) && communities.map(comm => (
+            {Array.isArray(filteredCommunities) && filteredCommunities.map(comm => (
               <div
                 key={comm.id}
                 onClick={() => selectCommunity(comm)}
@@ -452,6 +484,11 @@ export default function CommunitiesPage() {
             {(!communities || communities.length === 0) && (
               <div className="empty-state">
                 <p>No hay comunidades creadas</p>
+              </div>
+            )}
+            {communities && communities.length > 0 && filteredCommunities.length === 0 && (
+              <div className="empty-state">
+                <p>No se encontraron comunidades</p>
               </div>
             )}
           </div>

@@ -32,7 +32,7 @@ export async function startWorkday(userId, userName = 'Operario') {
 }
 
 
-export async function endWorkday(workdayId) {
+export async function endWorkday(workdayId, breadcrumbs = []) {
   const endTime = new Date();
   const workdayRef = doc(db, COLLECTION_NAME, workdayId);
   
@@ -54,7 +54,18 @@ export async function endWorkday(workdayId) {
   if (workdayData?.carActive) {
     updatedCarSessions = updatedCarSessions.map(session => {
       if (!session.endTime) {
-        return { ...session, endTime: Timestamp.fromDate(endTime) };
+        const startTimeDate = session.startTime?.toDate ? session.startTime.toDate() : new Date(session.startTime);
+        
+        const sessionBreadcrumbs = breadcrumbs.filter(b => {
+          const bTime = typeof b.timestamp === 'number' ? b.timestamp : new Date(b.timestamp).getTime();
+          return bTime >= startTimeDate.getTime() && bTime <= endTime.getTime();
+        });
+
+        return { 
+          ...session, 
+          endTime: Timestamp.fromDate(endTime),
+          breadcrumbs: sessionBreadcrumbs
+        };
       }
       return session;
     });
@@ -263,7 +274,7 @@ export async function activateCar(workdayId) {
  * Deactivates car mode for the current workday.
  * Closes the active car session.
  */
-export async function deactivateCar(workdayId) {
+export async function deactivateCar(workdayId, breadcrumbs = []) {
   const workdayRef = doc(db, COLLECTION_NAME, workdayId);
   const now = new Date();
   
@@ -274,7 +285,18 @@ export async function deactivateCar(workdayId) {
   const data = workdaySnap.data();
   const updatedSessions = (data.carSessions || []).map(session => {
     if (!session.endTime) {
-      return { ...session, endTime: Timestamp.fromDate(now) };
+      const startTimeDate = session.startTime?.toDate ? session.startTime.toDate() : new Date(session.startTime);
+      
+      const sessionBreadcrumbs = breadcrumbs.filter(b => {
+        const bTime = typeof b.timestamp === 'number' ? b.timestamp : new Date(b.timestamp).getTime();
+        return bTime >= startTimeDate.getTime() && bTime <= now.getTime();
+      });
+
+      return { 
+        ...session, 
+        endTime: Timestamp.fromDate(now),
+        breadcrumbs: sessionBreadcrumbs 
+      };
     }
     return session;
   });

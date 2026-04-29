@@ -460,19 +460,30 @@ export async function generateServicesForRange(startDate, endDate) {
     const days = eachDayOfInterval({ start: startOfDay(startDate), end: startOfDay(endDate) });
     console.log(`[Schedule] Iniciando generación: ${startDate.toISOString()} - ${endDate.toISOString()}`);
     
+    // Get all active communities
+    const commsSnap = await getDocs(
+      query(collection(db, 'communities'), where('active', '==', true))
+    );
+    const activeCommunityIds = new Set(commsSnap.docs.map(d => d.id));
+    console.log(`[Schedule] ${activeCommunityIds.size} comunidades activas encontradas`);
+
     // Get all active community tasks
     const tasksSnap = await getDocs(
       query(collection(db, 'communityTasks'), where('active', '==', true))
     );
-    const communityTasks = tasksSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-    console.log(`[Schedule] ${communityTasks.length} tareas activas encontradas`);
+    const communityTasks = tasksSnap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(t => activeCommunityIds.has(t.communityId));
+    console.log(`[Schedule] ${communityTasks.length} tareas activas filtradas`);
     
     // Get all active assignments
     const assignSnap = await getDocs(
       query(collection(db, 'assignments'), where('active', '==', true))
     );
-    const assignments = assignSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-    console.log(`[Schedule] ${assignments.length} asignaciones activas encontradas`);
+    const assignments = assignSnap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(a => activeCommunityIds.has(a.communityId));
+    console.log(`[Schedule] ${assignments.length} asignaciones activas filtradas`);
     
     // Check existing scheduled services to avoid duplicates
     const start = Timestamp.fromDate(startOfDay(startDate));
@@ -619,6 +630,143 @@ export async function generateServicesForMonth(monthDate) {
 // Deprecated alias for backward compatibility
 export async function generateServicesForDays(daysAhead = 14) {
   return generateServicesForRange(new Date(), addDays(new Date(), daysAhead));
+}
+
+/**
+ * Synchronizes services for a specific date range: deletes pending services 
+ * that are no longer matching current configuration and creates missing ones.
+ */
+export async function syncServicesForRange(startDate, endDate) {
+  try {
+    const days = eachDayOfInterval({ start: startOfDay(startDate), end: startOfDay(endDate) });
+    console.log(`[Schedule] Iniciando sincronización: ${startDate.toISOString()} - ${endDate.toISOString()}`);
+    
+    const commsSnap = await getDocs(
+      query(collection(db, 'communities'), where('active', '==', true))
+    );
+    const activeCommunityIds = new Set(commsSnap.docs.map(d => d.id));
+    
+    const tasksSnap = await getDocs(
+      query(collection(db, 'communityTasks'), where('active', '==', true))
+    );
+    const communityTasks = tasksSnap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(t => activeCommunityIds.has(t.communityId));
+      
+    const assignSnap = await getDocs(
+      query(collection(db, 'assignments'), where('active', '==', true))
+    );
+    const assignments = assignSnap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(a => activeCommunityIds.has(a.communityId));
+      
+    const start = Timestamp.fromDate(startOfDay(startDate));
+    const end = Timestamp.fromDate(endOfDay(endDate));
+    const existingSnap = await getDocs(
+      query(
+        collection(db, 'scheduledServices'),
+        where('scheduledDate', '>=', start),
+        where('scheduledDate', '<=', end)
+      )
+    );
+    
+    const existingServices = existingSnap.docs.map(d => ({ id: d.id, ref: d.ref, ...d.data() }));
+    const pendingServices = existingServices.filter(s => s.status === 'pending');
+    const workedServices = existingServices.filter(s => s.status !== 'pending');
+    
+    const desiredKeys = new Set();
+    const desiredServices = [];
+    
+    for (const task of communityTasks) {
+      let targetUsers = [];
+      if (task.assignedUserId) {
+        targetUsers = [{ userId: task.assignedUserId }];
+      } else {
+        targetUsers = assignments.filter(a => a.communityId === task.communityId).map(a => ({ userId: a.userId }));
+      }
+      
+      if (targetUsers.length === 0) continue;
+      
+      for (const day of days) {
+        if (!shouldScheduleOnDay(task, day)) continue;
+        const dayStr = format(day, 'yyyy-MM-dd');
+        for (const target of targetUsers) {
+          const key = `${task.id}_${target.userId}_${dayStr}`;
+          desiredKeys.add(key);
+          desiredServices.push({ task, targetUserId: target.userId, day });
+        }
+      }
+    }
+    
+    let deletedCount = 0;
+    let batch = writeBatch(db);
+    let batchCount = 0;
+    
+    for (const svc of pendingServices) {
+      const svcDate = svc.scheduledDate?.toDate ? svc.scheduledDate.toDate() : new Date(svc.scheduledDate);
+      const key = `${svc.communityTaskId}_${svc.assignedUserId}_${format(svcDate, 'yyyy-MM-dd')}`;
+      
+      if (!desiredKeys.has(key)) {
+        batch.delete(svc.ref);
+        deletedCount++;
+        batchCount++;
+        if (batchCount >= 490) {
+          await batch.commit();
+          batch = writeBatch(db);
+          batchCount = 0;
+        }
+      }
+    }
+    if (batchCount > 0) {
+      await batch.commit();
+      batch = writeBatch(db);
+      batchCount = 0;
+    }
+    
+    const keptKeys = new Set();
+    for (const svc of workedServices) {
+      const svcDate = svc.scheduledDate?.toDate ? svc.scheduledDate.toDate() : new Date(svc.scheduledDate);
+      keptKeys.add(`${svc.communityTaskId}_${svc.assignedUserId}_${format(svcDate, 'yyyy-MM-dd')}`);
+    }
+    for (const svc of pendingServices) {
+      const svcDate = svc.scheduledDate?.toDate ? svc.scheduledDate.toDate() : new Date(svc.scheduledDate);
+      const key = `${svc.communityTaskId}_${svc.assignedUserId}_${format(svcDate, 'yyyy-MM-dd')}`;
+      if (desiredKeys.has(key)) {
+        keptKeys.add(key);
+      }
+    }
+    
+    let createdCount = 0;
+    for (const ds of desiredServices) {
+      const dayStr = format(ds.day, 'yyyy-MM-dd');
+      const key = `${ds.task.id}_${ds.targetUserId}_${dayStr}`;
+      
+      if (!keptKeys.has(key)) {
+        await createScheduledService({
+          communityId: ds.task.communityId,
+          communityTaskId: ds.task.id,
+          taskName: ds.task.taskName,
+          assignedUserId: ds.targetUserId,
+          scheduledDate: startOfDay(ds.day),
+          flexibleWeek: ds.task.flexibleWeek || false,
+        });
+        keptKeys.add(key);
+        createdCount++;
+      }
+    }
+    
+    console.log(`[Schedule] Sincronización finalizada: ${deletedCount} eliminados, ${createdCount} creados.`);
+    return { deletedCount, createdCount };
+  } catch (error) {
+    console.error('[Schedule] Error en sincronización masiva:', error);
+    throw error;
+  }
+}
+
+export async function syncServicesForMonth(monthDate) {
+  const start = startOfMonth(monthDate);
+  const end = endOfMonth(monthDate);
+  return syncServicesForRange(start, end);
 }
 
 export function shouldScheduleOnDay(task, date) {

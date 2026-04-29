@@ -12,6 +12,29 @@ const COLLECTION = 'dailyMileage';
 const ROAD_FACTOR = 1.3; // Factor de corrección línea recta → carretera
 
 /**
+ * Calcula la distancia total recorrida sumando los puntos de migas de pan (breadcrumbs).
+ */
+function calculateBreadcrumbsDistance(carSessions) {
+  let totalMeters = 0;
+  
+  for (const session of carSessions) {
+    const breadcrumbs = session.breadcrumbs || [];
+    if (breadcrumbs.length < 2) continue;
+    
+    for (let i = 0; i < breadcrumbs.length - 1; i++) {
+      const p1 = breadcrumbs[i];
+      const p2 = breadcrumbs[i + 1];
+      
+      if (p1.lat && p1.lng && p2.lat && p2.lng) {
+        totalMeters += getDistance(p1.lat, p1.lng, p2.lat, p2.lng);
+      }
+    }
+  }
+  
+  return Math.round((totalMeters / 1000) * 100) / 100;
+}
+
+/**
  * Calcula el kilometraje diario de un operario basándose en sus fichajes GPS.
  * Solo considera fichajes que caigan dentro de sesiones de coche activas.
  */
@@ -26,41 +49,48 @@ export async function calculateDailyMileage(userId, date, userName = 'Operario',
       return existing;
     }
 
-    // 1. Obtener todos los fichajes del día
+    // 1. Calcular migas de pan (breadcrumbs) por si las hay
+    const breadcrumbsKm = calculateBreadcrumbsDistance(carSessions);
+
+    // 2. Obtener todos los fichajes del día
     const checkIns = await getCheckInsForDate(userId, date);
     
-    if (!checkIns || checkIns.length === 0) {
-      return await saveMileageRecord(userId, userName, date, dateStr, [], 0);
-    }
-
-    // 2. Filtrar solo fichajes completados (con checkOut) y ordenar por hora de entrada ASC
-    const completed = checkIns
+    const completed = checkIns ? checkIns
       .filter(c => c.checkOutTime !== null && c.checkInTime)
       .sort((a, b) => {
         const timeA = a.checkInTime?.toDate ? a.checkInTime.toDate().getTime() : 0;
         const timeB = b.checkInTime?.toDate ? b.checkInTime.toDate().getTime() : 0;
         return timeA - timeB;
-      });
+      }) : [];
 
     if (completed.length < 2) {
-      return await saveMileageRecord(userId, userName, date, dateStr, [], 0);
+      const finalKm = breadcrumbsKm > 0 ? breadcrumbsKm : 0;
+      if (breadcrumbsKm > 0) {
+        console.log(`[Mileage] Menos de 2 fichajes completados, usando kilometraje de migas de pan: ${finalKm} km`);
+      }
+      return await saveMileageRecord(userId, userName, date, dateStr, [], finalKm);
     }
 
     // 3. Filtrar fichajes que caigan dentro de sesiones de coche
-    // Si no hay sesiones de coche, usamos todos los completados como fallback (pero marcamos como no-car)
-    const relevantCheckIns = carSessions.length > 0 
-      ? filterByCarSessions(completed, carSessions)
-      : completed;
+    // Si no activó el coche (no hay sesiones), no se calculan kilómetros automáticamente.
+    if (carSessions.length === 0) {
+      console.log(`[Mileage] No hay sesiones de coche para ${dateStr}. No se contarán kilómetros.`);
+      return await saveMileageRecord(userId, userName, date, dateStr, [], 0);
+    }
+
+    const relevantCheckIns = filterByCarSessions(completed, carSessions);
 
     if (relevantCheckIns.length < 2) {
-      return await saveMileageRecord(userId, userName, date, dateStr, [], 0);
+      const finalKm = breadcrumbsKm > 0 ? breadcrumbsKm : 0;
+      return await saveMileageRecord(userId, userName, date, dateStr, [], finalKm);
     }
 
     // 4. Construir la ruta: eliminar fichajes consecutivos en el mismo centro
     const route = buildRoute(relevantCheckIns);
 
     if (route.length < 2) {
-      return await saveMileageRecord(userId, userName, date, dateStr, [], 0);
+      const finalKm = breadcrumbsKm > 0 ? breadcrumbsKm : 0;
+      return await saveMileageRecord(userId, userName, date, dateStr, [], finalKm);
     }
 
     // 5. Calcular tramos entre centros consecutivos
@@ -138,7 +168,13 @@ export async function calculateDailyMileage(userId, date, userName = 'Operario',
       }
     }
 
-    totalKm = Math.round(totalKm * 100) / 100;
+    // Si hay migas de pan registradas en las sesiones de coche, las usamos para el total
+    if (breadcrumbsKm > 0) {
+      totalKm = breadcrumbsKm;
+      console.log(`[Mileage] Usando kilometraje real de migas de pan (breadcrumbs): ${totalKm} km`);
+    } else {
+      totalKm = Math.round(totalKm * 100) / 100;
+    }
 
     return await saveMileageRecord(userId, userName, date, dateStr, tramos, totalKm, tramosSospechosos);
 

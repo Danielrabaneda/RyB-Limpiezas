@@ -5,7 +5,7 @@ import {
   isToday 
 } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { getScheduledServicesRange, generateServicesForMonth } from '../services/scheduleService';
+import { getScheduledServicesRange, generateServicesForMonth, syncServicesForMonth } from '../services/scheduleService';
 import { getCommunities } from '../services/communityService';
 import { transferService, transferDay, transferWeek, rescheduleService } from '../services/transferService';
 import TransferModal from './TransferModal';
@@ -79,6 +79,22 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
     } catch (err) {
       console.error(err);
       alert('Error al generar servicios');
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function handleSync() {
+    if (!isAdmin) return;
+    if (!confirm(`¿Sincronizar y actualizar servicios para el mes de ${format(currentMonth, 'MMMM', { locale: es })}?\n(Eliminará servicios pendientes obsoletos y creará nuevos según la configuración activa)`)) return;
+    setGenerating(true);
+    try {
+      const result = await syncServicesForMonth(currentMonth);
+      alert(`Sincronización completada:\n${result.createdCount} creados.\n${result.deletedCount} obsoletos eliminados.`);
+      await loadMonthData();
+    } catch (err) {
+      console.error(err);
+      alert('Error al sincronizar servicios');
     } finally {
       setGenerating(false);
     }
@@ -200,17 +216,32 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
           </div>
           
           {isAdmin && (
-            <button 
-              className="btn btn-primary btn-sm flex items-center gap-2 px-4 shadow-md hover:shadow-lg transition-all"
-              onClick={handleGenerate}
-              disabled={generating}
-            >
-              {generating ? (
-                <span className="spinner spinner-white"></span>
-              ) : (
-                <><span>📅</span> Generar/Actualizar Mes</>
-              )}
-            </button>
+            <div className="flex gap-2">
+              <button 
+                className="btn btn-primary btn-sm flex items-center gap-2 px-4 shadow-md hover:shadow-lg transition-all"
+                onClick={handleGenerate}
+                disabled={generating}
+                title="Genera servicios faltantes sin borrar nada"
+              >
+                {generating ? (
+                  <span className="spinner spinner-white"></span>
+                ) : (
+                  <><span>📅</span> Generar Mes</>
+                )}
+              </button>
+              <button 
+                className="btn btn-ghost btn-sm flex items-center gap-2 px-4 border border-blue-600 text-blue-600 hover:bg-blue-50 shadow-sm transition-all"
+                onClick={handleSync}
+                disabled={generating}
+                title="Sincroniza: quita servicios obsoletos y añade modificaciones"
+              >
+                {generating ? (
+                  <span className="spinner spinner-primary"></span>
+                ) : (
+                  <><span>🔄</span> Actualizar Mes</>
+                )}
+              </button>
+            </div>
           )}
         </div>
         

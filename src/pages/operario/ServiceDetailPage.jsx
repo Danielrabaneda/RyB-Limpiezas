@@ -4,7 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useGeolocation } from '../../hooks/useGeolocation';
 import { getCommunity } from '../../services/communityService';
 import { getCommunityTasks } from '../../services/taskService';
-import { updateScheduledServiceStatus, addCompanionToService, removeCompanionFromService } from '../../services/scheduleService';
+import { updateScheduledServiceStatus, addCompanionToService, removeCompanionFromService, shouldScheduleOnDay } from '../../services/scheduleService';
 import { 
   createCheckIn, completeCheckOut, getActiveCheckIn,
   createTaskExecution, updateTaskExecution, getTaskExecutionsForService,
@@ -15,9 +15,9 @@ import { transferService } from '../../services/transferService';
 import { getOperarios } from '../../services/authService';
 import TransferModal from '../../components/TransferModal';
 import { getActiveWorkday } from '../../services/workdayService';
-import { doc, onSnapshot, collection, query, where, updateDoc, arrayUnion } from 'firebase/firestore';
+import { doc, onSnapshot, collection, query, where, updateDoc, arrayUnion, getDocs, Timestamp } from 'firebase/firestore';
 import { db } from '../../config/firebase';
-import { format } from 'date-fns';
+import { format, startOfWeek, endOfWeek } from 'date-fns';
 
 export default function ServiceDetailPage() {
   const { serviceId } = useParams();
@@ -71,11 +71,7 @@ export default function ServiceDetailPage() {
         setCommunity(comm);
         
         const commTasks = await getCommunityTasks(svcData.communityId);
-        if (svcData.communityTaskId) {
-          setTasks(commTasks.filter(t => t.id === svcData.communityTaskId));
-        } else {
-          setTasks(commTasks);
-        }
+        setTasks(commTasks);
       }
     });
 
@@ -222,14 +218,47 @@ export default function ServiceDetailPage() {
       localStorage.removeItem(`detected_entry_${serviceId}`);
       setSuggestedIn(null);
 
-      // Create task execution entries for each task
-      let currentTasks = tasks;
-      if (currentTasks.length === 0) {
-        currentTasks = await getCommunityTasks(service.communityId);
-        setTasks(currentTasks);
+      let allTasks = tasks;
+      if (allTasks.length === 0) {
+        allTasks = await getCommunityTasks(service.communityId);
+        setTasks(allTasks);
       }
 
-      for (const task of currentTasks) {
+      const svcDate = service.scheduledDate?.toDate ? service.scheduledDate.toDate() : new Date(service.scheduledDate);
+      
+      let completedTaskIdsThisWeek = new Set();
+      try {
+        const startW = Timestamp.fromDate(startOfWeek(svcDate, { weekStartsOn: 1 }));
+        const endW = Timestamp.fromDate(endOfWeek(svcDate, { weekStartsOn: 1 }));
+        
+        const qWeeklyExecs = query(
+          collection(db, 'taskExecutions'),
+          where('userId', '==', userProfile.uid),
+          where('createdAt', '>=', startW),
+          where('createdAt', '<=', endW)
+        );
+        const weeklyExecsSnap = await getDocs(qWeeklyExecs);
+        completedTaskIdsThisWeek = new Set(
+          weeklyExecsSnap.docs
+            .map(d => d.data())
+            .filter(e => e.status === 'completed')
+            .map(e => e.communityTaskId)
+        );
+      } catch (err) {
+        console.warn('Error fetching weekly task executions:', err);
+      }
+
+      const relevantTasks = allTasks.filter(task => {
+        if (completedTaskIdsThisWeek.has(task.id)) return false;
+        if (shouldScheduleOnDay(task, svcDate)) return true;
+        if (task.flexibleWeek) {
+          const monday = startOfWeek(svcDate, { weekStartsOn: 1 });
+          if (shouldScheduleOnDay(task, monday)) return true;
+        }
+        return false;
+      });
+
+      for (const task of relevantTasks) {
         const existing = taskExecutions.find(e => e.communityTaskId === task.id);
         if (!existing) {
           await createTaskExecution({
@@ -332,6 +361,7 @@ export default function ServiceDetailPage() {
   const isCompleted = service.status === 'completed';
   const isInProgress = service.status === 'in_progress';
   const isTitular = service.assignedUserId === userProfile.uid;
+  const isCompanion = !isTitular;
   // Can edit if titular checked in OR is active companion and service is in progress
   const canEdit = !isCompleted && (isCheckedIn || isInProgress);
   const showTasks = isInProgress || isCompleted;

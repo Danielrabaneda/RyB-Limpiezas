@@ -375,15 +375,18 @@ function NotificationManager() {
         const { sendNotification } = await import('./utils/geolocation');
         
         // Lanzar notificación nativa
-        sendNotification(data.title || 'RyB Limpiezas', {
-          body: data.body || '',
+        const title = data.title || 'RyB Limpiezas';
+        const body = data.body || data.message || '';
+        
+        sendNotification(title, {
+          body: body,
           icon: '/icon-192x192.png',
           badge: '/icon-192x192.png',
           tag: docSnap.id
         });
 
         // Backup visual: Alerta en la app si está abierta
-        alert(`🔔 ${data.title}\n\n${data.body}`);
+        alert(`🔔 ${title}\n\n${body}`);
         
         // Marcar como leída DESPUÉS de cerrar el alert para que el badge se limpie cuando el usuario lo vea
         import('firebase/firestore').then(({ updateDoc, doc }) => {

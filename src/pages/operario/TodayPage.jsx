@@ -103,6 +103,105 @@ export default function TodayPage() {
   }, []);
 
   useEffect(() => {
+    let watchId = null;
+    let wakeLock = null;
+
+    const requestWakeLock = async () => {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request('screen');
+        }
+      } catch (err) {
+        console.warn('[WakeLock] No se pudo activar el bloqueo de pantalla:', err);
+      }
+    };
+
+    const releaseWakeLock = async () => {
+      try {
+        if (wakeLock) {
+          await wakeLock.release();
+          wakeLock = null;
+        }
+      } catch (err) {
+        console.error('[WakeLock] Error al liberar bloqueo:', err);
+      }
+    };
+
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === 'visible' && activeWorkday?.carActive) {
+        await requestWakeLock();
+      }
+    };
+
+    if (activeWorkday && activeWorkday.carActive) {
+      requestWakeLock();
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+
+      const getDistance = (lat1, lon1, lat2, lon2) => {
+        const R = 6371e3; 
+        const φ1 = lat1 * Math.PI / 180;
+        const φ2 = lat2 * Math.PI / 180;
+        const Δφ = (lat2 - lat1) * Math.PI / 180;
+        const Δλ = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+                Math.cos(φ1) * Math.cos(φ2) *
+                Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
+      };
+
+      const processPosition = (pos) => {
+        const currentBreadcrumb = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          timestamp: Date.now()
+        };
+
+        try {
+          const existing = JSON.parse(localStorage.getItem('ryb_car_breadcrumbs') || '[]');
+          
+          if (existing.length > 0) {
+            const last = existing[existing.length - 1];
+            const dist = getDistance(last.lat, last.lng, currentBreadcrumb.lat, currentBreadcrumb.lng);
+            const timeDiff = currentBreadcrumb.timestamp - last.timestamp;
+
+            // Guardar si se ha movido > 50m o pasaron > 2 minutos (120s)
+            if (dist >= 50 || timeDiff >= 120000) {
+              existing.push(currentBreadcrumb);
+              localStorage.setItem('ryb_car_breadcrumbs', JSON.stringify(existing));
+            }
+          } else {
+            existing.push(currentBreadcrumb);
+            localStorage.setItem('ryb_car_breadcrumbs', JSON.stringify(existing));
+          }
+        } catch (e) {
+          console.error('[GPS] Error guardando breadcrumb en watchPosition:', e);
+        }
+      };
+
+      if ("geolocation" in navigator) {
+        watchId = navigator.geolocation.watchPosition(
+          processPosition,
+          (error) => console.warn('[GPS] watchPosition error:', error),
+          {
+            enableHighAccuracy: true, 
+            timeout: 20000, 
+            maximumAge: 30000 
+          }
+        );
+      }
+    }
+
+    return () => {
+      releaseWakeLock();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (watchId !== null && "geolocation" in navigator) {
+        navigator.geolocation.clearWatch(watchId);
+      }
+    };
+  }, [activeWorkday?.carActive]);
+
+  useEffect(() => {
     if (!userProfile?.uid) return;
     
     setLoading(true);
@@ -264,7 +363,9 @@ export default function TodayPage() {
     
     setActionLoading(true);
     try {
-      await endWorkday(activeWorkday.id);
+      const breadcrumbs = JSON.parse(localStorage.getItem('ryb_car_breadcrumbs') || '[]');
+      await endWorkday(activeWorkday.id, breadcrumbs);
+      localStorage.removeItem('ryb_car_breadcrumbs');
       await loadToday();
     } catch (err) {
       alert('Error al finalizar jornada');
@@ -347,8 +448,11 @@ export default function TodayPage() {
     setActionLoading(true);
     try {
       if (activeWorkday.carActive) {
-        await deactivateCar(activeWorkday.id);
+        const breadcrumbs = JSON.parse(localStorage.getItem('ryb_car_breadcrumbs') || '[]');
+        await deactivateCar(activeWorkday.id, breadcrumbs);
+        localStorage.removeItem('ryb_car_breadcrumbs');
       } else {
+        localStorage.setItem('ryb_car_breadcrumbs', '[]');
         await activateCar(activeWorkday.id);
       }
       await loadToday();
@@ -705,7 +809,13 @@ export default function TodayPage() {
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxHeight: '80vh', overflowY: 'auto' }}>
             <div className="flex justify-between items-center mb-4">
               <h3 className="font-bold">Seleccionar Acompañante</h3>
-              <button className="btn btn-ghost btn-sm" onClick={() => setCompanionSelectorOpen(false)}>✕</button>
+              <button 
+                className="btn btn-ghost btn-circle" 
+                onClick={() => setCompanionSelectorOpen(false)}
+                style={{ fontSize: '1.5rem', minHeight: '44px', height: '44px', width: '44px' }}
+              >
+                ✕
+              </button>
             </div>
             
             <div className="flex flex-col gap-2">
