@@ -12,6 +12,9 @@ import TransferModal from './TransferModal';
 import RescheduleModal from './RescheduleModal';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import PrintableCalendar from './PrintableCalendar';
+import ServiceItem from './ServiceItem';
+import jsPDF from 'jspdf';
 
 export default function PlanningCalendar({ userId = null, isAdmin = false, operarios = [] }) {
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -26,6 +29,7 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
   const [transferModal, setTransferModal] = useState({ open: false, type: '', date: null, serviceId: null, fromUserId: null });
   const [rescheduleModal, setRescheduleModal] = useState({ open: false, serviceId: null, currentDate: null });
   const [actionLoading, setActionLoading] = useState(false);
+  const [selectedPrintOpId, setSelectedPrintOpId] = useState('all');
 
   useEffect(() => {
     loadMonthData();
@@ -90,7 +94,13 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
     setGenerating(true);
     try {
       const result = await syncServicesForMonth(currentMonth);
-      alert(`Sincronización completada:\n${result.createdCount} creados.\n${result.deletedCount} obsoletos eliminados.`);
+      
+      if (result.createdCount === 0 && result.deletedCount === 0) {
+        alert("El calendario ya está al día. Los cambios realizados en las comunidades se sincronizan automáticamente al guardar.");
+      } else {
+        alert(`Sincronización completada:\n- ${result.createdCount} servicios nuevos creados.\n- ${result.deletedCount} servicios obsoletos eliminados.`);
+      }
+      
       await loadMonthData();
     } catch (err) {
       console.error(err);
@@ -161,6 +171,244 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
     }
   }
 
+  // ── Generación directa PDF con jsPDF (sin html2canvas) ──────────────────
+  const generatePDFDirect = () => {
+    const pdf = new jsPDF('l', 'mm', 'a4');
+    const W = pdf.internal.pageSize.getWidth();  // 297mm
+    const H = pdf.internal.pageSize.getHeight(); // 210mm
+    const mX = 4;   // margen horizontal
+    const mY = 3.5; // margen vertical
+
+    // ── Datos del mes ─────────────────────────────────────────────────────
+    const monthStart = startOfMonth(currentMonth);
+    const monthEnd   = endOfMonth(currentMonth);
+    const calStart   = startOfWeek(monthStart, { weekStartsOn: 1 });
+    const calEnd     = endOfWeek(monthEnd,   { weekStartsOn: 1 });
+    const allDays    = eachDayOfInterval({ start: calStart, end: calEnd });
+    const weeks      = [];
+    for (let i = 0; i < allDays.length; i += 7) weeks.push(allDays.slice(i, i + 7));
+
+    const filteredServices = monthServices.filter(s =>
+      selectedPrintOpId === 'all' || s.assignedUserId === selectedPrintOpId
+    );
+    const getCommunityName = (id) => communities.find(c => c.id === id)?.name || '?';
+    const getServicesForDay = (date) => filteredServices.filter(s => {
+      const d = s.scheduledDate?.toDate ? s.scheduledDate.toDate() : new Date(s.scheduledDate);
+      return isSameDay(d, date);
+    });
+    const hexToRgb = (hex) => {
+      const r = parseInt(hex.slice(1,3),16);
+      const g = parseInt(hex.slice(3,5),16);
+      const b = parseInt(hex.slice(5,7),16);
+      return [r,g,b];
+    };
+
+    // ── Layout ────────────────────────────────────────────────────────────
+    const usableW    = W - 2 * mX;
+    const headerH    = 9;
+    const footerH    = 5;
+    const calHeaderH = 5;
+    const calGridH   = H - 2 * mY - headerH - footerH - calHeaderH;
+    const rowH       = calGridH / weeks.length;
+
+    const totalRatio = 5 * 1.2 + 2 * 0.5;
+    const unitW      = usableW / totalRatio;
+    const colW       = [1.2,1.2,1.2,1.2,1.2,0.5,0.5].map(r => r * unitW);
+    const colX       = [];
+    let cx = mX;
+    for (const w of colW) { colX.push(cx); cx += w; }
+
+    const gridTop = mY + headerH + calHeaderH;
+
+    // ── HEADER ────────────────────────────────────────────────────────────
+    pdf.setFillColor(0,0,0);
+    pdf.rect(mX, mY, 11, 6, 'F');
+    pdf.setTextColor(255,255,255);
+    pdf.setFont('helvetica','bold');
+    pdf.setFontSize(8);
+    pdf.text('RYB', mX + 1.5, mY + 4.3);
+
+    pdf.setTextColor(0,0,0);
+    pdf.setFontSize(5.5);
+    pdf.text('RyB Limpiezas', mX + 13, mY + 4);
+
+    const monthName = format(currentMonth, 'MMMM yyyy', { locale: es });
+    pdf.setFontSize(14);
+    pdf.setFont('helvetica','bold');
+    pdf.text(monthName.charAt(0).toUpperCase() + monthName.slice(1), W/2, mY + 5.5, { align: 'center' });
+
+    const selectedOpName = operarios.find(o => o.uid === selectedPrintOpId)?.name || '';
+    if (selectedPrintOpId !== 'all' && selectedOpName) {
+      pdf.setFontSize(7);
+      pdf.text(`OPERARIO: ${selectedOpName.toUpperCase()}`, W/2, mY + 8.5, { align: 'center' });
+    }
+
+    pdf.setFontSize(6);
+    pdf.setFont('helvetica','bold');
+    pdf.text('Daniel Rabaneda', W - mX, mY + 4, { align: 'right' });
+    pdf.setFontSize(4.5);
+    pdf.setFont('helvetica','normal');
+    pdf.text('Planificación Mensual', W - mX, mY + 7, { align: 'right' });
+
+    // Línea bajo header
+    pdf.setDrawColor(0,0,0);
+    pdf.setLineWidth(0.4);
+    pdf.line(mX, mY + headerH, W - mX, mY + headerH);
+
+    // ── CABECERA DÍAS ─────────────────────────────────────────────────────
+    const dayNames = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
+    pdf.setFillColor(238,238,238);
+    pdf.rect(mX, mY + headerH, usableW, calHeaderH, 'F');
+    pdf.setTextColor(0,0,0);
+    pdf.setFontSize(5.5);
+    pdf.setFont('helvetica','bold');
+    dayNames.forEach((d, i) => {
+      const midX = colX[i] + colW[i] / 2;
+      pdf.text(d.toUpperCase(), midX, mY + headerH + 3.3, { align: 'center' });
+    });
+
+    // Línea bajo cabecera días
+    pdf.setLineWidth(0.4);
+    pdf.line(mX, mY + headerH + calHeaderH, W - mX, mY + headerH + calHeaderH);
+
+    // ── GRID + CELDAS ─────────────────────────────────────────────────────
+    pdf.setLineWidth(0.2);
+    pdf.setDrawColor(160,160,160);
+
+    weeks.forEach((week, wIdx) => {
+      const rowTop = gridTop + wIdx * rowH;
+
+      week.forEach((day, dIdx) => {
+        const cellX = colX[dIdx];
+        const cellW = colW[dIdx];
+        const isCurrentMonth = isSameMonth(day, currentMonth);
+
+        // Fondo fuera del mes
+        if (!isCurrentMonth) {
+          pdf.setFillColor(248,248,248);
+          pdf.rect(cellX, rowTop, cellW, rowH, 'F');
+        }
+
+        // Número de día
+        pdf.setFont('helvetica','bold');
+        pdf.setFontSize(7);
+        pdf.setTextColor(isCurrentMonth ? 0 : 180, isCurrentMonth ? 0 : 180, isCurrentMonth ? 0 : 180);
+        pdf.text(format(day,'d'), cellX + cellW - 1, rowTop + 4, { align: 'right' });
+
+        // Servicios — 2 columnas
+        if (isCurrentMonth) {
+          const svcs = getServicesForDay(day);
+          const colHalf = cellW / 2;
+          const fontSize = 5;
+          const lineH    = 3.2;
+          const startY   = rowTop + 5.5;
+          const dotR     = 0.9;
+
+          pdf.setFontSize(fontSize);
+          pdf.setFont('helvetica','bold');
+
+          svcs.forEach((s, sIdx) => {
+            const col  = sIdx % 2;       // 0 = izq, 1 = der
+            const row  = Math.floor(sIdx / 2);
+            const tx   = cellX + col * colHalf + 2.5 + dotR * 2 + 0.5;
+            const ty   = startY + row * lineH;
+            const dotX = cellX + col * colHalf + 2.0;
+            const dotY = ty - 0.9;
+
+            if (ty + lineH > rowTop + rowH - 0.5) return; // clip
+
+            const task = allTasks.find(t => t.id === s.communityTaskId);
+            const color = task?.printColor || '#ef4444';
+            const [r,g,b] = hexToRgb(color);
+
+            pdf.setFillColor(r,g,b);
+            pdf.circle(dotX, dotY, dotR, 'F');
+
+            pdf.setTextColor(0,0,0);
+            const name = getCommunityName(s.communityId);
+            const maxW = colHalf - 2.5 - dotR * 2 - 1;
+            const truncated = pdf.splitTextToSize(name, maxW)[0];
+            pdf.text(truncated, tx, ty);
+          });
+        }
+
+        // Líneas borde celda
+        pdf.setDrawColor(160,160,160);
+        pdf.setLineWidth(0.2);
+        pdf.rect(cellX, rowTop, cellW, rowH, 'S');
+      });
+    });
+
+    // Borde exterior
+    pdf.setDrawColor(0,0,0);
+    pdf.setLineWidth(0.5);
+    pdf.rect(mX, gridTop, usableW, rowH * weeks.length, 'S');
+
+    // ── FOOTER / LEYENDA ──────────────────────────────────────────────────
+    const footerY = H - mY - footerH + 3;
+    const legend = [
+      { color: '#22c55e', label: 'Limp. Escalera' },
+      { color: '#eab308', label: 'Repaso Portal' },
+      { color: '#ef4444', label: 'Otras tareas' },
+    ];
+    let lx = mX;
+    pdf.setFontSize(5.5);
+    pdf.setFont('helvetica','bold');
+    legend.forEach(({ color, label }) => {
+      const [r,g,b] = hexToRgb(color);
+      pdf.setFillColor(r,g,b);
+      pdf.circle(lx + 1.5, footerY - 1, 1.5, 'F');
+      pdf.setTextColor(50,50,50);
+      pdf.text(label, lx + 4, footerY);
+      lx += pdf.getTextWidth(label) + 7;
+    });
+
+    pdf.setFontSize(5);
+    pdf.setFont('helvetica','normal');
+    pdf.setTextColor(120,120,120);
+    pdf.text(`Generado: ${format(new Date(),'d/MM/yyyy HH:mm')}`, W - mX, footerY, { align: 'right' });
+
+    return pdf;
+  };
+
+
+
+  // Descargar como archivo PDF
+  const handleDownloadPDF = async () => {
+    setActionLoading(true);
+    try {
+      const pdf = generatePDFDirect();
+      pdf.save(`Calendario_${format(currentMonth, 'MMMM_yyyy', { locale: es })}.pdf`);
+    } catch (err) {
+      console.error('Error generating PDF:', err);
+      alert('Error al generar PDF.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Abrir PDF en pestaña nueva para imprimir directamente
+  const handlePrintPDF = async () => {
+    setActionLoading(true);
+    try {
+      const pdf = generatePDFDirect();
+      const blob = pdf.output('blob');
+      const url = URL.createObjectURL(blob);
+      const printWindow = window.open(url, '_blank');
+      if (printWindow) {
+        printWindow.addEventListener('load', () => {
+          printWindow.focus();
+          printWindow.print();
+        });
+      }
+    } catch (err) {
+      console.error('Error printing PDF:', err);
+      alert('Error al preparar impresión.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const days = eachDayOfInterval({
     start: startOfWeek(startOfMonth(currentMonth), { weekStartsOn: 1 }),
     end: endOfWeek(endOfMonth(currentMonth), { weekStartsOn: 1 })
@@ -187,6 +435,50 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
         services: selectedDayServices.filter(s => s.assignedUserId === op.uid)
       };
     });
+  }
+
+  function renderOperarioActions() {
+    const hasStartedDay = selectedDayServices.some(s => s.status === 'completed' || s.status === 'in_progress');
+    
+    const weekStart = startOfWeek(selectedDate, { weekStartsOn: 1 });
+    const weekEnd = endOfWeek(selectedDate, { weekStartsOn: 1 });
+    const weekServices = monthServices.filter(s => {
+      const sDate = s.scheduledDate?.toDate ? s.scheduledDate.toDate() : new Date(s.scheduledDate);
+      return sDate >= weekStart && sDate <= weekEnd && s.assignedUserId === (userId || s.assignedUserId);
+    });
+    const hasStartedWeek = weekServices.some(s => s.status === 'completed' || s.status === 'in_progress');
+
+    return (
+      <div className="flex gap-2 mb-4 overflow-x-auto pb-2 no-scrollbar">
+        {!hasStartedDay ? (
+          <button 
+            className="btn btn-ghost btn-xs whitespace-nowrap" 
+            onClick={() => setTransferModal({ open: true, type: 'day', date: selectedDate, fromUserId: userId })}
+            style={{ border: '1px solid var(--color-warning)', color: 'var(--color-warning)', fontSize: '10px' }}
+          >
+            🔄 Traspasar Día
+          </button>
+        ) : (
+          <div className="text-[10px] font-bold text-slate-400 border border-slate-200 px-2 py-1 rounded flex items-center gap-1 bg-slate-50">
+            🚫 Día bloqueado para traspasos
+          </div>
+        )}
+        
+        {!hasStartedWeek ? (
+          <button 
+            className="btn btn-ghost btn-xs whitespace-nowrap" 
+            onClick={() => setTransferModal({ open: true, type: 'week', date: selectedDate, fromUserId: userId })}
+            style={{ border: '1px solid var(--color-warning)', color: 'var(--color-warning)', fontSize: '10px' }}
+          >
+            📅 Traspasar Sem
+          </button>
+        ) : (
+          <div className="text-[10px] font-bold text-slate-400 border border-slate-200 px-2 py-1 rounded flex items-center gap-1 bg-slate-50">
+            🚫 Sem bloqueada
+          </div>
+        )}
+      </div>
+    );
   }
 
   return (
@@ -216,7 +508,46 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
           </div>
           
           {isAdmin && (
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
+              {isAdmin && (
+                <div className="flex items-center gap-2 mr-2">
+                  <select 
+                    className="select select-sm border-slate-200 text-xs font-bold"
+                    value={selectedPrintOpId}
+                    onChange={(e) => setSelectedPrintOpId(e.target.value)}
+                    style={{ height: '32px', borderRadius: '8px' }}
+                  >
+                    <option value="all">Todos los operarios</option>
+                    {operarios.map(op => (
+                      <option key={op.uid} value={op.uid}>{op.name}</option>
+                    ))}
+                  </select>
+                  <button 
+                    className="btn btn-ghost btn-sm bg-white border border-slate-200 hover:bg-slate-50 px-3 flex items-center gap-2 shadow-sm"
+                    onClick={handlePrintPDF}
+                    disabled={actionLoading}
+                    style={{ height: '32px', borderRadius: '8px' }}
+                  >
+                    {actionLoading ? (
+                      <span className="spinner spinner-primary w-3 h-3"></span>
+                    ) : (
+                      <><span>🖨️</span> <span className="hidden sm:inline">Imprimir</span></>
+                    )}
+                  </button>
+                  <button 
+                    className="btn btn-ghost btn-sm bg-white border border-blue-200 text-blue-700 hover:bg-blue-50 px-3 flex items-center gap-2 shadow-sm"
+                    onClick={handleDownloadPDF}
+                    disabled={actionLoading}
+                    style={{ height: '32px', borderRadius: '8px' }}
+                  >
+                    {actionLoading ? (
+                      <span className="spinner spinner-primary w-3 h-3"></span>
+                    ) : (
+                      <><span>📄</span> <span className="hidden sm:inline">Guardar PDF</span></>
+                    )}
+                  </button>
+                </div>
+              )}
               <button 
                 className="btn btn-primary btn-sm flex items-center gap-2 px-4 shadow-md hover:shadow-lg transition-all"
                 onClick={handleGenerate}
@@ -380,48 +711,7 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
           ) : (
             /* OPERARIO VIEW: Simple list */
             <>
-               {selectedDayServices.length > 0 && (() => {
-                const hasStartedDay = selectedDayServices.some(s => s.status === 'completed' || s.status === 'in_progress');
-                
-                // Para la semana, necesitamos filtrar de monthServices
-                const weekStart = startOfWeek(selectedDate, { weekStartsOn: 1 });
-                const weekEnd = endOfWeek(selectedDate, { weekStartsOn: 1 });
-                const weekServices = monthServices.filter(s => {
-                  const sDate = s.scheduledDate?.toDate ? s.scheduledDate.toDate() : new Date(s.scheduledDate);
-                  return sDate >= weekStart && sDate <= weekEnd && s.assignedUserId === (userId || s.assignedUserId);
-                });
-                const hasStartedWeek = weekServices.some(s => s.status === 'completed' || s.status === 'in_progress');
-
-                  <div className="flex gap-2 mb-4 overflow-x-auto pb-2 no-scrollbar">
-                    {!hasStartedDay ? (
-                      <button 
-                        className="btn btn-ghost btn-xs whitespace-nowrap" 
-                        onClick={() => setTransferModal({ open: true, type: 'day', date: selectedDate, fromUserId: userId })}
-                        style={{ border: '1px solid var(--color-warning)', color: 'var(--color-warning)', fontSize: '10px' }}
-                      >
-                        🔄 Traspasar Día
-                      </button>
-                    ) : (
-                      <div className="text-[10px] font-bold text-slate-400 border border-slate-200 px-2 py-1 rounded flex items-center gap-1 bg-slate-50">
-                        🚫 Día bloqueado para traspasos
-                      </div>
-                    )}
-                    
-                    {!hasStartedWeek ? (
-                      <button 
-                        className="btn btn-ghost btn-xs whitespace-nowrap" 
-                        onClick={() => setTransferModal({ open: true, type: 'week', date: selectedDate, fromUserId: userId })}
-                        style={{ border: '1px solid var(--color-warning)', color: 'var(--color-warning)', fontSize: '10px' }}
-                      >
-                        📅 Traspasar Sem
-                      </button>
-                    ) : (
-                      <div className="text-[10px] font-bold text-slate-400 border border-slate-200 px-2 py-1 rounded flex items-center gap-1 bg-slate-50">
-                        🚫 Sem bloqueada
-                      </div>
-                    )}
-                  </div>
-              })()}
+              {selectedDayServices.length > 0 && renderOperarioActions()}
               <div className="flex flex-col gap-4 px-1 pb-4">
                 {selectedDayServices.map(s => (
                   <ServiceItem 
@@ -438,6 +728,7 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
               </div>
             </>
           )}
+
 
           {selectedDayServices.length === 0 && (
             <div className="text-center py-16 opacity-40">
@@ -471,10 +762,16 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
           title="Mover de día"
         />
       </div>
+    </div>
 
-      {/* Footer Info / Version tag */}
-      <div className="mt-auto pt-4 flex justify-center opacity-0 h-0">
-      </div>
+    <PrintableCalendar 
+        month={currentMonth}
+        services={monthServices}
+        selectedOpId={selectedPrintOpId}
+        operarios={operarios}
+        communities={communities}
+        allTasks={allTasks}
+      />
 
       <style>{`
         .planning-grid-container {
@@ -603,79 +900,5 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
         }
       `}</style>
       </div>
-    </div>
-  );
-}
-
-function ServiceItem({ service, communityName, isOp = false, onTransfer, onReschedule, isAdmin, allTasks = [] }) {
-  const isCompleted = service.status === 'completed';
-  const isInProgress = service.status === 'in_progress' || service.status === 'started';
-  
-  // Encontrar el nombre de la tarea específica
-  const specificTask = allTasks.find(t => t.id === service.communityTaskId);
-  const taskName = service.taskName || specificTask?.taskName || 'Servicio de Limpieza';
-
-  const statusClass = isCompleted ? 'completed' : isInProgress ? 'in-progress' : '';
-
-  const getStatusBadge = () => {
-    if (isCompleted) {
-      return <span className="status-badge status-completed">✅ COMPLETADO</span>;
-    }
-    if (isInProgress) {
-      return <span className="status-badge status-in-progress">⏳ EN CURSO</span>;
-    }
-    return <span className="status-badge status-pending">⚪ PENDIENTE</span>;
-  };
-
-  return (
-    <div className={`service-card ${statusClass}`}>
-      <div className="service-card-header">
-        <div>
-          <div className="service-community">{communityName}</div>
-          {service.isTransferred && (
-            <div className="text-[10px] text-amber-600 font-bold mt-1 uppercase tracking-wider">
-              🔄 Traspasado de usuario
-            </div>
-          )}
-          {service.rescheduleValidated === false && (
-            <div className="text-[10px] text-purple-600 font-bold mt-1 uppercase tracking-wider">
-              📅 Cambio de día pte. validación
-            </div>
-          )}
-        </div>
-        {getStatusBadge()}
-      </div>
-
-      <div className="flex gap-2 mb-2">
-        {(!isCompleted || isAdmin) && (
-          <button 
-            className="btn btn-ghost btn-xs flex-1"
-            onClick={(e) => {
-              e.stopPropagation();
-              onTransfer();
-            }}
-            style={{ color: 'var(--color-primary)', border: '1px solid var(--color-primary)', fontSize: '10px' }}
-          >
-            🔄 Traspasar
-          </button>
-        )}
-        {(!isCompleted || isAdmin) && (
-          <button 
-            className="btn btn-ghost btn-xs flex-1"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (onReschedule) onReschedule();
-            }}
-            style={{ color: 'var(--color-primary)', border: '1px solid var(--color-primary)', fontSize: '10px' }}
-          >
-            📅 Mover día
-          </button>
-        )}
-      </div>
-
-      <div className="service-tasks">
-        <span className="service-task-chip flex items-center gap-1">📋 {taskName}</span>
-      </div>
-    </div>
   );
 }

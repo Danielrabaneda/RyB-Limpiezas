@@ -359,6 +359,23 @@ export async function getMileageReport(startDate, endDate, filters = {}) {
 }
 
 /**
+ * Obtiene los registros de kilometraje de un operario para una semana.
+ * Devuelve un array con los registros (uno por día trabajado en coche).
+ */
+export async function getMileageForWeek(userId, startDate, endDate) {
+  return getMileageReport(startDate, endDate, { userId });
+}
+
+/**
+ * Obtiene los registros de kilometraje de un operario para un mes completo.
+ */
+export async function getMileageForMonth(userId, year, month) {
+  const startDate = new Date(year, month, 1);
+  const endDate = new Date(year, month + 1, 0, 23, 59, 59);
+  return getMileageReport(startDate, endDate, { userId });
+}
+
+/**
  * Recalcula el kilometraje en bloque para un rango de fechas.
  */
 export async function recalculateBulk(startDate, endDate, userId, userName, carSessionsByDate = {}) {

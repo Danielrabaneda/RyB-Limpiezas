@@ -313,6 +313,7 @@ export default function TodayPage() {
             ...svc,
             community: communityCache[svc.communityId] || { name: 'Comunidad desconocida' },
             tasks,
+            isGarage: !!specificTask?.isGarage
           });
         } catch (enrichErr) {
           console.warn(`Error enriching service ${svc.id}:`, enrichErr);
@@ -901,10 +902,11 @@ export default function TodayPage() {
             const hasIndividualTime = svc.community?.individualTimeTracking;
             const canAccess = activeWorkday || hasIndividualTime;
             const statusClass = svc.status === 'completed' ? 'completed' : (svc.status === 'in_progress' || svc.status === 'started') ? 'in-progress' : '';
+            const garageClass = svc.isGarage ? 'garage' : '';
             return (
             <div
               key={svc.id}
-              className={`service-card ${statusClass} ${!canAccess ? 'opacity-50 grayscale' : ''}`}
+              className={`service-card ${statusClass} ${garageClass} ${!canAccess ? 'opacity-50 grayscale' : ''}`}
               onClick={() => {
                 if (!canAccess) {
                   alert('Debes iniciar tu jornada primero para acceder a los servicios.');

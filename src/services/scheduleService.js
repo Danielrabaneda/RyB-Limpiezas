@@ -4,9 +4,10 @@ import {
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { 
-  startOfDay, endOfDay, addDays, format, getDay, getDate, getMonth,
+  startOfDay, endOfDay, addDays, format, getDay, getDate, getMonth, getYear,
   startOfWeek, endOfWeek, eachDayOfInterval, startOfMonth, endOfMonth,
-  isSameDay, isSameWeek, getWeekOfMonth, isWithinInterval, lastDayOfMonth
+  isSameDay, isSameWeek, getWeekOfMonth, isWithinInterval, lastDayOfMonth,
+  isBefore, differenceInCalendarWeeks
 } from 'date-fns';
 
 // ==================== SCHEDULED SERVICES ====================
@@ -769,54 +770,114 @@ export async function syncServicesForMonth(monthDate) {
   return syncServicesForRange(start, end);
 }
 
-export function shouldScheduleOnDay(task, date) {
+export function shouldScheduleOnDay(task, date, options = {}) {
+  const { isForecasting = false } = options;
   const dayOfWeek = getDay(date); // 0=Sunday, 1=Monday...
   const dayOfMonth = getDate(date);
   const currentMonthIdx = getMonth(date); // 0-11
-  const currentMonth = currentMonthIdx + 1; // 1-12
   
   // 1. Boundary Checks (Start and End dates)
-  const explicitStart = task.startDate?.toDate ? task.startDate.toDate() : (task.startDate ? new Date(task.startDate) : null);
-  const punctualStart = task.punctualDate?.toDate ? task.punctualDate.toDate() : (task.punctualDate ? new Date(task.punctualDate) : null);
+  const explicitStart = task.startDate?.toDate ? task.startDate.toDate() : (task.startDate ? new Date(task.startDate + (task.startDate.includes('T') ? '' : 'T00:00:00')) : null);
+  const punctualStart = task.punctualDate?.toDate ? task.punctualDate.toDate() : (task.punctualDate ? new Date(task.punctualDate + (task.punctualDate.includes('T') ? '' : 'T00:00:00')) : null);
   const taskStart = explicitStart || punctualStart;
   
-  const taskEnd = task.endDate?.toDate ? task.endDate.toDate() : (task.endDate ? new Date(task.endDate) : null);
+  const taskEnd = task.endDate?.toDate ? task.endDate.toDate() : (task.endDate ? new Date(task.endDate + (task.endDate.includes('T') ? '' : 'T23:59:59')) : null);
 
-  // Evitar programar tareas hacia atrás desde la fecha de creación (no retroactivo)
-  const taskCreationDateRaw = task.createdAt?.toDate ? task.createdAt.toDate() : (task.createdAt ? new Date(task.createdAt) : new Date());
+  const taskCreationDateRaw = task.createdAt?.toDate ? task.createdAt.toDate() : (task.createdAt ? new Date(task.createdAt) : new Date(2020, 0, 1));
   const taskCreationDate = startOfDay(taskCreationDateRaw);
   
-  // No programar si la fecha a evaluar es anterior a la fecha en que se programó/creó la tarea
-  if (date < taskCreationDate) return false;
+  // If forecasting, we are less strict about when the task was created, 
+  // but we still respect the explicit start date if provided.
+  // 2. Date Bounds Check
+  const isAfterEnd = taskEnd && startOfDay(date) > startOfDay(taskEnd);
+  const isBeforeStart = taskStart && startOfDay(date) < startOfDay(taskStart);
 
-  if (taskStart && date < startOfDay(taskStart)) return false;
-  if (taskEnd && date > endOfDay(taskEnd)) return false;
+  if (!isForecasting) {
+    if (isBeforeStart || isAfterEnd) return false;
+    
+    // Original creation month check for actual scheduling
+    const evalMonthStart = startOfMonth(date);
+    const creationMonthStart = startOfMonth(taskCreationDate);
+    if (isBefore(evalMonthStart, creationMonthStart)) return false;
+  } else {
+    // For forecasting (Yearly View), we allow showing dots for the whole year 
+    // of the start date, even if it's before the exact day, to show the pattern.
+    // We only block if the year is completely outside the bounds.
+    if (taskStart && getYear(date) < getYear(taskStart)) return false;
+    if (taskEnd && getYear(date) > getYear(taskEnd)) return false;
+  }
 
-  // 2. Service Mode Logic
+  // 3. Service Mode Logic
   if (task.serviceMode === 'once') {
     return taskStart ? isSameDay(date, taskStart) : false;
   }
 
-  // 3. Month and Week Filters
-  // Filter by Month of Year if specified (task.monthOfYear is 0-indexed: 0-11)
-  if (task.monthOfYear !== undefined && task.monthOfYear !== null && task.monthOfYear !== '') {
-    if (currentMonthIdx !== parseInt(task.monthOfYear)) return false;
+  // 3. Month and Frequency Logic
+  const periodicMultiMonth = ['bimonthly', 'trimonthly', 'quadrimonthly', 'semiannual', 'eightmonthly', 'annual'];
+  const isPeriodic = periodicMultiMonth.includes(task.frequencyType);
+
+  // Calculate anchor
+  let anchorMonth = 0;
+  let anchorYear = 2024; // Standard anchor year for consistent cycles
+  
+  const taskMonthOfYear = task.monthOfYear !== undefined && task.monthOfYear !== null && task.monthOfYear !== '' ? parseInt(task.monthOfYear) : NaN;
+  
+  if (!isNaN(taskMonthOfYear)) {
+    anchorMonth = taskMonthOfYear;
+    anchorYear = taskStart ? getYear(taskStart) : getYear(taskCreationDate);
+  } else if (isPeriodic) {
+    // Standard Cycle (SYC): Align with Ene, Mar, May...
+    anchorMonth = 0;
+    anchorYear = 2024;
+  } else if (taskStart) {
+    anchorMonth = getMonth(taskStart);
+    anchorYear = getYear(taskStart);
+  } else {
+    anchorMonth = getMonth(taskCreationDate);
+    anchorYear = getYear(taskCreationDate);
   }
 
-  // Filter by Week of Month if specified
+  const monthDiff = (getYear(date) - anchorYear) * 12 + (currentMonthIdx - anchorMonth);
+
+  if (isPeriodic) {
+    const freqMap = {
+      'bimonthly': 2,
+      'trimonthly': 3,
+      'quadrimonthly': 4,
+      'semiannual': 6,
+      'eightmonthly': 8,
+      'annual': 12
+    };
+    const frequency = freqMap[task.frequencyType] || 1;
+    // Robust modulo for negative month differences
+    const normalizedDiff = ((monthDiff % frequency) + frequency) % frequency;
+    if (normalizedDiff !== 0) return false;
+  } else if (!isNaN(taskMonthOfYear)) {
+    if (currentMonthIdx !== taskMonthOfYear) return false;
+  }
+
+  // Helper to check if a day matches the selected weekdays (handling types safely)
+  const isWeekdayMatch = (dOfWeek) => {
+    if (!task.weekDays || task.weekDays.length === 0) return false;
+    return task.weekDays.some(wd => parseInt(wd) === dOfWeek);
+  };
+
+  // 4. Week/Day Filters
   if (task.weekOfMonth) {
     const weekNum = getWeekOfMonth(date, { weekStartsOn: 1 });
-    if (parseInt(task.weekOfMonth) === 5) {
-      // 5 significa "Última semana"
+    const targetWeek = parseInt(task.weekOfMonth);
+    if (targetWeek === 5) {
       const lastDay = lastDayOfMonth(date);
       const lastWeekNum = getWeekOfMonth(lastDay, { weekStartsOn: 1 });
       if (weekNum !== lastWeekNum) return false;
     } else {
-      if (weekNum !== parseInt(task.weekOfMonth)) return false;
+      if (weekNum !== targetWeek) return false;
     }
   }
 
-  if (task.flexibleWeek) {
+  // Flexible week logic: In "live" mode, it's true on Monday (or first day of month if week starts before month)
+  // In "forecasting" mode for the yearly view, we might want it to fall on a specific day if weekDays are set
+  if (task.flexibleWeek && !isForecasting) {
     const mon = startOfWeek(date, { weekStartsOn: 1 });
     let anchorDate = mon;
     if (getMonth(mon) !== currentMonthIdx) {
@@ -825,113 +886,108 @@ export function shouldScheduleOnDay(task, date) {
     
     if (!isSameDay(date, anchorDate)) return false;
 
-    // Asegurarse de que cumple también el mes si no tenía weekOfMonth
-    if (!task.weekOfMonth && (task.frequencyType === 'monthly' || task.frequencyType === 'bimonthly' || task.frequencyType === 'trimonthly' || task.frequencyType === 'semiannual' || task.frequencyType === 'annual')) {
+    if (!task.weekOfMonth) {
       const weekNum = getWeekOfMonth(date, { weekStartsOn: 1 });
-      if (weekNum !== 1) return false; // si solo dicen mensualmente, sin semana especifica, usamos la semana 1.
+      if (weekNum !== 1) return false;
     }
 
-    switch (task.frequencyType) {
-       case 'bimonthly': if (currentMonthIdx % 2 !== 0) return false; break;
-       case 'trimonthly': if (currentMonthIdx % 3 !== 0) return false; break;
-       case 'semiannual': if (currentMonthIdx % 6 !== 0) return false; break;
-       case 'annual': if (currentMonthIdx !== 0) return false; break;
-       case 'biweekly': 
-          if (taskStart) {
-            const weeksDiff = Math.floor((date.getTime() - startOfDay(taskStart).getTime()) / (7 * 24 * 60 * 60 * 1000));
-            if (weeksDiff % 2 !== 0) return false; 
-          }
-          break;
+    if (task.frequencyType === 'biweekly') {
+      if (taskStart) {
+        const weeksDiff = Math.abs(differenceInCalendarWeeks(date, taskStart, { weekStartsOn: 1 }));
+        if (weeksDiff % 2 !== 0) return false; 
+      }
     }
-    
     return true;
   }
 
-  // 4. Frequency Logic (Only for period or periodic modes)
-  
+  // 5. Day of Month / Day of Week Matching
   const isDefaultDay = () => {
-    if (task.weekOfMonth) {
-      const mon = startOfWeek(date, { weekStartsOn: 1 });
-      let anchorDate = mon;
-      if (getMonth(mon) !== currentMonthIdx) {
-        anchorDate = new Date(date.getFullYear(), currentMonthIdx, 1);
+    // Priority 1: weekDays selection
+    if (task.weekDays && task.weekDays.length > 0) {
+      let targetWeek = task.weekOfMonth ? parseInt(task.weekOfMonth) : null;
+      
+      if (!targetWeek) {
+        const refDate = taskStart || taskCreationDate;
+        targetWeek = getWeekOfMonth(refDate, { weekStartsOn: 1 });
       }
-      return isSameDay(date, anchorDate);
+
+      if (targetWeek) {
+        const weekNum = getWeekOfMonth(date, { weekStartsOn: 1 });
+        let weekMatches = (weekNum === targetWeek);
+        if (targetWeek === 5) {
+          const lastDay = lastDayOfMonth(date);
+          const lastWeekNum = getWeekOfMonth(lastDay, { weekStartsOn: 1 });
+          weekMatches = (weekNum === lastWeekNum);
+        }
+        
+        if (!weekMatches) return false;
+        return isWeekdayMatch(dayOfWeek);
+      }
+      
+      return isWeekdayMatch(dayOfWeek) && dayOfMonth <= 7; // First week fallback
     }
-    return dayOfMonth === 1;
+
+    // Priority 2: weekOfMonth only (default to Monday of that week)
+    if (task.weekOfMonth) {
+      return dayOfWeek === 1; 
+    }
+
+    // Priority 3: taskStart day of month
+    if (taskStart) {
+      const targetDay = getDate(taskStart);
+      const lastDate = getDate(lastDayOfMonth(date));
+      return dayOfMonth === Math.min(targetDay, lastDate);
+    }
+
+    // Priority 4: taskCreationDate day
+    const creationDay = getDate(taskCreationDate);
+    const lastDate = getDate(lastDayOfMonth(date));
+    return dayOfMonth === Math.min(creationDay, lastDate);
   };
 
   switch (task.frequencyType) {
     case 'weekly':
-      // Schedule on specified weekDays (1=Lun, 2=Mar, etc.)
       if (task.weekDays && task.weekDays.length > 0) {
-        return task.weekDays.includes(dayOfWeek);
+        return isWeekdayMatch(dayOfWeek);
       }
-      // Default: Monday
       return dayOfWeek === 1;
       
     case 'biweekly':
-      // Every 2 weeks on specified days
-      if (task.weekDays && task.weekDays.length > 0) {
-        // Simple parity check based on milliseconds since epoch (approximate)
-        // Better: diff in weeks from taskStart
-        if (taskStart) {
-          const diffInMs = date.getTime() - startOfDay(taskStart).getTime();
-          const weeksSinceStart = Math.floor(diffInMs / (7 * 24 * 60 * 60 * 1000));
-          return task.weekDays.includes(dayOfWeek) && weeksSinceStart % 2 === 0;
+      {
+        const refDate = taskStart || taskCreationDate;
+        const weeksSinceStart = Math.abs(differenceInCalendarWeeks(date, refDate, { weekStartsOn: 1 }));
+        const isCorrectWeek = weeksSinceStart % 2 === 0;
+        if (task.weekDays && task.weekDays.length > 0) {
+          return isWeekdayMatch(dayOfWeek) && isCorrectWeek;
         }
-        const weekNum = Math.floor(date.getTime() / (7 * 24 * 60 * 60 * 1000));
-        return task.weekDays.includes(dayOfWeek) && weekNum % 2 === 0;
+        return dayOfWeek === 1 && isCorrectWeek;
       }
-      return false;
       
     case 'monthly':
-      // On specified days of month
+    case 'bimonthly': 
+    case 'trimonthly':
+    case 'quadrimonthly':
+    case 'semiannual':
+    case 'eightmonthly':
+    case 'annual':
       if (task.monthDays && task.monthDays.length > 0) {
-        return task.monthDays.includes(dayOfMonth);
+        return task.monthDays.some(d => parseInt(d) === dayOfMonth);
       }
       return isDefaultDay();
-
-    case 'bimonthly': 
-      if (taskStart) {
-        const monthDiff = (date.getFullYear() - taskStart.getFullYear()) * 12 + (date.getMonth() - taskStart.getMonth());
-        if (monthDiff % 2 !== 0) return false;
-      } else if (currentMonth % 2 === 0) return false;
-      return task.monthDays?.length > 0 ? task.monthDays.includes(dayOfMonth) : isDefaultDay();
-
-    case 'trimonthly':
-      if (taskStart) {
-        const monthDiff = (date.getFullYear() - taskStart.getFullYear()) * 12 + (date.getMonth() - taskStart.getMonth());
-        if (monthDiff % 3 !== 0) return false;
-      } else if (currentMonth % 3 !== 0) return false;
-      return task.monthDays?.length > 0 ? task.monthDays.includes(dayOfMonth) : isDefaultDay();
-
-    case 'semiannual':
-      if (taskStart) {
-        const monthDiff = (date.getFullYear() - taskStart.getFullYear()) * 12 + (date.getMonth() - taskStart.getMonth());
-        if (monthDiff % 6 !== 0) return false;
-      } else if (currentMonth % 6 !== 0) return false;
-      return task.monthDays?.length > 0 ? task.monthDays.includes(dayOfMonth) : isDefaultDay();
-
-    case 'annual':
-      if (taskStart) {
-        if (date.getMonth() !== taskStart.getMonth()) return false;
-      } else if (currentMonth !== 1) return false;
-      return task.monthDays?.length > 0 ? task.monthDays.includes(dayOfMonth) : isDefaultDay();
       
     case 'custom':
-      // Custom freq: frequencyValue times per month
       if (task.monthDays && task.monthDays.length > 0) {
-        return task.monthDays.includes(dayOfMonth);
+        return task.monthDays.some(d => parseInt(d) === dayOfMonth);
       }
       return false;
       
     default:
-      // If serviceMode is 'period' but no frequency is set, maybe it's daily?
-      if (task.serviceMode === 'period') return true; 
+      if (task.serviceMode === 'period' || task.serviceMode === 'periodic') return true; 
       return false;
   }
 }
+
+
 
 // ==================== COMPANIONS ====================
 export async function addCompanionToService(serviceId, companionId) {

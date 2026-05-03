@@ -3,7 +3,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { getScheduledServicesForWeek } from '../../services/scheduleService';
 import { getCommunity } from '../../services/communityService';
 import { getWorkdaysForOperario } from '../../services/workdayService';
-import { format, startOfWeek, endOfWeek, addDays, subWeeks, addWeeks, isSameDay } from 'date-fns';
+import { getMileageForWeek, getMileageForMonth } from '../../services/mileageService';
+import { format, startOfWeek, endOfWeek, addDays, subWeeks, addWeeks, isSameDay, startOfMonth, endOfMonth, subMonths, addMonths } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { formatDecimalHours, formatMinutes } from '../../utils/formatTime';
 import { transferDay, transferWeek } from '../../services/transferService';
@@ -14,10 +15,13 @@ import PlanningCalendar from '../../components/PlanningCalendar';
 export default function HistoryPage() {
   const { userProfile } = useAuth();
   const [currentWeek, setCurrentWeek] = useState(new Date());
-  const [activeTab, setActiveTab] = useState('calendar'); // 'calendar', 'services' o 'workdays'
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [activeTab, setActiveTab] = useState('calendar'); // 'calendar', 'services', 'workdays', 'mileage'
   
   const [services, setServices] = useState([]);
   const [workdays, setWorkdays] = useState([]);
+  const [mileageWeek, setMileageWeek] = useState([]);   // registros de km de la semana
+  const [mileageMonth, setMileageMonth] = useState([]); // registros del mes para el total
   const [loading, setLoading] = useState(true);
   
   // Transfer state
@@ -27,9 +31,10 @@ export default function HistoryPage() {
   useEffect(() => {
     if (userProfile?.uid) {
       if (activeTab === 'services') loadServices();
+      else if (activeTab === 'mileage') loadMileage();
       else loadWorkdays();
     }
-  }, [userProfile, currentWeek, activeTab]);
+  }, [userProfile, currentWeek, currentMonth, activeTab]);
 
   async function loadServices() {
     setLoading(true);
@@ -58,6 +63,24 @@ export default function HistoryPage() {
       const end = endOfWeek(currentWeek, { weekStartsOn: 1 });
       const data = await getWorkdaysForOperario(userProfile.uid, start, end);
       setWorkdays(data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadMileage() {
+    setLoading(true);
+    try {
+      const weekStart = startOfWeek(currentWeek, { weekStartsOn: 1 });
+      const weekEnd = endOfWeek(currentWeek, { weekStartsOn: 1 });
+      const [weekData, monthData] = await Promise.all([
+        getMileageForWeek(userProfile.uid, weekStart, weekEnd),
+        getMileageForMonth(userProfile.uid, currentMonth.getFullYear(), currentMonth.getMonth()),
+      ]);
+      setMileageWeek(weekData);
+      setMileageMonth(monthData);
     } catch (err) {
       console.error(err);
     } finally {
@@ -99,7 +122,10 @@ export default function HistoryPage() {
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
   const totalMinutes = workdays.reduce((acc, curr) => acc + (curr.totalMinutes || 0), 0);
-  const totalHours = totalMinutes / 60;
+
+  // Totales km
+  const weekTotalKm  = mileageWeek.reduce((acc, r) => acc + (r.totalKm || 0), 0);
+  const monthTotalKm = mileageMonth.reduce((acc, r) => acc + (r.totalKm || 0), 0);
 
   const safeFormatDate = (dateVal, formatStr = 'HH:mm') => {
     if (!dateVal) return '-';
@@ -107,6 +133,18 @@ export default function HistoryPage() {
     if (isNaN(d.getTime())) return '-';
     return format(d, formatStr);
   };
+
+  const tabStyle = (tab) => ({
+    padding: '6px 12px',
+    borderRadius: 'var(--radius-md)',
+    fontSize: 'var(--font-xs)',
+    fontWeight: 700,
+    background: activeTab === tab ? 'white' : 'transparent',
+    boxShadow: activeTab === tab ? '0 2px 4px rgba(0,0,0,0.1)' : 'none',
+    color: activeTab === tab ? 'var(--color-primary)' : 'var(--color-text-muted)',
+    border: 'none',
+    cursor: 'pointer'
+  });
 
   return (
     <div className="animate-fadeIn">
@@ -121,59 +159,23 @@ export default function HistoryPage() {
           display: 'flex',
           gap: '4px'
         }}>
-          <button 
-            onClick={() => setActiveTab('calendar')}
-            style={{
-              padding: '6px 12px',
-              borderRadius: 'var(--radius-md)',
-              fontSize: 'var(--font-xs)',
-              fontWeight: 700,
-              background: activeTab === 'calendar' ? 'white' : 'transparent',
-              boxShadow: activeTab === 'calendar' ? '0 2px 4px rgba(0,0,0,0.1)' : 'none',
-              color: activeTab === 'calendar' ? 'var(--color-primary)' : 'var(--color-text-muted)',
-              border: 'none',
-              cursor: 'pointer'
-            }}
-          >
+          <button onClick={() => setActiveTab('calendar')} style={tabStyle('calendar')}>
             Calendario
           </button>
-          <button 
-            onClick={() => setActiveTab('services')}
-            style={{
-              padding: '6px 12px',
-              borderRadius: 'var(--radius-md)',
-              fontSize: 'var(--font-xs)',
-              fontWeight: 700,
-              background: activeTab === 'services' ? 'white' : 'transparent',
-              boxShadow: activeTab === 'services' ? '0 2px 4px rgba(0,0,0,0.1)' : 'none',
-              color: activeTab === 'services' ? 'var(--color-primary)' : 'var(--color-text-muted)',
-              border: 'none',
-              cursor: 'pointer'
-            }}
-          >
+          <button onClick={() => setActiveTab('services')} style={tabStyle('services')}>
             Lista
           </button>
-          <button 
-            onClick={() => setActiveTab('workdays')}
-            style={{
-              padding: '6px 12px',
-              borderRadius: 'var(--radius-md)',
-              fontSize: 'var(--font-xs)',
-              fontWeight: 700,
-              background: activeTab === 'workdays' ? 'white' : 'transparent',
-              boxShadow: activeTab === 'workdays' ? '0 2px 4px rgba(0,0,0,0.1)' : 'none',
-              color: activeTab === 'workdays' ? 'var(--color-primary)' : 'var(--color-text-muted)',
-              border: 'none',
-              cursor: 'pointer'
-            }}
-          >
+          <button onClick={() => setActiveTab('workdays')} style={tabStyle('workdays')}>
             Horas
+          </button>
+          <button onClick={() => setActiveTab('mileage')} style={tabStyle('mileage')}>
+            🚗 Km
           </button>
         </div>
       </div>
 
-      {/* Week navigation (Solo para Lista y Horas) */}
-      {activeTab !== 'calendar' && (
+      {/* Week navigation (Lista y Horas) */}
+      {(activeTab === 'services' || activeTab === 'workdays') && (
         <div className="flex items-center justify-between mb-4 card" style={{ padding: '8px var(--space-4)' }}>
           <button className="btn btn-ghost btn-sm" onClick={() => setCurrentWeek(subWeeks(currentWeek, 1))}>←</button>
           <div className="text-center">
@@ -186,6 +188,62 @@ export default function HistoryPage() {
           </div>
           <button className="btn btn-ghost btn-sm" onClick={() => setCurrentWeek(addWeeks(currentWeek, 1))}>→</button>
         </div>
+      )}
+
+      {/* Week + Month navigation para Kilómetros */}
+      {activeTab === 'mileage' && (
+        <>
+          {/* Selector de mes (para total mensual) */}
+          <div className="card mb-3" style={{
+            padding: '10px var(--space-4)',
+            background: 'linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%)',
+            color: 'white',
+            borderRadius: 'var(--radius-lg)'
+          }}>
+            <div className="flex items-center justify-between">
+              <button
+                className="btn btn-ghost btn-sm"
+                style={{ color: 'white' }}
+                onClick={() => {
+                  const prev = subMonths(currentMonth, 1);
+                  setCurrentMonth(prev);
+                  setCurrentWeek(prev);
+                }}
+              >←</button>
+              <div className="text-center">
+                <div style={{ fontSize: 'var(--font-xs)', opacity: 0.7, marginBottom: 2 }}>
+                  Total {format(currentMonth, 'MMMM yyyy', { locale: es })}
+                </div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 900, letterSpacing: '-0.5px' }}>
+                  🚗 {Math.round(monthTotalKm * 10) / 10} km
+                </div>
+              </div>
+              <button
+                className="btn btn-ghost btn-sm"
+                style={{ color: 'white' }}
+                onClick={() => {
+                  const next = addMonths(currentMonth, 1);
+                  setCurrentMonth(next);
+                  setCurrentWeek(next);
+                }}
+              >→</button>
+            </div>
+          </div>
+
+          {/* Selector de semana */}
+          <div className="flex items-center justify-between mb-4 card" style={{ padding: '8px var(--space-4)' }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => setCurrentWeek(subWeeks(currentWeek, 1))}>←</button>
+            <div className="text-center">
+              <div className="font-bold text-sm">
+                Semana del {format(weekDays[0], "d 'de' MMMM", { locale: es })}
+              </div>
+              <div className="text-xs text-primary font-bold">
+                Esta semana: {Math.round(weekTotalKm * 10) / 10} km
+              </div>
+            </div>
+            <button className="btn btn-ghost btn-sm" onClick={() => setCurrentWeek(addWeeks(currentWeek, 1))}>→</button>
+          </div>
+        </>
       )}
 
       {activeTab === 'calendar' && (
@@ -221,7 +279,7 @@ export default function HistoryPage() {
 
       {loading ? (
         <div className="flex justify-center p-6"><div className="spinner"></div></div>
-      ) : activeTab === 'services' ? (
+      ) : activeTab === 'calendar' ? null : activeTab === 'services' ? (
         /* VISTA DE SERVICIOS */
         <div className="flex flex-col gap-4">
           {weekDays.map(day => {
@@ -284,7 +342,7 @@ export default function HistoryPage() {
             );
           })}
         </div>
-      ) : (
+      ) : activeTab === 'workdays' ? (
         /* VISTA DE JORNADA (HORAS) */
         <div className="flex flex-col gap-3">
           {weekDays.slice().reverse().map(day => {
@@ -313,15 +371,11 @@ export default function HistoryPage() {
             const dayTotalMinutes = daySessions.reduce((acc, s) => acc + (s.totalMinutes || 0), 0);
             const isAnyActive = daySessions.some(s => s.status === 'active');
             
-            // Encontrar la primera entrada y la última salida para mostrar el rango general
             const sortedSessions = [...daySessions].sort((a, b) => {
               const aTime = a.startTime?.toDate ? a.startTime.toDate() : new Date(a.startTime);
               const bTime = b.startTime?.toDate ? b.startTime.toDate() : new Date(b.startTime);
               return aTime - bTime;
             });
-            
-            const firstStart = sortedSessions[0].startTime;
-            const lastEnd = sortedSessions[sortedSessions.length - 1].endTime;
 
             return (
               <div key={day.toISOString()} className="card" style={{ 
@@ -367,7 +421,97 @@ export default function HistoryPage() {
             );
           })}
         </div>
-      )}
+      ) : activeTab === 'mileage' ? (
+        /* VISTA DE KILÓMETROS */
+        <div className="flex flex-col gap-3">
+          {weekDays.slice().reverse().map(day => {
+            const dayStr = format(day, 'yyyy-MM-dd');
+            const dayRecord = mileageWeek.find(r => r.date === dayStr);
+
+            if (!dayRecord || dayRecord.totalKm === 0) {
+              return (
+                <div key={day.toISOString()} className="card" style={{ padding: 'var(--space-4)', opacity: 0.7 }}>
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <div className="font-bold text-sm text-slate-500">
+                        {format(day, 'EEEE d', { locale: es })}
+                      </div>
+                      <div className="text-xs text-muted italic">Sin uso del vehículo</div>
+                    </div>
+                    <div style={{ fontSize: '1.1rem', color: '#cbd5e1', fontWeight: 800 }}>
+                      — km
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
+            const isManual = dayRecord.type === 'manual';
+            const hasSuspicious = dayRecord.tramosSospechosos > 0;
+
+            return (
+              <div key={day.toISOString()} className="card" style={{ 
+                padding: 'var(--space-4)',
+                borderLeft: hasSuspicious ? '4px solid var(--color-warning)' : '4px solid #3b82f6'
+              }}>
+                <div className="flex justify-between items-center">
+                  <div>
+                    <div className="font-bold text-sm">
+                      {format(day, 'EEEE d', { locale: es })}
+                    </div>
+                    <div className="text-xs text-muted mt-0.5">
+                      {isManual ? (
+                        <span style={{ color: '#6366f1', fontWeight: 600 }}>✏️ Registro manual</span>
+                      ) : dayRecord.totalTramos > 0 ? (
+                        <span>{dayRecord.totalTramos} tramo{dayRecord.totalTramos !== 1 ? 's' : ''} calculados</span>
+                      ) : (
+                        <span>GPS / migas de pan</span>
+                      )}
+                      {hasSuspicious && (
+                        <span style={{ color: 'var(--color-warning)', marginLeft: 6, fontWeight: 700 }}>
+                          ⚠️ {dayRecord.tramosSospechosos} sospechoso{dayRecord.tramosSospechosos !== 1 ? 's' : ''}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Desglose de tramos si los hay */}
+                    {dayRecord.tramos && dayRecord.tramos.filter(t => !t.mismoCentro).length > 0 && (
+                      <div className="mt-1" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        {dayRecord.tramos.filter(t => !t.mismoCentro).map((tramo, idx) => (
+                          <div key={idx} className="text-xs text-muted" style={{ fontSize: '10px' }}>
+                            <span style={{ fontWeight: 600 }}>{tramo.origenNombre}</span>
+                            <span style={{ margin: '0 4px', opacity: 0.5 }}>→</span>
+                            <span style={{ fontWeight: 600 }}>{tramo.destinoNombre}</span>
+                            <span style={{ marginLeft: 4, color: '#3b82f6' }}>
+                              {tramo.kmEstimados} km
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{
+                      fontSize: '1.4rem',
+                      fontWeight: 900,
+                      color: '#1d4ed8',
+                      letterSpacing: '-0.5px',
+                      lineHeight: 1
+                    }}>
+                      {Math.round(dayRecord.totalKm * 10) / 10}
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: '#94a3b8', fontWeight: 700, marginTop: 1 }}>
+                      km
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+
 
       {/* MODAL TRASPASO */}
       <TransferModal 
@@ -382,4 +526,3 @@ export default function HistoryPage() {
     </div>
   );
 }
-

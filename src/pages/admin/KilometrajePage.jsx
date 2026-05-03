@@ -52,6 +52,9 @@ export default function KilometrajePage() {
         );
       }
       
+      // Solo mostrar operarios que hayan generado kilómetros
+      results = results.filter(r => (r.totalKm || 0) > 0);
+      
       setMileageData(results);
       setExpandedRow(null);
     } catch (err) {

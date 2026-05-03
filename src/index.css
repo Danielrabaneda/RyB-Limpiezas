@@ -911,6 +911,11 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   isolation: isolate;
 }
 
+.service-card.garage {
+  background-color: #fee2e2; /* --color-danger-light (Pastel Red) */
+  border-color: #fecaca;
+}
+
 /* Left status indicator bar — contained inside the card */
 .service-card::before {
   content: '';
@@ -1479,4 +1484,36 @@ body.loaded {
   border-top-color: var(--color-primary);
   border-radius: 50%;
   animation: spin 1s linear infinite;
+}
+
+/* ==================== UTILITIES FOR CALENDAR ==================== */
+.forecast-dot {
+  width: 24px;
+  height: 24px;
+  background-color: var(--color-danger);
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: bold;
+  margin: 0 auto;
+  box-shadow: var(--shadow-sm);
+  border: 2px solid white;
+  animation: pulse-slow 2s infinite ease-in-out;
+}
+
+.forecast-dot-sm {
+  width: 12px;
+  height: 12px;
+  background-color: var(--color-danger);
+  border-radius: 50%;
+  margin: 0 auto;
+  box-shadow: var(--shadow-sm);
+}
+
+@keyframes pulse-slow {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.1); opacity: 0.8; }
 }

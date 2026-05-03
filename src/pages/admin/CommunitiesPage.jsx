@@ -8,6 +8,7 @@ import { format } from 'date-fns';
 import { transferPermanent } from '../../services/transferService';
 import { useAuth } from '../../contexts/AuthContext';
 import TransferModal from '../../components/TransferModal';
+import GarageYearlyView from '../../components/GarageYearlyView';
 
 export default function CommunitiesPage() {
   const { userProfile } = useAuth();
@@ -25,6 +26,7 @@ export default function CommunitiesPage() {
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [editingTask, setEditingTask] = useState(null); // null = create mode, task = edit mode
+  const [activeTab, setActiveTab] = useState('list'); // 'list' or 'garages'
 
   // Form state
   const [form, setForm] = useState({
@@ -46,6 +48,8 @@ export default function CommunitiesPage() {
     monthOfYear: '', // 0-11
     assignedUserId: '', // Operario específico para esta tarea
     flexibleWeek: false,
+    isGarage: false, // Indica si es una tarea de garaje
+    printColor: '#ef4444', // Color para impresión: verde, amarillo o rojo
   });
 
   const [assignUserId, setAssignUserId] = useState('');
@@ -210,6 +214,8 @@ export default function CommunitiesPage() {
       monthOfYear: task.monthOfYear != null ? String(task.monthOfYear) : '',
       assignedUserId: task.assignedUserId || '',
       flexibleWeek: task.flexibleWeek || false,
+      isGarage: task.isGarage || false,
+      printColor: task.printColor || '#ef4444',
     });
     setShowTaskModal(true);
   }
@@ -220,6 +226,8 @@ export default function CommunitiesPage() {
       taskName: '', frequencyType: 'weekly', frequencyValue: 1, weekDays: [], monthDays: [],
       serviceMode: 'periodic', punctualDate: format(new Date(), 'yyyy-MM-dd'),
       startDate: '', endDate: '', weekOfMonth: '', monthOfYear: '', assignedUserId: '', flexibleWeek: false,
+      isGarage: false,
+      printColor: '#ef4444',
     });
     setShowTaskModal(true);
   }
@@ -241,6 +249,8 @@ export default function CommunitiesPage() {
       monthOfYear: taskForm.monthOfYear !== '' ? parseInt(taskForm.monthOfYear) : null,
       serviceMode: taskForm.serviceMode || 'periodic',
       flexibleWeek: taskForm.flexibleWeek || false,
+      isGarage: taskForm.isGarage || false,
+      printColor: taskForm.printColor || '#ef4444',
     };
 
     try {
@@ -409,13 +419,32 @@ export default function CommunitiesPage() {
   return (
     <div className="animate-fadeIn">
       <div className="flex items-center justify-between mb-6">
-        <h2 style={{ fontSize: 'var(--font-2xl)', fontWeight: 800 }}>Comunidades</h2>
-        <button className="btn btn-primary" onClick={openCreateModal}>
-          ➕ Nueva comunidad
-        </button>
+        <div className="flex items-center gap-4">
+          <h2 style={{ fontSize: 'var(--font-2xl)', fontWeight: 800 }}>Comunidades</h2>
+          <div className="flex items-center gap-2">
+            <button 
+              className={`btn ${activeTab === 'list' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setActiveTab('list')}
+            >
+              🏢 Listado
+            </button>
+            <button 
+              className={`btn ${activeTab === 'garages' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setActiveTab('garages')}
+            >
+              🚗 Garajes
+            </button>
+          </div>
+        </div>
+        {activeTab === 'list' && (
+          <button className="btn btn-primary" onClick={openCreateModal}>
+            ➕ Nueva comunidad
+          </button>
+        )}
       </div>
 
-      <div className="grid" style={{ gridTemplateColumns: '1fr 1.5fr', gap: 'var(--space-6)' }}>
+      {activeTab === 'list' ? (
+        <div className="grid" style={{ gridTemplateColumns: '1fr 1.5fr', gap: 'var(--space-6)' }}>
         {/* Community list */}
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{ padding: 'var(--space-4) var(--space-5)', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -528,6 +557,7 @@ export default function CommunitiesPage() {
                     <div key={task.id} className="flex items-center justify-between" style={{ padding: 'var(--space-3)', background: 'var(--color-bg)', borderRadius: 'var(--radius-md)' }}>
                       <div>
                         <div className="font-semibold text-sm flex items-center gap-2">
+                          <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: task.printColor || '#ef4444', display: 'inline-block', flexShrink: 0, border: '1px solid rgba(0,0,0,0.15)' }}></span>
                           {task.taskName}
                           {task.assignedUserId && <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs font-medium border border-purple-200">👤 {operarios.find(o => o.uid === task.assignedUserId)?.name || 'Asignado'}</span>}
                         </div>
@@ -610,6 +640,9 @@ export default function CommunitiesPage() {
           </div>
         )}
       </div>
+      ) : (
+        <GarageYearlyView />
+      )}
 
       {/* Modal: Create/Edit Community */}
       {showModal && (
@@ -732,6 +765,55 @@ export default function CommunitiesPage() {
                 </div>
 
                 <div className="form-group">
+                  <label className="form-label">Color en calendario impreso</label>
+                  <div className="flex items-center gap-3">
+                    {[
+                      { color: '#22c55e', label: 'Escalera' },
+                      { color: '#eab308', label: 'Portal' },
+                      { color: '#ef4444', label: 'Otras' },
+                    ].map(opt => (
+                      <button
+                        key={opt.color}
+                        type="button"
+                        onClick={() => setTaskForm(f => ({...f, printColor: opt.color}))}
+                        style={{
+                          width: '36px',
+                          height: '36px',
+                          borderRadius: '50%',
+                          backgroundColor: opt.color,
+                          border: taskForm.printColor === opt.color ? '3px solid #000' : '2px solid rgba(0,0,0,0.15)',
+                          cursor: 'pointer',
+                          boxShadow: taskForm.printColor === opt.color ? '0 0 0 2px white, 0 0 0 4px ' + opt.color : 'none',
+                          transition: 'all 0.15s ease'
+                        }}
+                        title={opt.label}
+                      />
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted mt-1">🟢 Limpieza Escalera &nbsp; 🟡 Repaso Portal &nbsp; 🔴 Otras tareas</p>
+                </div>
+
+                <div className="form-group">
+                  <label className="flex items-center gap-3 cursor-pointer p-3 bg-slate-50 rounded-xl border border-slate-200">
+                    <input 
+                      type="checkbox" 
+                      style={{ width: '20px', height: '20px', cursor: 'pointer' }}
+                      checked={taskForm.isGarage}
+                      onChange={e => setTaskForm(f => ({...f, isGarage: e.target.checked}))}
+                    />
+                    <div>
+                      <span className="font-bold text-slate-900 block">🚗 Es Limpieza de Garaje</span>
+                      <span className="text-xs text-slate-500">Si se marca, aparecerá en el cuadrante anual.</span>
+                      {taskForm.isGarage && taskForm.serviceMode === 'periodic' && (
+                        <div className="mt-1 px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded text-[9px] font-bold inline-block animate-pulse">
+                          💡 TIP: Elige un día de la semana (ej: Viernes)
+                        </div>
+                      )}
+                    </div>
+                  </label>
+                </div>
+
+                <div className="form-group">
                   <label className="form-label">Asignar a operario (Opcional)</label>
                   <select className="form-select" value={taskForm.assignedUserId} onChange={e => setTaskForm(f => ({...f, assignedUserId: e.target.value}))}>
                     <option value="">— Cualquiera asignado a la comunidad —</option>
@@ -800,15 +882,19 @@ export default function CommunitiesPage() {
                             <option value="monthly">Mensual</option>
                             <option value="bimonthly">Cada 2 meses</option>
                             <option value="trimonthly">Cada 3 meses</option>
+                            <option value="quadrimonthly">Cada 4 meses</option>
                             <option value="semiannual">Cada 6 meses</option>
+                            <option value="eightmonthly">Cada 8 meses</option>
                             <option value="annual">Anual</option>
                           </select>
-                          {['bimonthly', 'trimonthly', 'semiannual'].includes(taskForm.frequencyType) && (
+                          {['bimonthly', 'trimonthly', 'quadrimonthly', 'semiannual', 'eightmonthly'].includes(taskForm.frequencyType) && (
                             <div className="mt-2 text-[10px] text-indigo-600 font-medium">
                               Se programará en: {
                                 taskForm.frequencyType === 'bimonthly' ? 'Ene, Mar, May, Jul, Sep, Nov' :
                                 taskForm.frequencyType === 'trimonthly' ? 'Ene, Abr, Jul, Oct' :
-                                'Ene, Jul'
+                                taskForm.frequencyType === 'quadrimonthly' ? 'Ene, May, Sep' :
+                                taskForm.frequencyType === 'semiannual' ? 'Ene, Jul' :
+                                'Ene, Sep'
                               }
                             </div>
                           )}
@@ -819,7 +905,7 @@ export default function CommunitiesPage() {
                         </div>
                       </div>
 
-                      {(taskForm.frequencyType === 'weekly' || taskForm.frequencyType === 'biweekly') && (
+                      {(taskForm.serviceMode === 'periodic') && (
                         <div className="form-group mt-2">
                           <label className="form-label text-xs font-bold text-indigo-700">Días de la semana</label>
                           <div className="chip-group">
@@ -832,7 +918,7 @@ export default function CommunitiesPage() {
                         </div>
                       )}
 
-                      {(['monthly', 'bimonthly', 'trimonthly', 'semiannual', 'annual'].includes(taskForm.frequencyType)) && (
+                      {(['monthly', 'bimonthly', 'trimonthly', 'quadrimonthly', 'semiannual', 'eightmonthly', 'annual'].includes(taskForm.frequencyType)) && (
                         <div className="form-group mt-2">
                           <div className="grid grid-2 gap-4">
                             <div>

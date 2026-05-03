@@ -43,6 +43,7 @@ export async function createCommunityTask(data) {
     weekOfMonth: data.weekOfMonth || null,
     monthOfYear: data.monthOfYear !== undefined ? data.monthOfYear : null,
     serviceMode: data.serviceMode || 'periodic',
+    printColor: data.printColor || '#ef4444',
     active: true,
     createdAt: serverTimestamp(),
   });
@@ -67,6 +68,16 @@ export async function getCommunityTasks(communityId) {
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
+export async function getAllActiveTasks() {
+  const q = query(
+    collection(db, 'communityTasks'),
+    where('active', '==', true)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+
 export async function updateCommunityTask(id, data) {
   await updateDoc(doc(db, 'communityTasks', id), { ...data, updatedAt: serverTimestamp() });
   
@@ -80,7 +91,7 @@ export async function updateCommunityTask(id, data) {
       const updatedTask = { id: updatedTaskSnap.id, ...updatedTaskSnap.data() };
       const start = startOfMonth(new Date());
       const end = endOfMonth(addDays(new Date(), 45)); // Generate for next month and a half
-      await generateServicesForTask(updatedTask, start, end);
+      await generateServicesForTask(id, start, end);
     }
   } catch (err) {
     console.error('Error updating services for modified task:', err);
