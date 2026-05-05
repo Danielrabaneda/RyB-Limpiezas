@@ -482,8 +482,8 @@ export default function HistoryPage() {
                             <span style={{ fontWeight: 600 }}>{tramo.origenNombre}</span>
                             <span style={{ margin: '0 4px', opacity: 0.5 }}>→</span>
                             <span style={{ fontWeight: 600 }}>{tramo.destinoNombre}</span>
-                            <span style={{ marginLeft: 4, color: '#3b82f6' }}>
-                              {tramo.kmEstimados} km
+                            <span style={{ marginLeft: 4, color: tramo.esCaminando ? '#10b981' : '#3b82f6' }}>
+                              {tramo.esCaminando ? '🚶 Caminando' : `${tramo.kmEstimados} km`}
                             </span>
                           </div>
                         ))}

@@ -305,10 +305,11 @@ export default function KilometrajePage() {
                                         {tIdx + 1}. {tramo.origenNombre} → {tramo.destinoNombre}
                                         {tramo.sospechoso && <span style={{ marginLeft: '0.5rem' }}>⚠️</span>}
                                         {tramo.mismoCentro && <span className="text-xs text-muted" style={{ marginLeft: '0.5rem' }}>(mismo centro)</span>}
+                                        {tramo.esCaminando && <span className="badge badge-success" style={{ marginLeft: '0.5rem', background: '#dcfce7', color: '#166534', fontSize: '10px' }}>🚶 Caminando</span>}
                                       </div>
                                     </div>
                                     
-                                    {!tramo.mismoCentro && (
+                                    {!tramo.mismoCentro && !tramo.esCaminando && (
                                       <div className="flex gap-4 flex-wrap" style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>
                                         <span>
                                           🕐 {tramo.horaSalida?.toDate 
@@ -324,6 +325,12 @@ export default function KilometrajePage() {
                                             ⚠️ SOSPECHOSO
                                           </span>
                                         )}
+                                      </div>
+                                    )}
+
+                                    {tramo.esCaminando && (
+                                      <div className="text-xs text-muted">
+                                        Distancia muy corta ({Math.round(tramo.kmLineaRecta * 1000)}m). Se asume desplazamiento a pie.
                                       </div>
                                     )}
                                   </div>

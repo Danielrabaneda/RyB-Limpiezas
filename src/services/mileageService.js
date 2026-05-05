@@ -140,8 +140,10 @@ export async function calculateDailyMileage(userId, date, userName = 'Operario',
       // Detectar tramos sospechosos
       const sospechoso = detectarSospechoso(kmEstimados, minutosDesplazamiento, velocidadEstimada);
 
-      // Si es el mismo centro, distancia = 0, ignorar para el total
+      // Si es el mismo centro o están a menos de 150 metros, distancia = 0 (se asume que van andando)
       const mismoCentro = origen.communityId === destino.communityId;
+      const esCaminando = !mismoCentro && distanciaMetros < 150;
+      const ignorarDistancia = mismoCentro || esCaminando;
 
       const tramo = {
         origenId: origen.communityId,
@@ -152,28 +154,31 @@ export async function calculateDailyMileage(userId, date, userName = 'Operario',
         destinoCoords: { lat: destinoLat, lng: destinoLng },
         horaSalida: Timestamp.fromDate(horaSalida),
         horaLlegada: Timestamp.fromDate(horaLlegada),
-        kmLineaRecta: mismoCentro ? 0 : kmLineaRecta,
-        kmEstimados: mismoCentro ? 0 : kmEstimados,
+        kmLineaRecta: ignorarDistancia ? 0 : kmLineaRecta,
+        kmEstimados: ignorarDistancia ? 0 : kmEstimados,
         minutosDesplazamiento,
-        velocidadEstimada: mismoCentro ? 0 : velocidadEstimada,
-        sospechoso: mismoCentro ? false : sospechoso,
+        velocidadEstimada: ignorarDistancia ? 0 : velocidadEstimada,
+        sospechoso: ignorarDistancia ? false : sospechoso,
         mismoCentro,
+        esCaminando,
       };
 
       tramos.push(tramo);
 
-      if (!mismoCentro) {
+      if (!ignorarDistancia) {
         totalKm += kmEstimados;
         if (sospechoso) tramosSospechosos++;
       }
     }
 
-    // Si hay migas de pan registradas en las sesiones de coche, las usamos para el total
-    if (breadcrumbsKm > 0) {
+    // Si hay migas de pan registradas y son mayores al total calculado por centros, las usamos
+    totalKm = Math.round(totalKm * 100) / 100;
+    
+    if (breadcrumbsKm > totalKm) {
       totalKm = breadcrumbsKm;
-      console.log(`[Mileage] Usando kilometraje real de migas de pan (breadcrumbs): ${totalKm} km`);
-    } else {
-      totalKm = Math.round(totalKm * 100) / 100;
+      console.log(`[Mileage] Usando kilometraje real de migas de pan (breadcrumbs) por ser mayor: ${totalKm} km`);
+    } else if (breadcrumbsKm > 0) {
+      console.log(`[Mileage] Usando kilometraje por centros (${totalKm} km) porque es mayor que las migas de pan (${breadcrumbsKm} km)`);
     }
 
     return await saveMileageRecord(userId, userName, date, dateStr, tramos, totalKm, tramosSospechosos);

@@ -1,0 +1,92 @@
+version: "2"
+type: frontend
+tech_stack:
+  - JavaScript
+  - React
+  - Vite
+  - Firebase
+routes:
+  - path: /login
+    file: src/pages/auth/LoginPage.jsx
+    auth_required: false
+    description: User login page
+  - path: /register
+    file: src/pages/auth/RegisterPage.jsx
+    auth_required: false
+    description: User registration page
+  - path: /setup
+    file: src/pages/auth/SetupPage.jsx
+    auth_required: false
+    description: Initial admin setup page
+  - path: /admin
+    file: src/pages/admin/DashboardPage.jsx
+    auth_required: true
+    description: Admin dashboard with overview stats
+  - path: /admin/comunidades
+    file: src/pages/admin/CommunitiesPage.jsx
+    auth_required: true
+    description: Manage cleaning communities and tasks
+  - path: /admin/operarios
+    file: src/pages/admin/OperariosPage.jsx
+    auth_required: true
+    description: Manage operators and assignments
+  - path: /admin/control-horario
+    file: src/pages/admin/ControlHorarioPage.jsx
+    auth_required: true
+    description: View operator work hours
+  - path: /admin/informes
+    file: src/pages/admin/ReportsPage.jsx
+    auth_required: true
+    description: Generate and view reports
+  - path: /admin/kilometraje
+    file: src/pages/admin/KilometrajePage.jsx
+    auth_required: true
+    description: Track operator mileage
+  - path: /admin/inventory
+    file: src/pages/admin/InventoryPage.jsx
+    auth_required: true
+    description: Manage cleaning supplies inventory
+  - path: /admin/ajustes
+    file: src/pages/admin/SettingsPage.jsx
+    auth_required: true
+    description: System settings
+  - path: /operario
+    file: src/pages/operario/TodayPage.jsx
+    auth_required: true
+    description: Operator's daily service list
+  - path: /operario/servicio/:serviceId
+    file: src/pages/operario/ServiceDetailPage.jsx
+    auth_required: true
+    description: Detailed view of a cleaning service
+  - path: /operario/historial
+    file: src/pages/operario/HistoryPage.jsx
+    auth_required: true
+    description: Operator's service history
+features:
+  - name: User Login
+    description: Login with email and password credentials
+    files:
+      - src/pages/auth/LoginPage.jsx
+      - src/contexts/AuthContext.jsx
+    entry_route: /login
+    user_interactions:
+      - Fill email input field
+      - Fill password input field
+      - Click Login button to submit
+      - See error message on invalid credentials
+    api_calls: []
+    auth_required: false
+  - name: Service Management
+    description: Operators can start, complete tasks, and finish services
+    files:
+      - src/pages/operario/TodayPage.jsx
+      - src/pages/operario/ServiceDetailPage.jsx
+    entry_route: /operario
+    user_interactions:
+      - View daily services
+      - Click on a service to view details
+      - Mark tasks as completed
+      - Finish service
+    api_calls: []
+    auth_required: true
+known_limitations: []

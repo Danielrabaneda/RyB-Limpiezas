@@ -892,10 +892,11 @@ export function shouldScheduleOnDay(task, date, options = {}) {
     }
 
     if (task.frequencyType === 'biweekly') {
-      if (taskStart) {
-        const weeksDiff = Math.abs(differenceInCalendarWeeks(date, taskStart, { weekStartsOn: 1 }));
-        if (weeksDiff % 2 !== 0) return false; 
-      }
+      const refDate = taskStart || taskCreationDate;
+      // Use weekStartsOn: 0 (Sunday) to ensure tasks created on Sunday for the upcoming week 
+      // are anchored to the same week (Week 0) instead of the previous one.
+      const weeksDiff = Math.abs(differenceInCalendarWeeks(date, refDate, { weekStartsOn: 0 }));
+      if (weeksDiff % 2 !== 0) return false; 
     }
     return true;
   }
@@ -955,8 +956,12 @@ export function shouldScheduleOnDay(task, date, options = {}) {
     case 'biweekly':
       {
         const refDate = taskStart || taskCreationDate;
-        const weeksSinceStart = Math.abs(differenceInCalendarWeeks(date, refDate, { weekStartsOn: 1 }));
+        // Use weekStartsOn: 0 (Sunday) to ensure tasks created on Sunday for the upcoming week 
+        // are anchored to the same week (Week 0) instead of the previous one.
+        // This addresses the issue where tasks created on Sunday for a Tuesday would skip the first week.
+        const weeksSinceStart = Math.abs(differenceInCalendarWeeks(date, refDate, { weekStartsOn: 0 }));
         const isCorrectWeek = weeksSinceStart % 2 === 0;
+        
         if (task.weekDays && task.weekDays.length > 0) {
           return isWeekdayMatch(dayOfWeek) && isCorrectWeek;
         }
