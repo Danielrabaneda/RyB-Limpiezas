@@ -78,15 +78,8 @@ export async function calculateDailyMileage(userId, date, userName = 'Operario',
       return await saveMileageRecord(userId, userName, date, dateStr, [], 0);
     }
 
-    const relevantCheckIns = filterByCarSessions(completed, carSessions);
-
-    if (relevantCheckIns.length < 2) {
-      const finalKm = breadcrumbsKm > 0 ? breadcrumbsKm : 0;
-      return await saveMileageRecord(userId, userName, date, dateStr, [], finalKm);
-    }
-
-    // 4. Construir la ruta: eliminar fichajes consecutivos en el mismo centro
-    const route = buildRoute(relevantCheckIns);
+    // 4. Construir la ruta entera a partir de TODOS los fichajes completados
+    const route = buildRoute(completed);
 
     if (route.length < 2) {
       const finalKm = breadcrumbsKm > 0 ? breadcrumbsKm : 0;
@@ -132,6 +125,9 @@ export async function calculateDailyMileage(userId, date, userName = 'Operario',
       const horaLlegada = destino.checkInTime?.toDate ? destino.checkInTime.toDate() : new Date(destino.checkInTime);
       const minutosDesplazamiento = Math.max(0, differenceInMinutes(horaLlegada, horaSalida));
 
+      // Verificar si en este tramo en concreto el operario usó el coche
+      const overlapCar = tramoOverlapsWithCarSession(horaSalida, horaLlegada, carSessions);
+
       // Calcular velocidad estimada
       const velocidadEstimada = minutosDesplazamiento > 0 
         ? Math.round((kmEstimados / (minutosDesplazamiento / 60)) * 10) / 10
@@ -143,7 +139,8 @@ export async function calculateDailyMileage(userId, date, userName = 'Operario',
       // Si es el mismo centro o están a menos de 150 metros, distancia = 0 (se asume que van andando)
       const mismoCentro = origen.communityId === destino.communityId;
       const esCaminando = !mismoCentro && distanciaMetros < 150;
-      const ignorarDistancia = mismoCentro || esCaminando;
+      // También ignoramos si el desplazamiento no coincide con ninguna sesión de coche
+      const ignorarDistancia = mismoCentro || esCaminando || !overlapCar;
 
       const tramo = {
         origenId: origen.communityId,
@@ -161,6 +158,7 @@ export async function calculateDailyMileage(userId, date, userName = 'Operario',
         sospechoso: ignorarDistancia ? false : sospechoso,
         mismoCentro,
         esCaminando,
+        enCoche: overlapCar,
       };
 
       tramos.push(tramo);
@@ -190,20 +188,25 @@ export async function calculateDailyMileage(userId, date, userName = 'Operario',
 }
 
 /**
- * Filtra fichajes que caigan dentro de alguna sesión de coche.
+ * Verifica si el desplazamiento solapa temporalmente con alguna sesión de coche
  */
-function filterByCarSessions(checkIns, carSessions) {
-  return checkIns.filter(ci => {
-    const ciTime = ci.checkInTime?.toDate ? ci.checkInTime.toDate().getTime() : 0;
-    return carSessions.some(session => {
-      const sessionStart = session.startTime?.toDate 
-        ? session.startTime.toDate().getTime() 
-        : new Date(session.startTime).getTime();
-      const sessionEnd = session.endTime 
-        ? (session.endTime?.toDate ? session.endTime.toDate().getTime() : new Date(session.endTime).getTime())
-        : Date.now(); // Si la sesión sigue activa, usar ahora
-      return ciTime >= sessionStart && ciTime <= sessionEnd;
-    });
+function tramoOverlapsWithCarSession(horaSalida, horaLlegada, carSessions) {
+  const salida = horaSalida.getTime();
+  const llegada = horaLlegada.getTime();
+  
+  // Margen de 30 minutos por si inician el coche un poco tarde o lo apagan pronto
+  const MARGIN_MS = 30 * 60 * 1000;
+
+  return carSessions.some(session => {
+    const sessionStart = session.startTime?.toDate 
+      ? session.startTime.toDate().getTime() 
+      : new Date(session.startTime).getTime();
+    const sessionEnd = session.endTime 
+      ? (session.endTime?.toDate ? session.endTime.toDate().getTime() : new Date(session.endTime).getTime())
+      : Date.now(); // Si la sesión sigue activa, usar ahora
+      
+    // Comprobar solapamiento: (StartA <= EndB) and (EndA >= StartB)
+    return (sessionStart - MARGIN_MS) <= llegada && (sessionEnd + MARGIN_MS) >= salida;
   });
 }
 

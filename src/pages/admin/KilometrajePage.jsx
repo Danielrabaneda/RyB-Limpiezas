@@ -306,6 +306,7 @@ export default function KilometrajePage() {
                                         {tramo.sospechoso && <span style={{ marginLeft: '0.5rem' }}>⚠️</span>}
                                         {tramo.mismoCentro && <span className="text-xs text-muted" style={{ marginLeft: '0.5rem' }}>(mismo centro)</span>}
                                         {tramo.esCaminando && <span className="badge badge-success" style={{ marginLeft: '0.5rem', background: '#dcfce7', color: '#166534', fontSize: '10px' }}>🚶 Caminando</span>}
+                                        {!tramo.mismoCentro && !tramo.esCaminando && !tramo.enCoche && <span className="badge badge-neutral" style={{ marginLeft: '0.5rem', background: '#e2e8f0', color: '#475569', fontSize: '10px' }}>❌ Sin coche</span>}
                                       </div>
                                     </div>
                                     
