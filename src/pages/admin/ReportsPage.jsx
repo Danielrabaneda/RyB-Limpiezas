@@ -19,6 +19,12 @@ export default function ReportsPage() {
   const [expandedWeeks, setExpandedWeeks] = useState(new Set());
   const [expandedDays, setExpandedDays] = useState(new Set());
 
+  const [communities, setCommunities] = useState([]);
+  const [operarios, setOperarios] = useState([]);
+  const [services, setServices] = useState([]);
+  const [checkIns, setCheckIns] = useState([]);
+  const [loading, setLoading] = useState(true);
+
   // Auto-expand current week on data load
   useEffect(() => {
     if (services.length > 0 || checkIns.length > 0) {
@@ -38,12 +44,6 @@ export default function ReportsPage() {
       setExpandedDays(newDays);
     }
   }, [services.length, checkIns.length]);
-
-  const [communities, setCommunities] = useState([]);
-  const [operarios, setOperarios] = useState([]);
-  const [services, setServices] = useState([]);
-  const [checkIns, setCheckIns] = useState([]);
-  const [loading, setLoading] = useState(true);
   
   // Transfer & Bulk Actions state
   const [transferModal, setTransferModal] = useState({ open: false, service: null });
