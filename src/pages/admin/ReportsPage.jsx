@@ -232,6 +232,69 @@ export default function ReportsPage() {
       }));
   })();
 
+  function renderDayOperators(day) {
+    if (day.operators.length === 0) {
+      return <p className="text-center text-muted text-sm py-2">Sin actividad registrada</p>;
+    }
+
+    return day.operators.map(op => (
+      <div key={op.opId} className="operator-detail pb-3 border-bottom last:border-0" style={{ borderBottom: '1px solid var(--color-bg)' }}>
+        <div className="flex justify-between items-center mb-3">
+          <h5 className="font-bold text-sm text-primary flex items-center gap-2">
+            👤 {op.name}
+          </h5>
+          <div className="flex gap-2">
+            <span className="badge badge-primary">
+              ⏱️ {formatMinutes(op.stats.minutes)}
+            </span>
+          </div>
+        </div>
+        
+        <div className="grid grid-2 gap-6">
+          {/* Services sub-list */}
+          <div className="op-services bg-gray-50 p-3 rounded-lg border border-gray-100">
+            <p className="text-xs font-bold text-muted mb-2 uppercase tracking-wider flex items-center gap-1">
+              📋 Servicios ({op.stats.totalServices})
+            </p>
+            <div className="flex flex-col gap-1">
+              {op.services.length === 0 && <span className="text-xs text-muted italic">Sin servicios asignados</span>}
+              {op.services.map(s => (
+                <div key={s.id} className="flex justify-between items-center text-xs p-1.5 bg-white shadow-sm border border-gray-100 rounded">
+                  <span className="font-medium">{getCommunityName(s.communityId)}</span>
+                  <span className={`badge ${s.status === 'completed' ? 'badge-success' : 'badge-warning'}`} style={{ transform: 'scale(0.85)', originX: 'right' }}>
+                    {s.status === 'completed' ? 'Completado' : s.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Check-ins sub-list */}
+          <div className="op-checkins bg-gray-50 p-3 rounded-lg border border-gray-100">
+            <p className="text-xs font-bold text-muted mb-2 uppercase tracking-wider flex items-center gap-1">
+              🕒 Fichajes ({op.checkIns.length})
+            </p>
+            <div className="flex flex-col gap-1">
+              {op.checkIns.length === 0 && <span className="text-xs text-muted italic">Sin fichajes</span>}
+              {op.checkIns.map(c => (
+                <div key={c.id} className="flex justify-between items-center text-xs p-1.5 bg-white shadow-sm border border-gray-100 rounded">
+                  <span>
+                    <span className="text-success">{c.checkInTime?.toDate ? format(c.checkInTime.toDate(), 'HH:mm') : '--'}</span>
+                    {' → '}
+                    <span className={c.checkOutTime ? 'text-danger' : 'text-primary'}>
+                      {c.checkOutTime?.toDate ? format(c.checkOutTime.toDate(), 'HH:mm') : 'Activo'}
+                    </span>
+                  </span>
+                  <span className="font-bold text-primary">{formatMinutes(c.durationMinutes)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    ));
+  }
+
   function getCommunityName(id) {
     return communities.find(c => c.id === id)?.name || id?.substring(0, 8) + '...';
   }
@@ -416,147 +479,138 @@ export default function ReportsPage() {
           {/* Hierarchical View */}
           {activeTab === 'hierarchical' && (
             <div className="hierarchical-reports">
-              {hierarchicalData.map(week => (
-                <div key={week.weekId} className="week-card mb-4">
-                  <div 
-                    className={`week-header card ${expandedWeeks.has(week.weekId) ? 'expanded' : ''}`}
-                    onClick={() => toggleWeek(week.weekId)}
-                    style={{ 
-                      display: 'flex', 
-                      justifyContent: 'space-between', 
-                      alignItems: 'center', 
-                      cursor: 'pointer',
-                      background: week.isComplete ? 'var(--color-bg-input)' : 'white',
-                      borderLeft: expandedWeeks.has(week.weekId) ? '4px solid var(--color-primary)' : '1px solid var(--color-border)'
-                    }}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="week-icon" style={{ fontSize: '1.2rem' }}>
-                        {expandedWeeks.has(week.weekId) ? '📂' : '📁'}
-                      </div>
-                      <div>
-                        <h3 style={{ fontSize: 'var(--font-base)', fontWeight: 700 }}>{week.label}</h3>
-                        <span className="text-xs text-muted">
-                          {week.isComplete ? 'Semana Finalizada' : 'Semana en Curso'}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="week-stats flex gap-4 text-sm font-semibold">
-                      <span title="Servicios Completados" style={{ color: 'var(--color-success)' }}>
-                        ✅ {week.stats.completed}/{week.stats.totalServices}
-                      </span>
-                      <span title="Horas Totales" style={{ color: 'var(--color-primary)' }}>
-                        ⏱️ {formatMinutes(week.stats.minutes)}
-                      </span>
-                    </div>
-                  </div>
-
-                  {expandedWeeks.has(week.weekId) && (
-                    <div className="week-content mt-2 ml-4 flex flex-col gap-2">
-                      {week.days.map(day => (
-                        <div key={day.dayId} className="day-card">
-                          <div 
-                            className={`day-header card ${expandedDays.has(day.dayId) ? 'expanded' : ''}`}
-                            onClick={() => toggleDay(day.dayId)}
-                            style={{ 
-                              padding: 'var(--space-3) var(--space-4)',
-                              display: 'flex', 
-                              justifyContent: 'space-between', 
-                              alignItems: 'center', 
-                              cursor: 'pointer',
-                              background: 'var(--color-bg-card)',
-                              boxShadow: 'var(--shadow-sm)',
-                              borderRadius: 'var(--radius-md)'
-                            }}
-                          >
-                            <div className="flex items-center gap-3">
-                              <span style={{ fontSize: '1rem' }}>
-                                {expandedDays.has(day.dayId) ? '🔽' : '▶️'}
-                              </span>
-                              <h4 style={{ fontSize: 'var(--font-sm)', fontWeight: 600, textTransform: 'capitalize' }}>
-                                {day.label}
-                              </h4>
-                            </div>
-                            <div className="day-stats flex gap-3 text-xs">
-                              <span className="badge badge-success">
-                                {day.stats.completed}/{day.stats.totalServices} Svcs
-                              </span>
-                              <span className="badge badge-primary">
-                                {formatMinutes(day.stats.minutes)}
-                              </span>
-                            </div>
+              {hierarchicalData.map(week => {
+                if (!week.isComplete) {
+                  // Current Week: Show days directly as top-level rows
+                  return week.days.map(day => (
+                    <div key={day.dayId} className="day-card mb-3">
+                      <div 
+                        className={`day-header card ${expandedDays.has(day.dayId) ? 'expanded' : ''}`}
+                        onClick={() => toggleDay(day.dayId)}
+                        style={{ 
+                          padding: 'var(--space-4)',
+                          display: 'flex', 
+                          justifyContent: 'space-between', 
+                          alignItems: 'center', 
+                          cursor: 'pointer',
+                          background: 'white',
+                          boxShadow: 'var(--shadow-md)',
+                          borderRadius: 'var(--radius-lg)',
+                          borderLeft: expandedDays.has(day.dayId) ? '6px solid var(--color-primary)' : '1px solid var(--color-border)'
+                        }}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="day-icon" style={{ fontSize: '1.2rem', background: 'var(--color-bg)', padding: '8px', borderRadius: '50%' }}>
+                            📅
                           </div>
+                          <div>
+                            <h3 style={{ fontSize: 'var(--font-base)', fontWeight: 700, textTransform: 'capitalize' }}>{day.label}</h3>
+                            <span className="text-xs text-primary font-bold">Hoy / Esta Semana</span>
+                          </div>
+                        </div>
+                        <div className="day-stats flex gap-4 text-sm font-semibold">
+                          <span title="Servicios Completados" style={{ color: 'var(--color-success)' }}>
+                            ✅ {day.stats.completed}/{day.stats.totalServices}
+                          </span>
+                          <span title="Horas Totales" style={{ color: 'var(--color-primary)' }}>
+                            ⏱️ {formatMinutes(day.stats.minutes)}
+                          </span>
+                          <span style={{ color: 'var(--text-muted)' }}>{expandedDays.has(day.dayId) ? '🔽' : '▶️'}</span>
+                        </div>
+                      </div>
 
-                          {expandedDays.has(day.dayId) && (
-                            <div className="day-content mt-2 ml-6 flex flex-col gap-3 p-4 bg-white rounded-lg border border-gray-100 shadow-inner">
-                              {day.operators.length === 0 ? (
-                                <p className="text-center text-muted text-sm py-2">Sin actividad registrada</p>
-                              ) : (
-                                day.operators.map(op => (
-                                  <div key={op.opId} className="operator-detail pb-3 border-bottom last:border-0" style={{ borderBottom: '1px solid var(--color-bg)' }}>
-                                    <div className="flex justify-between items-center mb-3">
-                                      <h5 className="font-bold text-sm text-primary flex items-center gap-2">
-                                        👤 {op.name}
-                                      </h5>
-                                      <div className="flex gap-2">
-                                        <span className="badge badge-primary">
-                                          ⏱️ {formatMinutes(op.stats.minutes)}
-                                        </span>
-                                      </div>
-                                    </div>
-                                    
-                                    <div className="grid grid-2 gap-6">
-                                      {/* Services sub-list */}
-                                      <div className="op-services bg-gray-50 p-3 rounded-lg border border-gray-100">
-                                        <p className="text-xs font-bold text-muted mb-2 uppercase tracking-wider flex items-center gap-1">
-                                          📋 Servicios ({op.stats.totalServices})
-                                        </p>
-                                        <div className="flex flex-col gap-1">
-                                          {op.services.length === 0 && <span className="text-xs text-muted italic">Sin servicios asignados</span>}
-                                          {op.services.map(s => (
-                                            <div key={s.id} className="flex justify-between items-center text-xs p-1.5 bg-white shadow-sm border border-gray-100 rounded">
-                                              <span className="font-medium">{getCommunityName(s.communityId)}</span>
-                                              <span className={`badge ${s.status === 'completed' ? 'badge-success' : 'badge-warning'}`} style={{ transform: 'scale(0.85)', originX: 'right' }}>
-                                                {s.status === 'completed' ? 'Completado' : s.status}
-                                              </span>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      </div>
+                      {expandedDays.has(day.dayId) && (
+                        <div className="day-content mt-2 ml-2 flex flex-col gap-3 p-4 bg-white rounded-lg border border-gray-100 shadow-inner">
+                          {renderDayOperators(day)}
+                        </div>
+                      )}
+                    </div>
+                  ));
+                } else {
+                  // Completed Week: Show a week button
+                  return (
+                    <div key={week.weekId} className="week-card mb-4">
+                      <div 
+                        className={`week-header card ${expandedWeeks.has(week.weekId) ? 'expanded' : ''}`}
+                        onClick={() => toggleWeek(week.weekId)}
+                        style={{ 
+                          display: 'flex', 
+                          justifyContent: 'space-between', 
+                          alignItems: 'center', 
+                          cursor: 'pointer',
+                          background: 'var(--color-bg-input)',
+                          borderLeft: expandedWeeks.has(week.weekId) ? '4px solid var(--color-primary)' : '1px solid var(--color-border)'
+                        }}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="week-icon" style={{ fontSize: '1.2rem' }}>
+                            {expandedWeeks.has(week.weekId) ? '📂' : '📁'}
+                          </div>
+                          <div>
+                            <h3 style={{ fontSize: 'var(--font-base)', fontWeight: 700 }}>{week.label}</h3>
+                            <span className="text-xs text-muted">Semana Finalizada</span>
+                          </div>
+                        </div>
+                        <div className="week-stats flex gap-4 text-sm font-semibold">
+                          <span title="Servicios Completados" style={{ color: 'var(--color-success)' }}>
+                            ✅ {week.stats.completed}/{week.stats.totalServices}
+                          </span>
+                          <span title="Horas Totales" style={{ color: 'var(--color-primary)' }}>
+                            ⏱️ {formatMinutes(week.stats.minutes)}
+                          </span>
+                          <span style={{ color: 'var(--text-muted)' }}>{expandedWeeks.has(week.weekId) ? '🔽' : '▶️'}</span>
+                        </div>
+                      </div>
 
-                                      {/* Check-ins sub-list */}
-                                      <div className="op-checkins bg-gray-50 p-3 rounded-lg border border-gray-100">
-                                        <p className="text-xs font-bold text-muted mb-2 uppercase tracking-wider flex items-center gap-1">
-                                          🕒 Fichajes ({op.checkIns.length})
-                                        </p>
-                                        <div className="flex flex-col gap-1">
-                                          {op.checkIns.length === 0 && <span className="text-xs text-muted italic">Sin fichajes</span>}
-                                          {op.checkIns.map(c => (
-                                            <div key={c.id} className="flex justify-between items-center text-xs p-1.5 bg-white shadow-sm border border-gray-100 rounded">
-                                              <span>
-                                                <span className="text-success">{c.checkInTime?.toDate ? format(c.checkInTime.toDate(), 'HH:mm') : '--'}</span>
-                                                {' → '}
-                                                <span className={c.checkOutTime ? 'text-danger' : 'text-primary'}>
-                                                  {c.checkOutTime?.toDate ? format(c.checkOutTime.toDate(), 'HH:mm') : 'Activo'}
-                                                </span>
-                                              </span>
-                                              <span className="font-bold text-primary">{formatMinutes(c.durationMinutes)}</span>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      </div>
-                                    </div>
-                                  </div>
-                                ))
+                      {expandedWeeks.has(week.weekId) && (
+                        <div className="week-content mt-2 ml-4 flex flex-col gap-2">
+                          {week.days.map(day => (
+                            <div key={day.dayId} className="day-card">
+                              <div 
+                                className={`day-header card ${expandedDays.has(day.dayId) ? 'expanded' : ''}`}
+                                onClick={() => toggleDay(day.dayId)}
+                                style={{ 
+                                  padding: 'var(--space-3) var(--space-4)',
+                                  display: 'flex', 
+                                  justifyContent: 'space-between', 
+                                  alignItems: 'center', 
+                                  cursor: 'pointer',
+                                  background: 'var(--color-bg-card)',
+                                  boxShadow: 'var(--shadow-sm)',
+                                  borderRadius: 'var(--radius-md)'
+                                }}
+                              >
+                                <div className="flex items-center gap-3">
+                                  <span style={{ fontSize: '1rem' }}>
+                                    {expandedDays.has(day.dayId) ? '🔽' : '▶️'}
+                                  </span>
+                                  <h4 style={{ fontSize: 'var(--font-sm)', fontWeight: 600, textTransform: 'capitalize' }}>
+                                    {day.label}
+                                  </h4>
+                                </div>
+                                <div className="day-stats flex gap-3 text-xs">
+                                  <span className="badge badge-success">
+                                    {day.stats.completed}/{day.stats.totalServices} Svcs
+                                  </span>
+                                  <span className="badge badge-primary">
+                                    {formatMinutes(day.stats.minutes)}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {expandedDays.has(day.dayId) && (
+                                <div className="day-content mt-2 ml-6 flex flex-col gap-3 p-4 bg-white rounded-lg border border-gray-100 shadow-inner">
+                                  {renderDayOperators(day)}
+                                </div>
                               )}
                             </div>
-                          )}
+                          ))}
                         </div>
-                      ))}
+                      )}
                     </div>
-                  )}
-                </div>
-              ))}
+                  );
+                }
+              })}
               {hierarchicalData.length === 0 && (
                 <div className="card text-center p-8 text-muted">
                   📭 No hay datos que mostrar para el rango seleccionado.

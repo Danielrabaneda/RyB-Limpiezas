@@ -6,7 +6,7 @@ import { db } from '../config/firebase';
 import { getCheckInsForDate } from './checkInService';
 import { getCommunity } from './communityService';
 import { getDistance } from '../utils/geolocation';
-import { startOfDay, endOfDay, format, differenceInMinutes, eachDayOfInterval } from 'date-fns';
+import { startOfDay, endOfDay, format, differenceInMinutes, eachDayOfInterval, isSameDay } from 'date-fns';
 
 const COLLECTION = 'dailyMileage';
 const ROAD_FACTOR = 1.3; // Factor de corrección línea recta → carretera
@@ -52,16 +52,34 @@ export async function calculateDailyMileage(userId, date, userName = 'Operario',
     // 1. Calcular migas de pan (breadcrumbs) por si las hay
     const breadcrumbsKm = calculateBreadcrumbsDistance(carSessions);
 
-    // 2. Obtener todos los fichajes del día
-    const checkIns = await getCheckInsForDate(userId, date);
+    // 2. Obtener todos los fichajes del día (propios y como acompañante)
+    const ownCheckIns = await getCheckInsForDate(userId, date);
+    const companionCheckIns = await getCompanionCheckIns(userId, date);
     
-    const completed = checkIns ? checkIns
+    // Unificar y deduplicar por communityId y hora aproximada (por si ambos ficharon)
+    const allCheckIns = [...ownCheckIns, ...companionCheckIns];
+    const uniqueCheckIns = [];
+    const seenKeys = new Set();
+
+    for (const ci of allCheckIns) {
+      const time = ci.checkInTime?.toDate ? ci.checkInTime.toDate().getTime() : 0;
+      // Redondeamos a minutos para evitar duplicados por milisegundos
+      const timeKey = Math.floor(time / 60000); 
+      const key = `${ci.communityId}_${timeKey}`;
+      
+      if (!seenKeys.has(key)) {
+        uniqueCheckIns.push(ci);
+        seenKeys.add(key);
+      }
+    }
+
+    const completed = uniqueCheckIns
       .filter(c => c.checkInTime)
       .sort((a, b) => {
         const timeA = a.checkInTime?.toDate ? a.checkInTime.toDate().getTime() : 0;
         const timeB = b.checkInTime?.toDate ? b.checkInTime.toDate().getTime() : 0;
         return timeA - timeB;
-      }) : [];
+      });
 
     if (completed.length < 2) {
       const finalKm = breadcrumbsKm > 0 ? breadcrumbsKm : 0;
@@ -404,4 +422,72 @@ export async function recalculateBulk(startDate, endDate, userId, userName, carS
   }
   
   return results;
+}
+
+/**
+ * Busca fichajes donde el usuario participó como acompañante.
+ */
+async function getCompanionCheckIns(userId, date) {
+  try {
+    const companionCheckIns = [];
+    
+    // 1. Fichajes de servicios donde fue añadido explícitamente como acompañante
+    const qServices = query(
+      collection(db, 'scheduledServices'),
+      where('companionIds', 'array-contains', userId)
+    );
+    const servicesSnap = await getDocs(qServices);
+    
+    const serviceIds = servicesSnap.docs
+      .filter(d => {
+        const svcData = d.data();
+        const svcDate = svcData.scheduledDate?.toDate ? svcData.scheduledDate.toDate() : new Date(svcData.scheduledDate);
+        return isSameDay(svcDate, date);
+      })
+      .map(d => d.id);
+
+    if (serviceIds.length > 0) {
+      // Consultar check-ins vinculados a esos servicios
+      // Nota: Firestore limita 'in' a 10/30 elementos, pero un operario no suele tener más de 10 servicios al día.
+      const chunks = [];
+      for (let i = 0; i < serviceIds.length; i += 10) {
+        chunks.push(serviceIds.slice(i, i + 10));
+      }
+
+      for (const chunk of chunks) {
+        const qCi = query(
+          collection(db, 'checkIns'),
+          where('scheduledServiceId', 'in', chunk)
+        );
+        const snapCi = await getDocs(qCi);
+        companionCheckIns.push(...snapCi.docs.map(d => ({ id: d.id, ...d.data() })));
+      }
+    }
+
+    // 2. Fichajes de titulares que tenían a este usuario como "Acompañante Global" en su jornada
+    const qWorkdays = query(
+      collection(db, 'workdays'),
+      where('currentCompanionId', '==', userId)
+    );
+    const workdaysSnap = await getDocs(qWorkdays);
+    
+    const titularIds = [...new Set(workdaysSnap.docs
+      .filter(d => {
+        const wdData = d.data();
+        const wdDate = wdData.date?.toDate ? wdData.date.toDate() : new Date(wdData.date);
+        return isSameDay(wdDate, date);
+      })
+      .map(d => d.userId)
+    )];
+
+    for (const tId of titularIds) {
+      const tCheckIns = await getCheckInsForDate(tId, date);
+      companionCheckIns.push(...tCheckIns);
+    }
+
+    return companionCheckIns;
+  } catch (err) {
+    console.error('[Mileage] Error recuperando fichajes de acompañante:', err);
+    return [];
+  }
 }
