@@ -3,7 +3,7 @@ import {
   query, where, orderBy, serverTimestamp, Timestamp, limit, deleteDoc, arrayUnion
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { startOfDay, endOfDay, differenceInMinutes, format } from 'date-fns';
+import { startOfDay, endOfDay, differenceInMinutes, format, isSameDay } from 'date-fns';
 import { calculateDailyMileage } from './mileageService';
 
 const COLLECTION_NAME = 'workdays';
@@ -351,6 +351,171 @@ export async function deactivateCar(workdayId, breadcrumbs = []) {
     carSessions: updatedSessions,
     updatedAt: serverTimestamp()
   });
+}
+
+/**
+ * Finds the latest activity of a user on a given date to suggest a closing time.
+ * Logic:
+ * 1. Get all check-ins for the user on that date.
+ * 2. Find the maximum checkOutTime.
+ * 3. If no check-outs, use the maximum checkInTime.
+ * 4. Also check for car sessions breadcrumbs in the workday itself.
+ */
+export async function findLastActivityForUser(userId, date, workdayId = null) {
+  try {
+    const start = Timestamp.fromDate(startOfDay(date));
+    const end = Timestamp.fromDate(endOfDay(date));
+    
+    // 1. Get check-ins
+    const qCheckIns = query(
+      collection(db, 'checkIns'),
+      where('userId', '==', userId),
+      where('checkInTime', '>=', start),
+      where('checkInTime', '<=', end)
+    );
+    const snapCheckIns = await getDocs(qCheckIns);
+    const checkIns = snapCheckIns.docs.map(d => d.data());
+    
+    let lastTime = null;
+    
+    checkIns.forEach(ci => {
+      const time = ci.checkOutTime || ci.checkInTime;
+      if (time) {
+        const dateObj = time.toDate ? time.toDate() : new Date(time);
+        if (!lastTime || dateObj > lastTime) {
+          lastTime = dateObj;
+        }
+      }
+    });
+
+    // 2. Check car breadcrumbs if workdayId is provided
+    if (workdayId) {
+      const wdRef = doc(db, COLLECTION_NAME, workdayId);
+      const wdSnap = await getDoc(wdRef);
+      if (wdSnap.exists()) {
+        const wdData = wdSnap.data();
+        const sessions = wdData.carSessions || [];
+        sessions.forEach(s => {
+          const breadcrumbs = s.breadcrumbs || [];
+          breadcrumbs.forEach(b => {
+            const bTime = typeof b.timestamp === 'number' ? new Date(b.timestamp) : (b.timestamp?.toDate ? b.timestamp.toDate() : new Date(b.timestamp));
+            if (!lastTime || bTime > lastTime) {
+              lastTime = bTime;
+            }
+          });
+          // Also check startTime/endTime of car sessions
+          if (s.endTime) {
+            const et = s.endTime.toDate ? s.endTime.toDate() : new Date(s.endTime);
+            if (!lastTime || et > lastTime) lastTime = et;
+          }
+        });
+      }
+    }
+
+    return lastTime;
+  } catch (error) {
+    console.error("Error finding last activity:", error);
+    return null;
+  }
+}
+
+/**
+ * Closes a workday that was left open, using a specific suggested time.
+ */
+export async function closeStaleWorkday(workdayId, suggestedEndTime) {
+  const workdayRef = doc(db, COLLECTION_NAME, workdayId);
+  const workdaySnap = await getDoc(workdayRef);
+  
+  if (!workdaySnap.exists()) throw new Error("Workday not found");
+  const workdayData = workdaySnap.data();
+  
+  const endTime = suggestedEndTime || new Date();
+  const startTime = workdayData.startTime?.toDate ? workdayData.startTime.toDate() : new Date(workdayData.startTime);
+  
+  // Calculate duration correctly
+  let duration = differenceInMinutes(endTime, startTime);
+  if (duration < 0) duration = 0; // Should not happen but for safety
+
+  // Close any open car session
+  const updatedCarSessions = (workdayData.carSessions || []).map(session => {
+    if (!session.endTime) {
+      return { 
+        ...session, 
+        endTime: Timestamp.fromDate(endTime),
+        breadcrumbs: session.breadcrumbs || []
+      };
+    }
+    return session;
+  });
+
+  await updateDoc(workdayRef, {
+    endTime: Timestamp.fromDate(endTime),
+    totalMinutes: duration,
+    status: 'completed',
+    carActive: false,
+    carSessions: updatedCarSessions,
+    autoClosed: true, // Flag for admin audit
+    closedReason: 'Sistema: Resolución por inactividad detectada el día siguiente',
+    originalSuggestedTime: Timestamp.fromDate(endTime),
+    updatedAt: serverTimestamp()
+  });
+
+  // Calculate mileage for that day
+  try {
+    const logicalDate = workdayData.date?.toDate ? workdayData.date.toDate() : startTime;
+    await calculateDailyMileage(
+      workdayData.userId,
+      logicalDate,
+      workdayData.userName || 'Operario',
+      updatedCarSessions
+    );
+  } catch (err) {
+    console.error("Error calculating mileage for auto-closed workday:", err);
+  }
+
+  return { duration };
+}
+
+/**
+ * Updates a workday's times manually (for Admin corrections).
+ */
+export async function updateWorkdayTimes(workdayId, newStartTime, newEndTime) {
+  const workdayRef = doc(db, COLLECTION_NAME, workdayId);
+  const workdaySnap = await getDoc(workdayRef);
+  
+  if (!workdaySnap.exists()) throw new Error("Workday not found");
+  const workdayData = workdaySnap.data();
+  
+  const startTime = newStartTime instanceof Date ? newStartTime : newStartTime.toDate();
+  const endTime = newEndTime instanceof Date ? newEndTime : newEndTime.toDate();
+  
+  let duration = differenceInMinutes(endTime, startTime);
+  if (duration < 0) duration = 0;
+
+  await updateDoc(workdayRef, {
+    startTime: Timestamp.fromDate(startTime),
+    endTime: Timestamp.fromDate(endTime),
+    totalMinutes: duration,
+    updatedAt: serverTimestamp(),
+    manualCorrection: true // Audit flag
+  });
+
+  // Re-calculate mileage if it was completed
+  if (workdayData.status === 'completed') {
+    try {
+      const logicalDate = workdayData.date?.toDate ? workdayData.date.toDate() : startTime;
+      await calculateDailyMileage(
+        workdayData.userId,
+        logicalDate,
+        workdayData.userName || 'Operario',
+        workdayData.carSessions || []
+      );
+    } catch (err) {
+      console.error("Error recalculating mileage after update:", err);
+    }
+  }
+
+  return { duration };
 }
 
 /**

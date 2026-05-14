@@ -4,7 +4,7 @@ import { getScheduledServicesForDate } from '../../services/scheduleService';
 import { getCommunitiesForOperario, getCommunity } from '../../services/communityService';
 import { getCommunityTasks } from '../../services/taskService';
 import { getActiveCheckIn } from '../../services/checkInService';
-import { getActiveWorkday, startWorkday, endWorkday, activateCar, deactivateCar, getWorkdaysSummaryForDate } from '../../services/workdayService';
+import { getActiveWorkday, startWorkday, endWorkday, activateCar, deactivateCar, getWorkdaysSummaryForDate, findLastActivityForUser, closeStaleWorkday } from '../../services/workdayService';
 import { saveManualMileage } from '../../services/mileageService';
 import { transferService, transferDay, transferWeek } from '../../services/transferService';
 import TransferModal from '../../components/TransferModal';
@@ -14,7 +14,7 @@ import { updateWorkdayCompanion } from '../../services/workdayService';
 import { addCompanionToService, removeCompanionFromService } from '../../services/scheduleService';
 import { markAllNotificationsAsRead } from '../../services/notificationService';
 import { useNavigate } from 'react-router-dom';
-import { format, addDays, startOfDay, endOfDay } from 'date-fns';
+import { format, addDays, startOfDay, endOfDay, isSameDay } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { collection, query, where, onSnapshot, Timestamp } from 'firebase/firestore';
 import { db } from '../../config/firebase';
@@ -38,6 +38,7 @@ export default function TodayPage() {
   const [companionSelectorOpen, setCompanionSelectorOpen] = useState(false);
   const [mileageModalOpen, setMileageModalOpen] = useState(false);
   const [manualKm, setManualKm] = useState('');
+  const [staleWorkday, setStaleWorkday] = useState(null); // { workday, suggestedEndTime }
 
   const [debugLogs, setDebugLogs] = useState([]);
   // Guard to prevent concurrent loadToday() calls from multiple snapshot triggers
@@ -282,7 +283,27 @@ export default function TodayPage() {
       }
 
       setActiveCheckIn(checkIn);
-      setActiveWorkday(summary.activeWorkday);
+      
+      // Check for stale workday (orphaned from previous day)
+      if (summary.activeWorkday) {
+        const wdDate = summary.activeWorkday.date?.toDate ? summary.activeWorkday.date.toDate() : new Date(summary.activeWorkday.date);
+        if (!isSameDay(wdDate, now)) {
+          // It's from another day! Find last activity
+          const lastActivity = await findLastActivityForUser(userProfile.uid, wdDate, summary.activeWorkday.id);
+          setStaleWorkday({
+            workday: summary.activeWorkday,
+            suggestedEndTime: lastActivity || (summary.activeWorkday.startTime?.toDate ? summary.activeWorkday.startTime.toDate() : new Date())
+          });
+          setActiveWorkday(null); // Don't show as "Active" today
+        } else {
+          setActiveWorkday(summary.activeWorkday);
+          setStaleWorkday(null);
+        }
+      } else {
+        setActiveWorkday(null);
+        setStaleWorkday(null);
+      }
+
       setFirstStartTime(summary.firstStartTime);
       // We store the aggregated minutes in a virtual allWorkdaysToday-like array for backwards compatibility with UI logic
       setAllWorkdaysToday([{ totalMinutes: summary.totalMinutes }]); 
@@ -490,6 +511,21 @@ export default function TodayPage() {
       await markAllNotificationsAsRead(userProfile.uid);
     } catch (err) {
       console.error("Error dismissing notifications:", err);
+    }
+  };
+
+  const handleResolveStaleWorkday = async () => {
+    if (!staleWorkday) return;
+    setActionLoading(true);
+    try {
+      await closeStaleWorkday(staleWorkday.workday.id, staleWorkday.suggestedEndTime);
+      setStaleWorkday(null);
+      alert('Jornada anterior cerrada correctamente. Ahora puedes iniciar la de hoy.');
+      await loadToday();
+    } catch (err) {
+      alert('Error al cerrar jornada anterior: ' + err.message);
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -1068,6 +1104,57 @@ export default function TodayPage() {
             >
               {actionLoading ? 'Guardando...' : 'Guardar Kilometraje'}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL JORNADA HUÉRFANA (STALE) */}
+      {staleWorkday && (
+        <div className="modal-overlay">
+          <div className="modal-content animate-scaleIn" style={{ maxWidth: '400px' }}>
+            <div className="text-center mb-6">
+              <div style={{ fontSize: '4rem', marginBottom: 'var(--space-4)' }}>⏰</div>
+              <h3 style={{ fontSize: 'var(--font-xl)', fontWeight: 800, color: 'var(--color-danger)' }}>
+                JORNADA SIN CERRAR
+              </h3>
+              <p className="text-sm text-muted mt-2">
+                Parece que olvidaste cerrar tu jornada del día{' '}
+                <span className="font-bold">
+                  {format(staleWorkday.workday.date?.toDate ? staleWorkday.workday.date.toDate() : new Date(staleWorkday.workday.date), 'dd/MM/yyyy')}
+                </span>.
+              </p>
+            </div>
+
+            <div className="p-4 bg-slate-50 rounded-xl mb-6 border border-slate-200">
+              <div className="flex justify-between text-sm mb-2">
+                <span className="text-muted">Inicio detectado:</span>
+                <span className="font-bold">
+                  {format(staleWorkday.workday.startTime?.toDate ? staleWorkday.workday.startTime.toDate() : new Date(), 'HH:mm')}
+                </span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted">Última actividad (fin sugerido):</span>
+                <span className="font-bold text-primary" style={{ fontSize: '1.1rem' }}>
+                  {format(staleWorkday.suggestedEndTime, 'HH:mm')}
+                </span>
+              </div>
+              <p className="text-[10px] text-muted mt-3 italic">
+                * El fin sugerido se basa en tu última salida de una comunidad o último movimiento registrado.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <button 
+                className="btn btn-primary w-full py-4 font-bold"
+                onClick={handleResolveStaleWorkday}
+                disabled={actionLoading}
+              >
+                {actionLoading ? 'CERRANDO...' : 'CONFIRMAR Y CERRAR'}
+              </button>
+              <p className="text-[10px] text-center text-muted">
+                Debes cerrar la jornada anterior antes de poder iniciar una nueva.
+              </p>
+            </div>
           </div>
         </div>
       )}

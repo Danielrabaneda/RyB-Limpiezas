@@ -42,28 +42,27 @@ export async function calculateDailyMileage(userId, date, userName = 'Operario',
   const dateStr = format(date, 'yyyy-MM-dd');
 
   try {
-    // 0. Si ya existe un registro MANUAL, no lo sobrescribimos automáticamente (ej: al terminar jornada)
+    // 0. Si ya existe un registro MANUAL, no lo sobrescribimos automáticamente
     const existing = await findExistingRecord(userId, dateStr);
     if (existing && (existing.type === 'manual' || (existing.type !== 'auto' && existing.totalKm > 0 && (!existing.tramos || existing.tramos.length === 0)))) {
       console.log(`[Mileage] Saltando cálculo automático para ${dateStr} porque ya existe un registro MANUAL o modificado.`);
       return existing;
     }
 
-    // 1. Calcular migas de pan (breadcrumbs) por si las hay
+    // 1. Calcular migas de pan (breadcrumbs) - Trayectoria real muestreada
     const breadcrumbsKm = calculateBreadcrumbsDistance(carSessions);
 
-    // 2. Obtener todos los fichajes del día (propios y como acompañante)
+    // 2. Obtener todos los fichajes del día (propios y de compañeros de equipo)
     const ownCheckIns = await getCheckInsForDate(userId, date);
-    const companionCheckIns = await getCompanionCheckIns(userId, date);
+    const relatedCheckIns = await getRelatedCheckIns(userId, date);
     
-    // Unificar y deduplicar por communityId y hora aproximada (por si ambos ficharon)
-    const allCheckIns = [...ownCheckIns, ...companionCheckIns];
+    // Unificar y deduplicar por communityId y hora aproximada
+    const allCheckIns = [...ownCheckIns, ...relatedCheckIns];
     const uniqueCheckIns = [];
     const seenKeys = new Set();
 
     for (const ci of allCheckIns) {
       const time = ci.checkInTime?.toDate ? ci.checkInTime.toDate().getTime() : 0;
-      // Redondeamos a minutos para evitar duplicados por milisegundos
       const timeKey = Math.floor(time / 60000); 
       const key = `${ci.communityId}_${timeKey}`;
       
@@ -73,7 +72,8 @@ export async function calculateDailyMileage(userId, date, userName = 'Operario',
       }
     }
 
-    const completed = uniqueCheckIns
+    // Ordenar cronológicamente
+    let completed = uniqueCheckIns
       .filter(c => c.checkInTime)
       .sort((a, b) => {
         const timeA = a.checkInTime?.toDate ? a.checkInTime.toDate().getTime() : 0;
@@ -81,93 +81,143 @@ export async function calculateDailyMileage(userId, date, userName = 'Operario',
         return timeA - timeB;
       });
 
-    if (completed.length < 2) {
+    // --- MEJORA: Puntos Virtuales de Inicio/Fin de Jornada ---
+    // Si no tiene check-ins pero sí sesiones de coche, añadimos los puntos GPS inicial/final
+    // para que el cálculo por centros tenga puntos de anclaje.
+    const virtualPoints = [];
+    if (carSessions.length > 0) {
+      // Ordenar sesiones por tiempo por si acaso
+      const sortedSessions = [...carSessions].sort((a, b) => {
+        const tA = a.startTime?.toDate ? a.startTime.toDate().getTime() : new Date(a.startTime).getTime();
+        const tB = b.startTime?.toDate ? b.startTime.toDate().getTime() : new Date(b.startTime).getTime();
+        return tA - tB;
+      });
+
+      // Primer punto de la primera sesión
+      const firstSession = sortedSessions[0];
+      const firstBread = firstSession.breadcrumbs?.[0];
+      if (firstBread) {
+        virtualPoints.push({
+          communityId: 'VIRTUAL_START',
+          communityName: 'Inicio de trayecto (Coche)',
+          checkInTime: Timestamp.fromMillis(firstBread.timestamp),
+          checkOutTime: Timestamp.fromMillis(firstBread.timestamp),
+          lat: firstBread.lat,
+          lng: firstBread.lng,
+          isVirtual: true
+        });
+      }
+
+      // Último punto de la última sesión
+      const lastSession = sortedSessions[sortedSessions.length - 1];
+      const lastBread = lastSession.breadcrumbs?.[lastSession.breadcrumbs?.length - 1];
+      if (lastBread && lastBread !== firstBread) {
+        virtualPoints.push({
+          communityId: 'VIRTUAL_END',
+          communityName: 'Fin de trayecto (Coche)',
+          checkInTime: Timestamp.fromMillis(lastBread.timestamp),
+          checkOutTime: Timestamp.fromMillis(lastBread.timestamp),
+          lat: lastBread.lat,
+          lng: lastBread.lng,
+          isVirtual: true
+        });
+      }
+    }
+
+    // Combinar check-ins reales con puntos virtuales y volver a ordenar
+    const fullPoints = [...completed, ...virtualPoints].sort((a, b) => {
+      const timeA = a.checkInTime?.toDate ? a.checkInTime.toDate().getTime() : 0;
+      const timeB = b.checkInTime?.toDate ? b.checkInTime.toDate().getTime() : 0;
+      return timeA - timeB;
+    });
+
+    // 3. Si no hay suficientes puntos para calcular tramos, devolvemos breadcrumbs
+    if (fullPoints.length < 2) {
       const finalKm = breadcrumbsKm > 0 ? breadcrumbsKm : 0;
       if (breadcrumbsKm > 0) {
-        console.log(`[Mileage] Menos de 2 fichajes completados, usando kilometraje de migas de pan: ${finalKm} km`);
+        console.log(`[Mileage] Insuficientes puntos, usando migas de pan: ${finalKm} km`);
       }
       return await saveMileageRecord(userId, userName, date, dateStr, [], finalKm);
     }
 
-    // 3. Filtrar fichajes que caigan dentro de sesiones de coche
-    // Si no activó el coche (no hay sesiones), no se calculan kilómetros automáticamente.
+    // 4. Si no activó el coche (no hay sesiones), no se calculan kilómetros automáticamente.
     if (carSessions.length === 0) {
-      console.log(`[Mileage] No hay sesiones de coche para ${dateStr}. No se contarán kilómetros.`);
+      console.log(`[Mileage] No hay sesiones de coche para ${dateStr}. 0 km.`);
       return await saveMileageRecord(userId, userName, date, dateStr, [], 0);
     }
 
-    // 4. Construir la ruta entera a partir de TODOS los fichajes completados
-    const route = buildRoute(completed);
+    // 5. Construir la ruta entera
+    const route = buildRoute(fullPoints);
 
     if (route.length < 2) {
       const finalKm = breadcrumbsKm > 0 ? breadcrumbsKm : 0;
       return await saveMileageRecord(userId, userName, date, dateStr, [], finalKm);
     }
 
-    // 5. Calcular tramos entre centros consecutivos
+    // 6. Calcular tramos
     const tramos = [];
     let totalKm = 0;
     let tramosSospechosos = 0;
-
-    // Cache de comunidades para no repetir lecturas
     const communityCache = {};
 
     for (let i = 0; i < route.length - 1; i++) {
       const origen = route[i];
       const destino = route[i + 1];
 
-      // Obtener datos de comunidades
-      if (!communityCache[origen.communityId]) {
-        communityCache[origen.communityId] = await getCommunity(origen.communityId);
-      }
-      if (!communityCache[destino.communityId]) {
-        communityCache[destino.communityId] = await getCommunity(destino.communityId);
+      let origenLat, origenLng, origenNombre;
+      let destinoLat, destinoLng, destinoNombre;
+
+      // Resolver origen
+      if (origen.isVirtual) {
+        origenLat = origen.lat;
+        origenLng = origen.lng;
+        origenNombre = origen.communityName;
+      } else {
+        if (!communityCache[origen.communityId]) communityCache[origen.communityId] = await getCommunity(origen.communityId);
+        const comm = communityCache[origen.communityId];
+        origenLat = comm?.location?._lat || comm?.location?.latitude || 0;
+        origenLng = comm?.location?._long || comm?.location?.longitude || 0;
+        origenNombre = comm?.name || 'Comunidad';
       }
 
-      const commOrigen = communityCache[origen.communityId];
-      const commDestino = communityCache[destino.communityId];
-
-      // Coordenadas: usar las del centro de trabajo (más fiables que las del GPS del operario)
-      const origenLat = commOrigen?.location?._lat || commOrigen?.location?.latitude || 0;
-      const origenLng = commOrigen?.location?._long || commOrigen?.location?.longitude || 0;
-      const destinoLat = commDestino?.location?._lat || commDestino?.location?.latitude || 0;
-      const destinoLng = commDestino?.location?._long || commDestino?.location?.longitude || 0;
+      // Resolver destino
+      if (destino.isVirtual) {
+        destinoLat = destino.lat;
+        destinoLng = destino.lng;
+        destinoNombre = destino.communityName;
+      } else {
+        if (!communityCache[destino.communityId]) communityCache[destino.communityId] = await getCommunity(destino.communityId);
+        const comm = communityCache[destino.communityId];
+        destinoLat = comm?.location?._lat || comm?.location?.latitude || 0;
+        destinoLng = comm?.location?._long || comm?.location?.longitude || 0;
+        destinoNombre = comm?.name || 'Comunidad';
+      }
 
       // Calcular distancia
       const distanciaMetros = getDistance(origenLat, origenLng, destinoLat, destinoLng);
       const kmLineaRecta = Math.round((distanciaMetros / 1000) * 100) / 100;
       const kmEstimados = Math.round(kmLineaRecta * ROAD_FACTOR * 100) / 100;
 
-      // Calcular tiempo de desplazamiento
-      const horaSalida = origen.checkOutTime 
-        ? (origen.checkOutTime.toDate ? origen.checkOutTime.toDate() : new Date(origen.checkOutTime))
-        : (origen.checkInTime?.toDate ? origen.checkInTime.toDate() : new Date(origen.checkInTime));
-      const horaLlegada = destino.checkInTime?.toDate ? destino.checkInTime.toDate() : new Date(destino.checkInTime);
+      // Tiempos
+      const horaSalida = (origen.checkOutTime || origen.checkInTime).toDate();
+      const horaLlegada = destino.checkInTime.toDate();
       const minutosDesplazamiento = Math.max(0, differenceInMinutes(horaLlegada, horaSalida));
 
-      // Verificar si en este tramo en concreto el operario usó el coche
+      // Verificar solapamiento con coche
       const overlapCar = tramoOverlapsWithCarSession(horaSalida, horaLlegada, carSessions);
-
-      // Calcular velocidad estimada
-      const velocidadEstimada = minutosDesplazamiento > 0 
-        ? Math.round((kmEstimados / (minutosDesplazamiento / 60)) * 10) / 10
-        : 0;
-
-      // Detectar tramos sospechosos
+      const velocidadEstimada = minutosDesplazamiento > 0 ? Math.round((kmEstimados / (minutosDesplazamiento / 60)) * 10) / 10 : 0;
       const sospechoso = detectarSospechoso(kmEstimados, minutosDesplazamiento, velocidadEstimada);
 
-      // Si es el mismo centro o están a menos de 150 metros, distancia = 0 (se asume que van andando)
       const mismoCentro = origen.communityId === destino.communityId;
       const esCaminando = !mismoCentro && distanciaMetros < 150;
-      // También ignoramos si el desplazamiento no coincide con ninguna sesión de coche
       const ignorarDistancia = mismoCentro || esCaminando || !overlapCar;
 
       const tramo = {
         origenId: origen.communityId,
-        origenNombre: commOrigen?.name || 'Desconocido',
+        origenNombre,
         origenCoords: { lat: origenLat, lng: origenLng },
         destinoId: destino.communityId,
-        destinoNombre: commDestino?.name || 'Desconocido',
+        destinoNombre,
         destinoCoords: { lat: destinoLat, lng: destinoLng },
         horaSalida: Timestamp.fromDate(horaSalida),
         horaLlegada: Timestamp.fromDate(horaLlegada),
@@ -182,21 +232,18 @@ export async function calculateDailyMileage(userId, date, userName = 'Operario',
       };
 
       tramos.push(tramo);
-
       if (!ignorarDistancia) {
         totalKm += kmEstimados;
         if (sospechoso) tramosSospechosos++;
       }
     }
 
-    // Si hay migas de pan registradas y son mayores al total calculado por centros, las usamos
     totalKm = Math.round(totalKm * 100) / 100;
     
+    // Comparar con breadcrumbs y usar el máximo
     if (breadcrumbsKm > totalKm) {
       totalKm = breadcrumbsKm;
-      console.log(`[Mileage] Usando kilometraje real de migas de pan (breadcrumbs) por ser mayor: ${totalKm} km`);
-    } else if (breadcrumbsKm > 0) {
-      console.log(`[Mileage] Usando kilometraje por centros (${totalKm} km) porque es mayor que las migas de pan (${breadcrumbsKm} km)`);
+      console.log(`[Mileage] Usando trayectoria real (breadcrumbs): ${totalKm} km`);
     }
 
     return await saveMileageRecord(userId, userName, date, dateStr, tramos, totalKm, tramosSospechosos);
@@ -213,8 +260,6 @@ export async function calculateDailyMileage(userId, date, userName = 'Operario',
 function tramoOverlapsWithCarSession(horaSalida, horaLlegada, carSessions) {
   const salida = horaSalida.getTime();
   const llegada = horaLlegada.getTime();
-  
-  // Margen de 30 minutos por si inician el coche un poco tarde o lo apagan pronto
   const MARGIN_MS = 30 * 60 * 1000;
 
   return carSessions.some(session => {
@@ -223,25 +268,23 @@ function tramoOverlapsWithCarSession(horaSalida, horaLlegada, carSessions) {
       : new Date(session.startTime).getTime();
     const sessionEnd = session.endTime 
       ? (session.endTime?.toDate ? session.endTime.toDate().getTime() : new Date(session.endTime).getTime())
-      : Date.now(); // Si la sesión sigue activa, usar ahora
+      : Date.now();
       
-    // Comprobar solapamiento: (StartA <= EndB) and (EndA >= StartB)
     return (sessionStart - MARGIN_MS) <= llegada && (sessionEnd + MARGIN_MS) >= salida;
   });
 }
 
 /**
  * Construye la ruta eliminando fichajes consecutivos en el mismo centro.
- * Mantiene el primero de cada grupo consecutivo.
  */
-function buildRoute(checkIns) {
+function buildRoute(points) {
   const route = [];
   let lastCommunityId = null;
 
-  for (const ci of checkIns) {
-    if (ci.communityId !== lastCommunityId) {
-      route.push(ci);
-      lastCommunityId = ci.communityId;
+  for (const p of points) {
+    if (p.communityId !== lastCommunityId || p.communityId.startsWith('VIRTUAL')) {
+      route.push(p);
+      lastCommunityId = p.communityId;
     }
   }
 
@@ -252,15 +295,9 @@ function buildRoute(checkIns) {
  * Detecta si un tramo es sospechoso.
  */
 function detectarSospechoso(kmEstimados, minutosDesplazamiento, velocidadEstimada) {
-  // Velocidad imposible (> 150 km/h)
   if (velocidadEstimada > 150) return true;
-  
-  // Teletransporte: distancia significativa en muy poco tiempo
   if (kmEstimados > 0.5 && minutosDesplazamiento < 2) return true;
-  
-  // Parada no registrada: poca distancia con mucho tiempo
   if (kmEstimados < 1 && minutosDesplazamiento > 60) return true;
-
   return false;
 }
 
@@ -268,7 +305,6 @@ function detectarSospechoso(kmEstimados, minutosDesplazamiento, velocidadEstimad
  * Guarda o actualiza el registro de kilometraje diario.
  */
 async function saveMileageRecord(userId, userName, date, dateStr, tramos, totalKm, tramosSospechosos = 0, type = 'auto') {
-  // Buscar si ya existe un registro para este usuario/fecha
   const existing = await findExistingRecord(userId, dateStr);
 
   const data = {
@@ -282,7 +318,7 @@ async function saveMileageRecord(userId, userName, date, dateStr, tramos, totalK
     tramos,
     calculadoEn: serverTimestamp(),
     version: existing ? (existing.version || 0) + 1 : 1,
-    type, // 'auto' o 'manual'
+    type,
   };
 
   if (existing) {
@@ -299,21 +335,8 @@ async function saveMileageRecord(userId, userName, date, dateStr, tramos, totalK
  */
 export async function saveManualMileage(userId, userName, date, km) {
   const dateStr = format(date, 'yyyy-MM-dd');
-  
-  // Para registros manuales, no hay tramos
   const tramos = [];
-  const tramosSospechosos = 0;
-  
-  return await saveMileageRecord(
-    userId, 
-    userName, 
-    date, 
-    dateStr, 
-    tramos, 
-    parseFloat(km), 
-    tramosSospechosos, 
-    'manual'
-  );
+  return await saveMileageRecord(userId, userName, date, dateStr, tramos, parseFloat(km), 0, 'manual');
 }
 
 /**
@@ -334,13 +357,11 @@ async function findExistingRecord(userId, dateStr) {
  * Recalcula el kilometraje de un día concreto para un operario.
  */
 export async function recalculateMileage(userId, date, userName = 'Operario', carSessions = []) {
-  // Borra registro existente
   const dateStr = format(date, 'yyyy-MM-dd');
   const existing = await findExistingRecord(userId, dateStr);
   if (existing) {
     await deleteDoc(doc(db, COLLECTION, existing.id));
   }
-  // Recalcular
   return await calculateDailyMileage(userId, date, userName, carSessions);
 }
 
@@ -370,48 +391,33 @@ export async function getMileageReport(startDate, endDate, filters = {}) {
   const snap = await getDocs(q);
   let results = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-  // Filtro por comunidad en memoria
   if (filters.communityId) {
     results = results.filter(r => 
       r.type === 'manual' || 
-      r.tramos?.some(t => 
-        t.origenId === filters.communityId || t.destinoId === filters.communityId
-      )
+      r.tramos?.some(t => t.origenId === filters.communityId || t.destinoId === filters.communityId)
     );
   }
 
-  // Ordenar por fecha desc
   results.sort((a, b) => b.date.localeCompare(a.date));
-
   return results;
 }
 
-/**
- * Obtiene los registros de kilometraje de un operario para una semana.
- * Devuelve un array con los registros (uno por día trabajado en coche).
- */
 export async function getMileageForWeek(userId, startDate, endDate) {
   return getMileageReport(startDate, endDate, { userId });
 }
 
-/**
- * Obtiene los registros de kilometraje de un operario para un mes completo.
- */
 export async function getMileageForMonth(userId, year, month) {
   const startDate = new Date(year, month, 1);
   const endDate = new Date(year, month + 1, 0, 23, 59, 59);
   return getMileageReport(startDate, endDate, { userId });
 }
 
-/**
- * Recalcula el kilometraje en bloque para un rango de fechas.
- */
 export async function recalculateBulk(startDate, endDate, userId, userName, carSessionsByDate = {}) {
   const days = eachDayOfInterval({ start: startDate, end: endDate });
   const results = [];
   
   for (const day of days) {
-    const dateStr = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+    const dateStr = format(day, 'yyyy-MM-dd');
     const sessions = carSessionsByDate[dateStr] || [];
     try {
       const result = await recalculateMileage(userId, day, userName, sessions);
@@ -425,69 +431,83 @@ export async function recalculateBulk(startDate, endDate, userId, userName, carS
 }
 
 /**
- * Busca fichajes donde el usuario participó como acompañante.
+ * Obtiene fichajes de "compañeros de equipo" para un día concreto.
  */
-async function getCompanionCheckIns(userId, date) {
+async function getRelatedCheckIns(userId, date) {
   try {
-    const companionCheckIns = [];
+    const relatedCheckIns = [];
     
-    // 1. Fichajes de servicios donde fue añadido explícitamente como acompañante
-    const qServices = query(
+    // 1. CASO: EL USUARIO ES ACOMPAÑANTE
+    const qServicesAsCompanion = query(
       collection(db, 'scheduledServices'),
       where('companionIds', 'array-contains', userId)
     );
-    const servicesSnap = await getDocs(qServices);
+    const servicesAsCompSnap = await getDocs(qServicesAsCompanion);
     
-    const serviceIds = servicesSnap.docs
+    const titularIdsFromServices = servicesAsCompSnap.docs
       .filter(d => {
         const svcData = d.data();
         const svcDate = svcData.scheduledDate?.toDate ? svcData.scheduledDate.toDate() : new Date(svcData.scheduledDate);
         return isSameDay(svcDate, date);
       })
-      .map(d => d.id);
+      .map(d => d.data().userId);
 
-    if (serviceIds.length > 0) {
-      // Consultar check-ins vinculados a esos servicios
-      // Nota: Firestore limita 'in' a 10/30 elementos, pero un operario no suele tener más de 10 servicios al día.
-      const chunks = [];
-      for (let i = 0; i < serviceIds.length; i += 10) {
-        chunks.push(serviceIds.slice(i, i + 10));
-      }
-
-      for (const chunk of chunks) {
-        const qCi = query(
-          collection(db, 'checkIns'),
-          where('scheduledServiceId', 'in', chunk)
-        );
-        const snapCi = await getDocs(qCi);
-        companionCheckIns.push(...snapCi.docs.map(d => ({ id: d.id, ...d.data() })));
-      }
-    }
-
-    // 2. Fichajes de titulares que tenían a este usuario como "Acompañante Global" en su jornada
-    const qWorkdays = query(
+    const qWorkdaysAsCompanion = query(
       collection(db, 'workdays'),
       where('currentCompanionId', '==', userId)
     );
-    const workdaysSnap = await getDocs(qWorkdays);
+    const workdaysAsCompSnap = await getDocs(qWorkdaysAsCompanion);
     
-    const titularIds = [...new Set(workdaysSnap.docs
+    const titularIdsFromWorkdays = workdaysAsCompSnap.docs
       .filter(d => {
         const wdData = d.data();
         const wdDate = wdData.date?.toDate ? wdData.date.toDate() : new Date(wdData.date);
         return isSameDay(wdDate, date);
       })
-      .map(d => d.userId)
-    )];
+      .map(d => d.data().userId);
 
-    for (const tId of titularIds) {
-      const tCheckIns = await getCheckInsForDate(tId, date);
-      companionCheckIns.push(...tCheckIns);
+    // 2. CASO: EL USUARIO ES TITULAR (Traer puntos de sus acompañantes por si acaso uno de ellos fichó algo distinto)
+    const qServicesAsTitular = query(
+      collection(db, 'scheduledServices'),
+      where('userId', '==', userId)
+    );
+    const servicesAsTitSnap = await getDocs(qServicesAsTitular);
+    const companionIdsFromServices = [];
+    servicesAsTitSnap.docs.forEach(d => {
+      const svcData = d.data();
+      const svcDate = svcData.scheduledDate?.toDate ? svcData.scheduledDate.toDate() : new Date(svcData.scheduledDate);
+      if (isSameDay(svcDate, date) && svcData.companionIds) companionIdsFromServices.push(...svcData.companionIds);
+    });
+
+    const qWorkdaysAsTitular = query(
+      collection(db, 'workdays'),
+      where('userId', '==', userId)
+    );
+    const workdaysAsTitSnap = await getDocs(qWorkdaysAsTitular);
+    const companionIdsFromWorkdays = [];
+    workdaysAsTitSnap.docs.forEach(d => {
+      const wdData = d.data();
+      const wdDate = wdData.date?.toDate ? wdData.date.toDate() : new Date(wdData.date);
+      if (isSameDay(wdDate, date) && wdData.currentCompanionId) companionIdsFromWorkdays.push(wdData.currentCompanionId);
+    });
+
+    // 3. RECOPILAR TODOS LOS IDS DE "EQUIPO"
+    const teamMemberIds = [...new Set([
+      ...titularIdsFromServices,
+      ...titularIdsFromWorkdays,
+      ...companionIdsFromServices,
+      ...companionIdsFromWorkdays
+    ])].filter(id => id && id !== userId);
+
+    // 4. OBTENER FICHAJES DE TODOS ELLOS
+    for (const memberId of teamMemberIds) {
+      const memberCheckIns = await getCheckInsForDate(memberId, date);
+      relatedCheckIns.push(...memberCheckIns);
     }
 
-    return companionCheckIns;
+    return relatedCheckIns;
   } catch (err) {
-    console.error('[Mileage] Error recuperando fichajes de acompañante:', err);
+    console.error('[Mileage] Error recuperando fichajes relacionados:', err);
     return [];
   }
 }
