@@ -5,7 +5,7 @@ import { getCommunities } from '../../services/communityService';
 import { getOperarios } from '../../services/authService';
 import { transferService } from '../../services/transferService';
 import TransferModal from '../../components/TransferModal';
-import { format, subDays } from 'date-fns';
+import { format, subDays, startOfWeek, endOfWeek, getWeek, isPast, isSameDay, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { formatDecimalHours, formatMinutes } from '../../utils/formatTime';
 
@@ -15,7 +15,29 @@ export default function ReportsPage() {
   const [filterCommunity, setFilterCommunity] = useState('');
   const [filterOperario, setFilterOperario] = useState('');
   const [appliedCommunity, setAppliedCommunity] = useState('');
-  const [activeTab, setActiveTab] = useState('services');
+  const [activeTab, setActiveTab] = useState('hierarchical');
+  const [expandedWeeks, setExpandedWeeks] = useState(new Set());
+  const [expandedDays, setExpandedDays] = useState(new Set());
+
+  // Auto-expand current week on data load
+  useEffect(() => {
+    if (services.length > 0 || checkIns.length > 0) {
+      const today = new Date();
+      const start = startOfWeek(today, { weekStartsOn: 1 });
+      const end = endOfWeek(today, { weekStartsOn: 1 });
+      const currentWeekKey = `${format(start, 'yyyy-MM-dd')}_${format(end, 'yyyy-MM-dd')}`;
+      
+      const newExpanded = new Set(expandedWeeks);
+      newExpanded.add(currentWeekKey);
+      setExpandedWeeks(newExpanded);
+      
+      // Also expand today
+      const todayKey = format(today, 'yyyy-MM-dd');
+      const newDays = new Set(expandedDays);
+      newDays.add(todayKey);
+      setExpandedDays(newDays);
+    }
+  }, [services.length, checkIns.length]);
 
   const [communities, setCommunities] = useState([]);
   const [operarios, setOperarios] = useState([]);
@@ -52,8 +74,19 @@ export default function ReportsPage() {
         getScheduledServicesRange(new Date(startDate), new Date(endDate), filters),
         getCheckInsRange(new Date(startDate), new Date(endDate), filters),
       ]);
-      setServices(svcs);
-      setCheckIns(chks);
+      
+      // Sort newest first
+      setServices(svcs.sort((a, b) => {
+        const dateA = a.scheduledDate?.toDate ? a.scheduledDate.toDate() : new Date(a.scheduledDate);
+        const dateB = b.scheduledDate?.toDate ? b.scheduledDate.toDate() : new Date(b.scheduledDate);
+        return dateB - dateA;
+      }));
+      setCheckIns(chks.sort((a, b) => {
+        const dateA = a.checkInTime?.toDate ? a.checkInTime.toDate() : new Date(a.checkInTime);
+        const dateB = b.checkInTime?.toDate ? b.checkInTime.toDate() : new Date(b.checkInTime);
+        return dateB - dateA;
+      }));
+      
       setSelectedServices(new Set());
     } catch (err) {
       console.error(err);
@@ -107,6 +140,98 @@ export default function ReportsPage() {
     totalBreakdownMinutes += mins;
   });
 
+  // Hierarchical Grouping (Week -> Day -> Operario)
+  const hierarchicalData = (() => {
+    const groups = {};
+
+    const getWeekKey = (date) => {
+      const start = startOfWeek(date, { weekStartsOn: 1 });
+      const end = endOfWeek(date, { weekStartsOn: 1 });
+      return `${format(start, 'yyyy-MM-dd')}_${format(end, 'yyyy-MM-dd')}`;
+    };
+
+    const initOp = (weekKey, dayKey, opId) => {
+      if (!groups[weekKey]) {
+        const [startStr, endStr] = weekKey.split('_');
+        const startDateObj = parseISO(startStr);
+        const endDateObj = parseISO(endStr);
+        groups[weekKey] = {
+          weekId: weekKey,
+          label: `Semana ${format(startDateObj, 'dd/MM')} - ${format(endDateObj, 'dd/MM')}`,
+          days: {},
+          stats: { totalServices: 0, completed: 0, minutes: 0 },
+          isComplete: isPast(endDateObj)
+        };
+      }
+      if (!groups[weekKey].days[dayKey]) {
+        const dayDate = parseISO(dayKey);
+        groups[weekKey].days[dayKey] = {
+          dayId: dayKey,
+          label: format(dayDate, "EEEE d 'de' MMMM", { locale: es }),
+          date: dayDate,
+          operators: {},
+          stats: { totalServices: 0, completed: 0, minutes: 0 }
+        };
+      }
+      if (!groups[weekKey].days[dayKey].operators[opId]) {
+        groups[weekKey].days[dayKey].operators[opId] = {
+          opId,
+          name: getOperarioName(opId),
+          services: [],
+          checkIns: [],
+          stats: { totalServices: 0, completed: 0, minutes: 0 }
+        };
+      }
+      return groups[weekKey].days[dayKey].operators[opId];
+    };
+
+    services.forEach(s => {
+      const date = s.scheduledDate?.toDate?.() || (s.scheduledDate ? new Date(s.scheduledDate) : null);
+      if (!date) return;
+      const weekKey = getWeekKey(date);
+      const dayKey = format(date, 'yyyy-MM-dd');
+      const opId = s.assignedUserId;
+
+      const op = initOp(weekKey, dayKey, opId);
+      op.services.push(s);
+      op.stats.totalServices++;
+      if (s.status === 'completed') op.stats.completed++;
+      
+      groups[weekKey].stats.totalServices++;
+      if (s.status === 'completed') groups[weekKey].stats.completed++;
+      groups[weekKey].days[dayKey].stats.totalServices++;
+      if (s.status === 'completed') groups[weekKey].days[dayKey].stats.completed++;
+    });
+
+    checkIns.forEach(c => {
+      const date = c.checkInTime?.toDate?.() || (c.checkInTime ? new Date(c.checkInTime) : null);
+      if (!date) return;
+      const weekKey = getWeekKey(date);
+      const dayKey = format(date, 'yyyy-MM-dd');
+      const opId = c.userId;
+
+      const op = initOp(weekKey, dayKey, opId);
+      op.checkIns.push(c);
+      const mins = c.durationMinutes || 0;
+      op.stats.minutes += mins;
+      groups[weekKey].stats.minutes += mins;
+      groups[weekKey].days[dayKey].stats.minutes += mins;
+    });
+
+    // Convert to sorted array
+    return Object.values(groups)
+      .sort((a, b) => b.weekId.localeCompare(a.weekId))
+      .map(week => ({
+        ...week,
+        days: Object.values(week.days)
+          .sort((a, b) => b.dayId.localeCompare(a.dayId))
+          .map(day => ({
+            ...day,
+            operators: Object.values(day.operators).sort((a, b) => a.name.localeCompare(b.name))
+          }))
+      }));
+  })();
+
   function getCommunityName(id) {
     return communities.find(c => c.id === id)?.name || id?.substring(0, 8) + '...';
   }
@@ -158,6 +283,20 @@ export default function ReportsPage() {
       newSet.add(id);
     }
     setSelectedServices(newSet);
+  };
+
+  const toggleWeek = (id) => {
+    const newSet = new Set(expandedWeeks);
+    if (newSet.has(id)) newSet.delete(id);
+    else newSet.add(id);
+    setExpandedWeeks(newSet);
+  };
+
+  const toggleDay = (id) => {
+    const newSet = new Set(expandedDays);
+    if (newSet.has(id)) newSet.delete(id);
+    else newSet.add(id);
+    setExpandedDays(newSet);
   };
 
   const toggleAllServices = () => {
@@ -250,8 +389,11 @@ export default function ReportsPage() {
 
       {/* Tabs */}
       <div className="tabs">
+        <button className={`tab ${activeTab === 'hierarchical' ? 'active' : ''}`} onClick={() => setActiveTab('hierarchical')}>
+          Vista General
+        </button>
         <button className={`tab ${activeTab === 'services' ? 'active' : ''}`} onClick={() => setActiveTab('services')}>
-          Servicios
+          Todos los Servicios
         </button>
         <button className={`tab ${activeTab === 'community' ? 'active' : ''}`} onClick={() => setActiveTab('community')}>
           Por comunidad
@@ -271,6 +413,158 @@ export default function ReportsPage() {
         <div className="flex justify-center p-6"><div className="spinner"></div></div>
       ) : (
         <>
+          {/* Hierarchical View */}
+          {activeTab === 'hierarchical' && (
+            <div className="hierarchical-reports">
+              {hierarchicalData.map(week => (
+                <div key={week.weekId} className="week-card mb-4">
+                  <div 
+                    className={`week-header card ${expandedWeeks.has(week.weekId) ? 'expanded' : ''}`}
+                    onClick={() => toggleWeek(week.weekId)}
+                    style={{ 
+                      display: 'flex', 
+                      justifyContent: 'space-between', 
+                      alignItems: 'center', 
+                      cursor: 'pointer',
+                      background: week.isComplete ? 'var(--color-bg-input)' : 'white',
+                      borderLeft: expandedWeeks.has(week.weekId) ? '4px solid var(--color-primary)' : '1px solid var(--color-border)'
+                    }}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="week-icon" style={{ fontSize: '1.2rem' }}>
+                        {expandedWeeks.has(week.weekId) ? '📂' : '📁'}
+                      </div>
+                      <div>
+                        <h3 style={{ fontSize: 'var(--font-base)', fontWeight: 700 }}>{week.label}</h3>
+                        <span className="text-xs text-muted">
+                          {week.isComplete ? 'Semana Finalizada' : 'Semana en Curso'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="week-stats flex gap-4 text-sm font-semibold">
+                      <span title="Servicios Completados" style={{ color: 'var(--color-success)' }}>
+                        ✅ {week.stats.completed}/{week.stats.totalServices}
+                      </span>
+                      <span title="Horas Totales" style={{ color: 'var(--color-primary)' }}>
+                        ⏱️ {formatMinutes(week.stats.minutes)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {expandedWeeks.has(week.weekId) && (
+                    <div className="week-content mt-2 ml-4 flex flex-col gap-2">
+                      {week.days.map(day => (
+                        <div key={day.dayId} className="day-card">
+                          <div 
+                            className={`day-header card ${expandedDays.has(day.dayId) ? 'expanded' : ''}`}
+                            onClick={() => toggleDay(day.dayId)}
+                            style={{ 
+                              padding: 'var(--space-3) var(--space-4)',
+                              display: 'flex', 
+                              justifyContent: 'space-between', 
+                              alignItems: 'center', 
+                              cursor: 'pointer',
+                              background: 'var(--color-bg-card)',
+                              boxShadow: 'var(--shadow-sm)',
+                              borderRadius: 'var(--radius-md)'
+                            }}
+                          >
+                            <div className="flex items-center gap-3">
+                              <span style={{ fontSize: '1rem' }}>
+                                {expandedDays.has(day.dayId) ? '🔽' : '▶️'}
+                              </span>
+                              <h4 style={{ fontSize: 'var(--font-sm)', fontWeight: 600, textTransform: 'capitalize' }}>
+                                {day.label}
+                              </h4>
+                            </div>
+                            <div className="day-stats flex gap-3 text-xs">
+                              <span className="badge badge-success">
+                                {day.stats.completed}/{day.stats.totalServices} Svcs
+                              </span>
+                              <span className="badge badge-primary">
+                                {formatMinutes(day.stats.minutes)}
+                              </span>
+                            </div>
+                          </div>
+
+                          {expandedDays.has(day.dayId) && (
+                            <div className="day-content mt-2 ml-6 flex flex-col gap-3 p-4 bg-white rounded-lg border border-gray-100 shadow-inner">
+                              {day.operators.length === 0 ? (
+                                <p className="text-center text-muted text-sm py-2">Sin actividad registrada</p>
+                              ) : (
+                                day.operators.map(op => (
+                                  <div key={op.opId} className="operator-detail pb-3 border-bottom last:border-0" style={{ borderBottom: '1px solid var(--color-bg)' }}>
+                                    <div className="flex justify-between items-center mb-3">
+                                      <h5 className="font-bold text-sm text-primary flex items-center gap-2">
+                                        👤 {op.name}
+                                      </h5>
+                                      <div className="flex gap-2">
+                                        <span className="badge badge-primary">
+                                          ⏱️ {formatMinutes(op.stats.minutes)}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    
+                                    <div className="grid grid-2 gap-6">
+                                      {/* Services sub-list */}
+                                      <div className="op-services bg-gray-50 p-3 rounded-lg border border-gray-100">
+                                        <p className="text-xs font-bold text-muted mb-2 uppercase tracking-wider flex items-center gap-1">
+                                          📋 Servicios ({op.stats.totalServices})
+                                        </p>
+                                        <div className="flex flex-col gap-1">
+                                          {op.services.length === 0 && <span className="text-xs text-muted italic">Sin servicios asignados</span>}
+                                          {op.services.map(s => (
+                                            <div key={s.id} className="flex justify-between items-center text-xs p-1.5 bg-white shadow-sm border border-gray-100 rounded">
+                                              <span className="font-medium">{getCommunityName(s.communityId)}</span>
+                                              <span className={`badge ${s.status === 'completed' ? 'badge-success' : 'badge-warning'}`} style={{ transform: 'scale(0.85)', originX: 'right' }}>
+                                                {s.status === 'completed' ? 'Completado' : s.status}
+                                              </span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+
+                                      {/* Check-ins sub-list */}
+                                      <div className="op-checkins bg-gray-50 p-3 rounded-lg border border-gray-100">
+                                        <p className="text-xs font-bold text-muted mb-2 uppercase tracking-wider flex items-center gap-1">
+                                          🕒 Fichajes ({op.checkIns.length})
+                                        </p>
+                                        <div className="flex flex-col gap-1">
+                                          {op.checkIns.length === 0 && <span className="text-xs text-muted italic">Sin fichajes</span>}
+                                          {op.checkIns.map(c => (
+                                            <div key={c.id} className="flex justify-between items-center text-xs p-1.5 bg-white shadow-sm border border-gray-100 rounded">
+                                              <span>
+                                                <span className="text-success">{c.checkInTime?.toDate ? format(c.checkInTime.toDate(), 'HH:mm') : '--'}</span>
+                                                {' → '}
+                                                <span className={c.checkOutTime ? 'text-danger' : 'text-primary'}>
+                                                  {c.checkOutTime?.toDate ? format(c.checkOutTime.toDate(), 'HH:mm') : 'Activo'}
+                                                </span>
+                                              </span>
+                                              <span className="font-bold text-primary">{formatMinutes(c.durationMinutes)}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+              {hierarchicalData.length === 0 && (
+                <div className="card text-center p-8 text-muted">
+                  📭 No hay datos que mostrar para el rango seleccionado.
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Services tab */}
           {activeTab === 'services' && (
             <div className="card" style={{ padding: 0 }}>

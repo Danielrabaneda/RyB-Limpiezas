@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { getCommunities, createCommunity, updateCommunity, deleteCommunity } from '../../services/communityService';
+import { getPendingSuggestionsForCommunity, acceptSuggestion, rejectSuggestion } from '../../services/gpsSuggestionService';
 import { getCommunityTasks, createCommunityTask, updateCommunityTask, deleteCommunityTask } from '../../services/taskService';
 import { getAssignmentsForCommunity, createAssignment, deleteAssignment } from '../../services/taskService';
 import { getOperarios } from '../../services/authService';
@@ -9,6 +10,8 @@ import { transferPermanent } from '../../services/transferService';
 import { useAuth } from '../../contexts/AuthContext';
 import TransferModal from '../../components/TransferModal';
 import GarageYearlyView from '../../components/GarageYearlyView';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { db } from '../../config/firebase';
 
 export default function CommunitiesPage() {
   const { userProfile } = useAuth();
@@ -27,6 +30,10 @@ export default function CommunitiesPage() {
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [editingTask, setEditingTask] = useState(null); // null = create mode, task = edit mode
   const [activeTab, setActiveTab] = useState('list'); // 'list' or 'garages'
+
+  // GPS notification state
+  const [pendingGPSCommunityIds, setPendingGPSCommunityIds] = useState(new Set());
+  const [filterGPS, setFilterGPS] = useState(false);
 
   // Form state
   const [form, setForm] = useState({
@@ -59,6 +66,18 @@ export default function CommunitiesPage() {
 
   useEffect(() => {
     loadData();
+  }, []);
+
+  // Real-time listener: which communityIds have pending GPS suggestions
+  useEffect(() => {
+    const q = query(collection(db, 'gpsSuggestions'), where('status', '==', 'pending'));
+    const unsub = onSnapshot(q, (snap) => {
+      const ids = new Set(snap.docs.map(d => d.data().communityId).filter(Boolean));
+      setPendingGPSCommunityIds(ids);
+      // Auto-clear GPS filter if no pending notifications remain
+      if (ids.size === 0) setFilterGPS(false);
+    });
+    return () => unsub();
   }, []);
 
   async function loadData() {
@@ -110,9 +129,38 @@ export default function CommunitiesPage() {
       individualTimeTracking: comm.individualTimeTracking || false,
     });
     setShowModal(true);
+    loadGPSSuggestions(comm.id);
   }
 
   const [geocoding, setGeocoding] = useState(false);
+  const [gpsSuggestions, setGpsSuggestions] = useState([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+
+  // Cargar sugerencias GPS cuando se abre el modal de edición
+  async function loadGPSSuggestions(communityId) {
+    if (!communityId) return;
+    setLoadingSuggestions(true);
+    try {
+      const suggestions = await getPendingSuggestionsForCommunity(communityId);
+      setGpsSuggestions(suggestions);
+    } catch (err) {
+      console.error('Error loading GPS suggestions:', err);
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  }
+
+  async function handleAcceptSuggestion(suggestion) {
+    setForm(f => ({ ...f, lat: suggestion.lat.toFixed(7), lng: suggestion.lng.toFixed(7) }));
+    await acceptSuggestion(suggestion.id);
+    setGpsSuggestions(prev => prev.filter(s => s.id !== suggestion.id));
+  }
+
+  async function handleRejectSuggestion(suggestionId) {
+    await rejectSuggestion(suggestionId);
+    setGpsSuggestions(prev => prev.filter(s => s.id !== suggestionId));
+  }
+
 
     async function handleGeocode() {
       if (!form.address) return alert('Introduce una dirección primero');
@@ -402,10 +450,13 @@ export default function CommunitiesPage() {
     }
   };
 
-  const filteredCommunities = Array.isArray(communities) ? communities.filter(comm => 
-    (comm.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (comm.address || '').toLowerCase().includes(searchTerm.toLowerCase())
-  ) : [];
+  const filteredCommunities = Array.isArray(communities) ? communities.filter(comm => {
+    const matchesSearch =
+      (comm.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (comm.address || '').toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesGPSFilter = !filterGPS || pendingGPSCommunityIds.has(comm.id);
+    return matchesSearch && matchesGPSFilter;
+  }) : [];
 
   if (loading) {
     return (
@@ -450,6 +501,80 @@ export default function CommunitiesPage() {
           <div style={{ padding: 'var(--space-4) var(--space-5)', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <h3 className="font-semibold">📋 Listado ({filteredCommunities.length !== communities.length ? `${filteredCommunities.length}/${communities.length}` : communities.length})</h3>
           </div>
+
+          {/* GPS notification banner */}
+          {pendingGPSCommunityIds.size > 0 && (
+            <div style={{
+              margin: '8px 12px',
+              borderRadius: '12px',
+              overflow: 'hidden',
+              border: filterGPS ? '2px solid #f59e0b' : '2px solid rgba(245,158,11,0.4)',
+              background: filterGPS
+                ? 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)'
+                : 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)',
+              transition: 'all 0.2s',
+            }}>
+              <button
+                onClick={() => setFilterGPS(f => !f)}
+                style={{
+                  width: '100%',
+                  padding: '10px 14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '10px',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{
+                    background: '#f59e0b',
+                    color: 'white',
+                    borderRadius: '50%',
+                    width: '26px',
+                    height: '26px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontWeight: 900,
+                    fontSize: '0.8rem',
+                    flexShrink: 0,
+                    boxShadow: '0 2px 6px rgba(245,158,11,0.4)',
+                    animation: filterGPS ? 'none' : 'gpsBadgePulse 2s ease-in-out infinite',
+                  }}>{pendingGPSCommunityIds.size}</span>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '0.8rem', color: '#92400e', lineHeight: 1.2 }}>
+                      📍 {pendingGPSCommunityIds.size} comunidad{pendingGPSCommunityIds.size > 1 ? 'es' : ''} con notificación GPS
+                    </div>
+                    <div style={{ fontSize: '0.7rem', color: '#b45309', marginTop: '2px' }}>
+                      {filterGPS ? '✓ Mostrando solo estas comunidades — clic para ver todas' : 'Clic para filtrar y revisarlas'}
+                    </div>
+                  </div>
+                </div>
+                <span style={{
+                  fontSize: '0.7rem',
+                  fontWeight: 700,
+                  padding: '4px 10px',
+                  borderRadius: '20px',
+                  background: filterGPS ? '#f59e0b' : 'rgba(245,158,11,0.2)',
+                  color: filterGPS ? 'white' : '#92400e',
+                  whiteSpace: 'nowrap',
+                  transition: 'all 0.2s',
+                }}>
+                  {filterGPS ? '✕ Quitar filtro' : 'Filtrar →'}
+                </span>
+              </button>
+            </div>
+          )}
+          <style>{`
+            @keyframes gpsBadgePulse {
+              0%, 100% { box-shadow: 0 2px 6px rgba(245,158,11,0.4); }
+              50% { box-shadow: 0 2px 12px rgba(245,158,11,0.7), 0 0 0 4px rgba(245,158,11,0.15); }
+            }
+          `}</style>
           
           <div style={{ padding: 'var(--space-3) var(--space-5)', borderBottom: '1px solid var(--color-border)', background: 'var(--color-bg-light)' }}>
             <div style={{ position: 'relative' }}>
@@ -493,8 +618,25 @@ export default function CommunitiesPage() {
                 className="community-list-item"
               >
                 <div className="flex items-center justify-between">
-                  <div>
-                    <div className="font-semibold">{comm?.name || 'Comunidad sin nombre'}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="font-semibold" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{comm?.name || 'Comunidad sin nombre'}</span>
+                      {pendingGPSCommunityIds.has(comm.id) && (
+                        <span title="Tiene sugerencias GPS pendientes" style={{
+                          background: '#f59e0b',
+                          color: 'white',
+                          borderRadius: '50%',
+                          width: '18px',
+                          height: '18px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '10px',
+                          flexShrink: 0,
+                          boxShadow: '0 1px 4px rgba(245,158,11,0.5)',
+                        }}>📍</span>
+                      )}
+                    </div>
                     <div className="text-xs text-muted">{comm?.address || ''}</div>
                   </div>
                   {selectedCommunity?.id !== comm.id && (
@@ -503,10 +645,21 @@ export default function CommunitiesPage() {
                     </button>
                   )}
                 </div>
-                <div className="flex gap-2 mt-2">
+                <div className="flex gap-2 mt-2" style={{ flexWrap: 'wrap' }}>
                   <span className="badge badge-info text-xs">
                     {comm?.type || 'comunidad'}
                   </span>
+                  {pendingGPSCommunityIds.has(comm.id) && (
+                    <span style={{
+                      fontSize: '0.65rem',
+                      fontWeight: 700,
+                      padding: '1px 6px',
+                      borderRadius: '20px',
+                      background: 'rgba(245,158,11,0.15)',
+                      color: '#92400e',
+                      border: '1px solid rgba(245,158,11,0.4)',
+                    }}>📍 GPS pendiente</span>
+                  )}
                 </div>
               </div>
             ))}
@@ -517,7 +670,14 @@ export default function CommunitiesPage() {
             )}
             {communities && communities.length > 0 && filteredCommunities.length === 0 && (
               <div className="empty-state">
-                <p>No se encontraron comunidades</p>
+                <p>{filterGPS ? '✅ Ninguna comunidad con GPS pendiente coincide con la búsqueda' : 'No se encontraron comunidades'}</p>
+                {filterGPS && (
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    style={{ marginTop: '8px' }}
+                    onClick={() => setFilterGPS(false)}
+                  >Quitar filtro GPS</button>
+                )}
               </div>
             )}
           </div>
@@ -694,15 +854,74 @@ export default function CommunitiesPage() {
                   </div>
                   <p className="text-xs text-muted mt-1">Usa el botón para obtener las coordenadas para el GPS automáticamente.</p>
                 </div>
-                <div className="form-row">
-                  <div className="form-group">
-                    <label className="form-label">Latitud</label>
-                    <input className="form-input" type="number" step="any" value={form.lat} onChange={e => setForm(f => ({...f, lat: e.target.value}))} />
+                <div className="form-group" style={{ 
+                  padding: 'var(--space-3)', 
+                  background: 'var(--color-bg)', 
+                  borderRadius: 'var(--radius-md)', 
+                  border: '1px solid var(--color-border)'
+                }}>
+                  <label className="form-label" style={{ margin: 0 }}>📍 Coordenadas GPS</label>
+                  <div className="form-row" style={{ marginTop: 'var(--space-2)', marginBottom: 0 }}>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label className="form-label text-xs">Latitud</label>
+                      <input className="form-input" type="number" step="any" value={form.lat} onChange={e => setForm(f => ({...f, lat: e.target.value}))} />
+                    </div>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label className="form-label text-xs">Longitud</label>
+                      <input className="form-input" type="number" step="any" value={form.lng} onChange={e => setForm(f => ({...f, lng: e.target.value}))} />
+                    </div>
                   </div>
-                  <div className="form-group">
-                    <label className="form-label">Longitud</label>
-                    <input className="form-input" type="number" step="any" value={form.lng} onChange={e => setForm(f => ({...f, lng: e.target.value}))} />
-                  </div>
+
+                  {/* Sugerencias GPS de operarios */}
+                  {editingCommunity && (
+                    <div style={{ marginTop: 'var(--space-3)' }}>
+                      {loadingSuggestions ? (
+                        <p className="text-xs text-muted">Cargando sugerencias GPS...</p>
+                      ) : gpsSuggestions.length > 0 ? (
+                        <div style={{ border: '2px dashed var(--color-primary)', borderRadius: 'var(--radius-md)', padding: 'var(--space-3)', background: 'rgba(37,99,235,0.05)' }}>
+                          <p className="text-xs font-bold mb-2">📲 Sugerencias GPS de operarios:</p>
+                          {gpsSuggestions.map(sug => (
+                            <div key={sug.id} style={{ 
+                              padding: 'var(--space-2) var(--space-3)', 
+                              background: 'var(--color-surface)', 
+                              borderRadius: 'var(--radius-sm)', 
+                              marginBottom: 'var(--space-2)',
+                              border: '1px solid var(--color-border)'
+                            }}>
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <span className="text-xs font-bold">{sug.userName}</span>
+                                  <span className="text-xs text-muted ml-2">
+                                    (±{sug.accuracy}m)
+                                    {sug.createdAt?.toDate && (' — ' + format(sug.createdAt.toDate(), 'dd/MM HH:mm'))}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="text-xs text-muted mt-1">
+                                Lat: {Number(sug.lat || 0).toFixed(7)} | Lng: {Number(sug.lng || 0).toFixed(7)}
+                              </div>
+                              <div className="flex gap-2 mt-2">
+                                <button type="button" className="btn btn-primary btn-sm" style={{ fontSize: '0.7rem', flex: 1 }}
+                                  onClick={() => handleAcceptSuggestion(sug)}
+                                >
+                                  ✅ Usar esta ubicación
+                                </button>
+                                <button type="button" className="btn btn-ghost btn-sm" style={{ fontSize: '0.7rem', color: '#dc2626' }}
+                                  onClick={() => handleRejectSuggestion(sug.id)}
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted" style={{ fontStyle: 'italic' }}>
+                          💡 Los operarios pueden enviar su ubicación GPS desde la app móvil para mejorar la precisión.
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className="form-row">
                   <div className="form-group">

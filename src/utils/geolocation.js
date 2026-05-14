@@ -27,14 +27,71 @@ export async function requestNotificationPermission() {
 }
 
 /**
- * Envía una notificación local
+ * Reproduce un sonido de alerta usando la Web Audio API.
+ * Genera un patrón de chime ascendente que se repite para llamar la atención.
+ * @param {boolean} urgent - Si es true, reproduce el sonido 3 veces en lugar de 2
+ */
+export function playNotificationSound(urgent = false) {
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    const playTone = (frequency, startTime, duration, volume = 0.45) => {
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime + startTime);
+
+      // Envolvente: subida rápida, caída suave
+      gainNode.gain.setValueAtTime(0, audioCtx.currentTime + startTime);
+      gainNode.gain.linearRampToValueAtTime(volume, audioCtx.currentTime + startTime + 0.03);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + startTime + duration);
+
+      oscillator.start(audioCtx.currentTime + startTime);
+      oscillator.stop(audioCtx.currentTime + startTime + duration);
+    };
+
+    // Patrón 1: tríada ascendente (C5 → E5 → G5)
+    playTone(523.25, 0, 0.25, 0.5);
+    playTone(659.25, 0.13, 0.25, 0.5);
+    playTone(783.99, 0.26, 0.35, 0.6);
+
+    // Patrón 2: repetición tras pausa corta
+    playTone(523.25, 0.75, 0.25, 0.5);
+    playTone(659.25, 0.88, 0.25, 0.5);
+    playTone(783.99, 1.01, 0.35, 0.6);
+
+    if (urgent) {
+      // Patrón 3: tercera repetición más aguda para urgencia
+      playTone(659.25, 1.5, 0.2, 0.55);
+      playTone(783.99, 1.63, 0.2, 0.55);
+      playTone(1046.50, 1.76, 0.4, 0.65); // C6
+    }
+
+    // Cerrar el AudioContext después de que terminen todos los tonos
+    const totalDuration = urgent ? 2.5 : 1.6;
+    setTimeout(() => audioCtx.close().catch(() => {}), totalDuration * 1000);
+  } catch (e) {
+    console.warn('[Sound] No se pudo reproducir sonido de notificación:', e);
+  }
+}
+
+/**
+ * Envía una notificación local con sonido y vibración
  */
 export function sendNotification(title, options) {
   if (Notification.permission === 'granted') {
     const notificationOptions = {
       vibrate: [200, 100, 200, 100, 200], // Patrón de vibración: vibra, para, vibra...
+      requireInteraction: true, // Mantener visible hasta que el usuario interactúe
       ...options
     };
+
+    // 🔊 Reproducir sonido de alerta
+    playNotificationSound(options?.urgent || false);
 
     // Intentar actualizar el Badge del icono (el punto rojo)
     if ('setAppBadge' in navigator) {

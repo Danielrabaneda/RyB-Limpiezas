@@ -82,7 +82,8 @@ export default function KilometrajePage() {
         if (wd.carSessions && wd.carSessions.length > 0) {
           const dateStr = wd.date?.toDate ? format(wd.date.toDate(), 'yyyy-MM-dd') : '';
           if (dateStr) {
-            carSessionsByDate[dateStr] = wd.carSessions;
+            if (!carSessionsByDate[dateStr]) carSessionsByDate[dateStr] = [];
+            carSessionsByDate[dateStr].push(...wd.carSessions);
           }
         }
       });
@@ -110,7 +111,10 @@ export default function KilometrajePage() {
     setRecalculating(true);
     try {
       const workdays = await getWorkdaysForAdmin(new Date(record.date), new Date(record.date), record.userId);
-      const carSessions = workdays.length > 0 ? (workdays[0].carSessions || []) : [];
+      const carSessions = workdays.reduce((acc, wd) => {
+        if (wd.carSessions) acc.push(...wd.carSessions);
+        return acc;
+      }, []);
       
       await calculateDailyMileage(
         record.userId,

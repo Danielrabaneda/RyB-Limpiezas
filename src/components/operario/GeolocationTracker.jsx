@@ -11,6 +11,39 @@ import { format } from 'date-fns';
 const CHECK_INTERVAL = 30 * 1000; // 30s para ahorrar batería, pero reactivo
 const PROXIMITY_RADIUS_ENTRY = 20; // Reducido a 20m por petición del usuario
 const PROXIMITY_RADIUS_EXIT = 40; // Reducido a 40m (doble del radio de entrada)
+const RE_NOTIFY_INTERVAL_MS = 3 * 60 * 1000; // Re-notificar cada 3 minutos si sigue cerca
+
+/**
+ * Obtiene la lista de serviceIds completados hoy desde localStorage.
+ */
+function getCompletedTodaySet() {
+  try {
+    const todayStr = new Date().toDateString();
+    const raw = localStorage.getItem('completed_services_today');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed.date === todayStr) {
+        return new Set(parsed.ids || []);
+      }
+    }
+  } catch (e) { /* ignore */ }
+  return new Set();
+}
+
+/**
+ * Marca un serviceId como completado hoy en localStorage.
+ */
+function markServiceCompletedToday(serviceId) {
+  try {
+    const todayStr = new Date().toDateString();
+    const existing = getCompletedTodaySet();
+    existing.add(serviceId);
+    localStorage.setItem('completed_services_today', JSON.stringify({
+      date: todayStr,
+      ids: Array.from(existing)
+    }));
+  } catch (e) { /* ignore */ }
+}
 
 export default function GeolocationTracker() {
   const { userProfile, isOperario } = useAuth();
@@ -18,6 +51,7 @@ export default function GeolocationTracker() {
   
   // Refs para mantener estado entre actualizaciones del GPS sin re-renders
   const lastStateRef = useRef({}); // { serviceId: 'INSIDE' | 'OUTSIDE' }
+  const lastNotifyTimeRef = useRef({}); // { serviceId: timestamp } - cuándo se notificó por última vez
   const watchIdRef = useRef(null);
 
   useEffect(() => {
@@ -30,6 +64,7 @@ export default function GeolocationTracker() {
     if (lastClean !== todayStr) {
       console.log("[Tracker] Realizando limpieza diaria de logs locales...");
       localStorage.removeItem('tracker_debug_logs');
+      localStorage.removeItem('completed_services_today');
       Object.keys(localStorage).forEach(key => {
         if (key.startsWith('detected_entry_') || key.startsWith('detected_exit_')) {
           localStorage.removeItem(key);
@@ -60,6 +95,9 @@ export default function GeolocationTracker() {
         const services = Array.isArray(servicesResult) ? servicesResult : [];
         if (services.length === 0) return;
 
+        // Obtener lista de servicios ya completados hoy (cache local)
+        const completedTodaySet = getCompletedTodaySet();
+
         // 3. Calcular distancias
         const servicesWithDistance = [];
         const trackerLogs = JSON.parse(localStorage.getItem('tracker_debug_logs') || '[]');
@@ -72,7 +110,7 @@ export default function GeolocationTracker() {
             
             if (commLat !== undefined && commLng !== undefined) {
               const dist = getDistance(latitude, longitude, commLat, commLng);
-              const logEntry = `[${new Date().toLocaleTimeString()}] ${community.name}: ${Math.round(dist)}m (Prec: ${Math.round(accuracy)}m)`;
+              const logEntry = `[${new Date().toLocaleTimeString()}] ${community.name}: ${Math.round(dist)}m (Prec: ${Math.round(accuracy)}m) [${svc.status}]`;
               console.log(logEntry);
               
               // Guardar últimos 10 logs para depuración en UI
@@ -124,23 +162,56 @@ export default function GeolocationTracker() {
         } 
         // CASO B: En ruta (Detectar ENTRADA)
         else {
+          const now = Date.now();
+
           const nearby = servicesWithDistance
-            .filter(s => s.distance <= PROXIMITY_RADIUS_ENTRY && s.status === 'pending')
+            .filter(s => {
+              // Filtro principal: solo servicios pendientes y dentro del radio
+              if (s.distance > PROXIMITY_RADIUS_ENTRY) return false;
+              if (s.status !== 'pending') return false;
+
+              // Filtro extra: verificar que no esté completado en cache local
+              if (completedTodaySet.has(s.id)) {
+                console.log(`[Tracker] Servicio ${s.communityName} ignorado: ya completado hoy (cache local)`);
+                return false;
+              }
+
+              // Filtro extra: servicios con estado completado, in_progress o missed
+              if (['completed', 'in_progress', 'missed'].includes(s.status)) {
+                return false;
+              }
+
+              return true;
+            })
             .sort((a, b) => a.distance - b.distance);
 
           if (nearby.length > 0) {
             const closest = nearby[0];
             const previousState = lastStateRef.current[closest.id] || 'OUTSIDE';
+            const lastNotifyTime = lastNotifyTimeRef.current[closest.id] || 0;
+            const timeSinceLastNotify = now - lastNotifyTime;
 
-            if (previousState === 'OUTSIDE') {
-              console.log("[Tracker] ENTRADA DETECTADA");
+            // Notificar si: primera vez que se detecta entrada O ha pasado el intervalo de re-notificación
+            const isFirstEntry = previousState === 'OUTSIDE';
+            const shouldReNotify = previousState === 'INSIDE' && timeSinceLastNotify >= RE_NOTIFY_INTERVAL_MS;
+
+            if (isFirstEntry || shouldReNotify) {
+              const isRepeat = !isFirstEntry;
+              console.log(`[Tracker] ${isRepeat ? 'RE-NOTIFICACIÓN' : 'ENTRADA DETECTADA'} - ${closest.communityName}`);
+              
               lastStateRef.current[closest.id] = 'INSIDE';
-              const now = new Date().toISOString();
+              lastNotifyTimeRef.current[closest.id] = now;
 
-              localStorage.setItem(`detected_entry_${closest.id}`, now);
+              if (isFirstEntry) {
+                localStorage.setItem(`detected_entry_${closest.id}`, new Date().toISOString());
+              }
 
-              const title = `📍 Has llegado a ${closest.communityName}`;
-              const body = `¿Quieres iniciar el servicio? Estás en la ubicación.`;
+              const title = isRepeat 
+                ? `🔔 Recuerdo: Estás en ${closest.communityName}`
+                : `📍 Has llegado a ${closest.communityName}`;
+              const body = isRepeat
+                ? `Llevas un rato aquí. ¿Inicias el servicio?`
+                : `¿Quieres iniciar el servicio? Estás en la ubicación.`;
 
               createSystemNotification(
                 userProfile.uid,
@@ -156,6 +227,15 @@ export default function GeolocationTracker() {
           servicesWithDistance.forEach(s => {
             if (s.distance > PROXIMITY_RADIUS_EXIT * 2) {
               lastStateRef.current[s.id] = 'OUTSIDE';
+              // También limpiar el tiempo de última notificación
+              delete lastNotifyTimeRef.current[s.id];
+            }
+          });
+
+          // Actualizar cache local con servicios completados detectados
+          servicesWithDistance.forEach(s => {
+            if (s.status === 'completed' && !completedTodaySet.has(s.id)) {
+              markServiceCompletedToday(s.id);
             }
           });
         }

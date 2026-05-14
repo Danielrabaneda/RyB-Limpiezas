@@ -10,6 +10,9 @@ import { startOfDay, endOfDay, subDays, format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import PlanningCalendar from '../../components/PlanningCalendar';
 import TransferRequestsPanel from '../../components/admin/TransferRequestsPanel';
+import GPSSuggestionsPanel from '../../components/admin/GPSSuggestionsPanel';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { db } from '../../config/firebase';
 
 export default function DashboardPage() {
   const { userProfile } = useAuth();
@@ -25,9 +28,20 @@ export default function DashboardPage() {
   });
   const [operarios, setOperarios] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [pendingTransfers, setPendingTransfers] = useState(0);
+  const [pendingGPS, setPendingGPS] = useState(0);
 
   useEffect(() => {
     loadDashboard();
+  }, []);
+
+  // Real-time listeners for pending counts
+  useEffect(() => {
+    const qT = query(collection(db, 'transfers'), where('status', '==', 'pending'));
+    const unsubT = onSnapshot(qT, snap => setPendingTransfers(snap.size));
+    const qG = query(collection(db, 'gpsSuggestions'), where('status', '==', 'pending'));
+    const unsubG = onSnapshot(qG, snap => setPendingGPS(snap.size));
+    return () => { unsubT(); unsubG(); };
   }, []);
 
   async function loadDashboard() {
@@ -69,9 +83,15 @@ export default function DashboardPage() {
     );
   }
 
+  const totalPending = pendingTransfers + pendingGPS;
+
+  const scrollTo = (id) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   return (
     <div className="animate-fadeIn">
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between mb-6">
         <div>
           <h2 style={{ fontSize: 'var(--font-2xl)', fontWeight: 800, color: 'var(--color-text)' }}>
             Hola, {userProfile?.name || 'Admin'} 👋
@@ -81,6 +101,78 @@ export default function DashboardPage() {
           </p>
         </div>
       </div>
+
+      {/* ===== BANNER DE PENDIENTES ===== */}
+      {totalPending > 0 && (
+        <div style={{
+          background: 'linear-gradient(135deg, #1e40af 0%, #1d4ed8 50%, #2563eb 100%)',
+          borderRadius: '16px',
+          padding: '16px 20px',
+          marginBottom: '24px',
+          boxShadow: '0 4px 24px rgba(37,99,235,0.35)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '12px',
+          flexWrap: 'wrap',
+          animation: 'pendingPulse 3s ease-in-out infinite',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+            <div style={{
+              width: '44px', height: '44px', borderRadius: '12px',
+              background: 'rgba(255,255,255,0.2)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '22px', flexShrink: 0,
+            }}>🔔</div>
+            <div>
+              <div style={{ color: 'white', fontWeight: 800, fontSize: '1rem', lineHeight: 1.2 }}>
+                {totalPending} acción{totalPending > 1 ? 'es' : ''} pendiente{totalPending > 1 ? 's' : ''} de revisión
+              </div>
+              <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: '0.75rem', marginTop: '2px' }}>
+                {pendingTransfers > 0 && <span>📋 {pendingTransfers} traspaso{pendingTransfers > 1 ? 's' : ''}</span>}
+                {pendingTransfers > 0 && pendingGPS > 0 && <span style={{ margin: '0 6px' }}>·</span>}
+                {pendingGPS > 0 && <span>📍 {pendingGPS} ubicación{pendingGPS > 1 ? 'es' : ''} GPS</span>}
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {pendingTransfers > 0 && (
+              <button
+                onClick={() => scrollTo('panel-transfers')}
+                style={{
+                  background: 'rgba(255,255,255,0.2)', color: 'white',
+                  border: '1px solid rgba(255,255,255,0.35)', borderRadius: '10px',
+                  padding: '8px 16px', fontWeight: 700, fontSize: '0.8rem',
+                  cursor: 'pointer', backdropFilter: 'blur(4px)',
+                  transition: 'background 0.2s',
+                  whiteSpace: 'nowrap',
+                }}
+                onMouseOver={e => e.currentTarget.style.background = 'rgba(255,255,255,0.3)'}
+                onMouseOut={e => e.currentTarget.style.background = 'rgba(255,255,255,0.2)'}
+              >
+                Ver traspasos →
+              </button>
+            )}
+            {pendingGPS > 0 && (
+              <button
+                onClick={() => scrollTo('panel-gps')}
+                style={{
+                  background: 'white', color: '#1d4ed8',
+                  border: 'none', borderRadius: '10px',
+                  padding: '8px 16px', fontWeight: 700, fontSize: '0.8rem',
+                  cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                  transition: 'opacity 0.2s',
+                  whiteSpace: 'nowrap',
+                }}
+                onMouseOver={e => e.currentTarget.style.opacity = '0.9'}
+                onMouseOut={e => e.currentTarget.style.opacity = '1'}
+              >
+                Ver ubicaciones GPS →
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Stats grid */}
       <div className="grid grid-4 gap-4 mb-8">
@@ -160,10 +252,20 @@ export default function DashboardPage() {
         </button>
       </div>
 
-      <TransferRequestsPanel onActionComplete={() => {
-        loadDashboard();
-        setRefreshKey(prev => prev + 1);
-      }} />
+      {/* Panels with scroll anchors */}
+      <div id="panel-transfers">
+        <TransferRequestsPanel onActionComplete={() => {
+          loadDashboard();
+          setRefreshKey(prev => prev + 1);
+        }} />
+      </div>
+
+      <div id="panel-gps">
+        <GPSSuggestionsPanel onActionComplete={() => {
+          loadDashboard();
+          setRefreshKey(prev => prev + 1);
+        }} />
+      </div>
 
       <div className="mb-12">
         <h3 className="section-title mb-6">📅 Planificación Mensual</h3>
@@ -213,6 +315,10 @@ export default function DashboardPage() {
           0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
           70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
           100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+        }
+        @keyframes pendingPulse {
+          0%, 100% { box-shadow: 0 4px 24px rgba(37,99,235,0.35); }
+          50% { box-shadow: 0 4px 32px rgba(37,99,235,0.55), 0 0 0 4px rgba(37,99,235,0.15); }
         }
       `}</style>
     </div>

@@ -56,7 +56,7 @@ export async function calculateDailyMileage(userId, date, userName = 'Operario',
     const checkIns = await getCheckInsForDate(userId, date);
     
     const completed = checkIns ? checkIns
-      .filter(c => c.checkOutTime !== null && c.checkInTime)
+      .filter(c => c.checkInTime)
       .sort((a, b) => {
         const timeA = a.checkInTime?.toDate ? a.checkInTime.toDate().getTime() : 0;
         const timeB = b.checkInTime?.toDate ? b.checkInTime.toDate().getTime() : 0;
@@ -121,7 +121,9 @@ export async function calculateDailyMileage(userId, date, userName = 'Operario',
       const kmEstimados = Math.round(kmLineaRecta * ROAD_FACTOR * 100) / 100;
 
       // Calcular tiempo de desplazamiento
-      const horaSalida = origen.checkOutTime?.toDate ? origen.checkOutTime.toDate() : new Date(origen.checkOutTime);
+      const horaSalida = origen.checkOutTime 
+        ? (origen.checkOutTime.toDate ? origen.checkOutTime.toDate() : new Date(origen.checkOutTime))
+        : (origen.checkInTime?.toDate ? origen.checkInTime.toDate() : new Date(origen.checkInTime));
       const horaLlegada = destino.checkInTime?.toDate ? destino.checkInTime.toDate() : new Date(destino.checkInTime);
       const minutosDesplazamiento = Math.max(0, differenceInMinutes(horaLlegada, horaSalida));
 

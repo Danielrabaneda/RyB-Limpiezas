@@ -159,8 +159,38 @@ export async function deleteWorkday(workdayId) {
 }
 
 export async function getWorkdaysForOperario(userId, startDate, endDate) {
-  // Simplemente reutilizamos la lógica de filtrado seguro que ya creamos
-  return getWorkdaysForAdmin(startDate, endDate, userId);
+  try {
+    const start = Timestamp.fromDate(startOfDay(startDate));
+    const end = Timestamp.fromDate(endOfDay(endDate));
+    
+    // Query only by userId to pass Firestore security rules and avoid composite indexes
+    const q = query(
+      collection(db, COLLECTION_NAME),
+      where('userId', '==', userId)
+    );
+    
+    const snap = await getDocs(q);
+    
+    let results = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    
+    // Filter by date range in memory and sort
+    results = results.filter(wd => {
+      const wdDateRaw = wd.date?.toDate ? wd.date.toDate() : new Date(wd.date);
+      return wdDateRaw >= startOfDay(startDate) && wdDateRaw <= endOfDay(endDate);
+    });
+    
+    // Sort descending by date
+    results.sort((a, b) => {
+      const aDate = a.date?.toDate ? a.date.toDate() : new Date(a.date);
+      const bDate = b.date?.toDate ? b.date.toDate() : new Date(b.date);
+      return bDate - aDate;
+    });
+
+    return results;
+  } catch (error) {
+    console.error("Error in getWorkdaysForOperario:", error);
+    return [];
+  }
 }
 
 /**
@@ -209,15 +239,29 @@ export async function getWorkdaysSummaryForDate(userId, date = new Date()) {
     firstStartTime = first.startTime?.toDate ? first.startTime.toDate() : new Date(first.startTime);
   }
 
+  // BUSCAR JORNADA ACTIVA EN TODOS LOS DÍAS (por si se olvidó cerrarla ayer)
+  const globalActiveWd = allWorkdays.find(wd => wd.status === 'active');
+  if (globalActiveWd) {
+    hasActive = true;
+    activeWorkday = globalActiveWd;
+    if (!firstStartTime) {
+      firstStartTime = globalActiveWd.startTime?.toDate ? globalActiveWd.startTime.toDate() : new Date(globalActiveWd.startTime);
+    }
+  }
+
   for (const wd of todayWorkdays) {
     if (wd.status === 'active') {
-      hasActive = true;
-      activeWorkday = wd;
       const startTime = wd.startTime?.toDate ? wd.startTime.toDate() : new Date(wd.startTime);
       totalMinutes += Math.max(0, differenceInMinutes(now, startTime));
     } else {
       totalMinutes += (Number(wd.totalMinutes) || 0);
     }
+  }
+
+  // Si la jornada activa es de días anteriores, calcular sus minutos también para mostrar en UI
+  if (globalActiveWd && !todayWorkdays.find(w => w.id === globalActiveWd.id)) {
+    const startTime = globalActiveWd.startTime?.toDate ? globalActiveWd.startTime.toDate() : new Date(globalActiveWd.startTime);
+    totalMinutes += Math.max(0, differenceInMinutes(now, startTime));
   }
   
   return {

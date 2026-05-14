@@ -11,6 +11,7 @@ import {
   isWithinRange
 } from '../../services/checkInService';
 import { uploadPhoto } from '../../services/storageService';
+import { createGPSSuggestion } from '../../services/gpsSuggestionService';
 import { transferService } from '../../services/transferService';
 import { getOperarios } from '../../services/authService';
 import TransferModal from '../../components/TransferModal';
@@ -41,6 +42,8 @@ export default function ServiceDetailPage() {
   const [photos, setPhotos] = useState([]);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [distanceInfo, setDistanceInfo] = useState(null);
+  const [sendingGPS, setSendingGPS] = useState(false);
+  const [gpsSent, setGpsSent] = useState(false);
   const [suggestedIn, setSuggestedIn] = useState(null);
   const [suggestedOut, setSuggestedOut] = useState(null);
   const [activeWorkday, setActiveWorkday] = useState(null);
@@ -404,12 +407,54 @@ export default function ServiceDetailPage() {
           </div>
         </div>
         {distanceInfo && (
-          <div className={`mt-2 text-xs ${distanceInfo.withinRange ? '' : ''}`} style={{
+          <div className={`mt-2 text-xs`} style={{
             padding: 'var(--space-2) var(--space-3)',
             borderRadius: 'var(--radius-md)',
             background: distanceInfo.withinRange ? 'var(--color-success-light)' : 'var(--color-warning-light)',
           }}>
             📍 Distancia: {distanceInfo.distance}m {distanceInfo.withinRange ? '✅' : '⚠️ Fuera de rango'}
+          </div>
+        )}
+        {/* Botón para enviar ubicación GPS al administrador */}
+        {!isCompleted && community && (
+          <div style={{ marginTop: 'var(--space-3)' }}>
+            {gpsSent ? (
+              <div className="text-xs" style={{ padding: 'var(--space-2) var(--space-3)', borderRadius: 'var(--radius-md)', background: 'var(--color-success-light)', textAlign: 'center' }}>
+                ✅ Ubicación GPS enviada al administrador
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm w-full"
+                disabled={sendingGPS}
+                onClick={async () => {
+                  setSendingGPS(true);
+                  try {
+                    const pos = await getCurrentPosition();
+                    await createGPSSuggestion({
+                      communityId: service.communityId,
+                      communityName: community.name,
+                      userId: userProfile.uid,
+                      userName: userProfile.name || userProfile.email,
+                      lat: pos.lat,
+                      lng: pos.lng,
+                      accuracy: pos.accuracy
+                    });
+                    setGpsSent(true);
+                  } catch (err) {
+                    alert('Error al capturar GPS: ' + err.message);
+                  } finally {
+                    setSendingGPS(false);
+                  }
+                }}
+                style={{ fontSize: '0.8rem' }}
+              >
+                {sendingGPS ? '⏳ Capturando GPS...' : '📲 Enviar mi ubicación GPS al admin'}
+              </button>
+            )}
+            <p className="text-xs text-muted mt-1" style={{ textAlign: 'center' }}>
+              Envía tu posición exacta para mejorar la precisión de esta comunidad
+            </p>
           </div>
         )}
       </div>

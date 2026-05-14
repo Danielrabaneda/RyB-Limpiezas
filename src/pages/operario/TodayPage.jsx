@@ -12,6 +12,7 @@ import MaterialRequestModal from '../../components/operario/MaterialRequestModal
 import { getOperarios } from '../../services/authService';
 import { updateWorkdayCompanion } from '../../services/workdayService';
 import { addCompanionToService, removeCompanionFromService } from '../../services/scheduleService';
+import { markAllNotificationsAsRead } from '../../services/notificationService';
 import { useNavigate } from 'react-router-dom';
 import { format, addDays, startOfDay, endOfDay } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -483,7 +484,14 @@ export default function TodayPage() {
     }
   };
 
-
+  const handleDismissNotifications = async () => {
+    if (!userProfile?.uid) return;
+    try {
+      await markAllNotificationsAsRead(userProfile.uid);
+    } catch (err) {
+      console.error("Error dismissing notifications:", err);
+    }
+  };
 
   function getStatusBadge(status) {
     switch (status) {
@@ -555,8 +563,7 @@ export default function TodayPage() {
              style={{ color: 'white', border: '1px solid rgba(255,255,255,0.4)' }}
              onClick={(e) => {
                e.stopPropagation();
-               // Marcar todos como leídos rápido (opcional, por ahora solo aviso)
-               alert('Abre la app de nuevo para limpiar los avisos.');
+               handleDismissNotifications();
              }}
           >
             OK

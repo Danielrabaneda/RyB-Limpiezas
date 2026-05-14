@@ -1,18 +1,182 @@
-rules_version='2'
-
+rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      // This rule allows anyone with your database reference to view, edit,
-      // and delete all data in your database. It is useful for getting
-      // started, but it is configured to expire after 30 days because it
-      // leaves your app open to attackers. At that time, all client
-      // requests to your database will be denied.
-      //
-      // Make sure to write security rules for your app before that time, or
-      // else all client requests to your database will be denied until you
-      // update your rules.
-      allow read, write: if request.time < timestamp.date(2026, 5, 15);
+    
+    // =========================================================================
+    // FUNCTIONS
+    // =========================================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
     }
+
+    // Role check: Admin
+    // Using a get() to the users collection ensures we check the actual DB role
+    function isAdmin() {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Check if the document belongs to the requesting user
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+
+
+    // =========================================================================
+    // RULES
+    // =========================================================================
+    
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // USERS
+    // -------------------------------------------------------------------------
+    match /users/{userId} {
+      // Admins can do anything
+      // Operarios need to read the list of other operarios to select companions
+      allow read: if isAuthenticated(); 
+      // Only Admins can create or delete users
+      allow create, delete: if isAdmin();
+      // Users can update their own profile (e.g. push tokens, active status), 
+      // but preventing role escalation would require checking request.resource.data.role
+      allow update: if isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role);
+    }
+
+    // -------------------------------------------------------------------------
+    // COMMUNITIES & TASKS (Global Config)
+    // -------------------------------------------------------------------------
+    match /communities/{communityId} {
+      // Everyone needs to read communities
+      allow read: if true;
+      // Only admins manage communities
+      allow write: if isAdmin();
+    }
+
+    match /taskTemplates/{templateId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /communityTasks/{taskId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /assignments/{assignmentId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // -------------------------------------------------------------------------
+    // SCHEDULED SERVICES
+    // -------------------------------------------------------------------------
+    match /scheduledServices/{serviceId} {
+      // Everyone needs to read schedules (for companions and general schedule views)
+      allow read: if true;
+      
+      // Admins can manage schedule entirely.
+      allow create, delete: if isAdmin();
+      
+      // Operarios need to update status (e.g., to 'in_progress', 'completed')
+      allow update: if isAuthenticated();
+    }
+
+    // -------------------------------------------------------------------------
+    // GPS SUGGESTIONS
+    // -------------------------------------------------------------------------
+    match /gpsSuggestions/{suggestionId} {
+      // Admins read to review, operarios can read if they want to see their own?
+      // Actually safer to allow all authenticated to read, or just admins + owner
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.operarioUid == request.auth.uid) || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      
+      // Operarios create suggestions
+      allow create: if isAuthenticated();
+      
+      // Admins review/delete/update
+      allow update, delete: if isAdmin();
+    }
+
+    // -------------------------------------------------------------------------
+    // USER SPECIFIC DATA (Workdays, Check-ins, Mileage, etc.)
+    // -------------------------------------------------------------------------
+    
+    match /workdays/{workdayId} {
+      // Admins can read all.
+      // Owners can read their own.
+      // Companions need to be able to read active workdays where they are 'currentCompanionId'
+      // The query is: where('currentCompanionId', '==', userId), where('status', '==', 'active')
+      allow read: if isAdmin() || isOwner(resource.data.userId) || (isAuthenticated() && resource.data.currentCompanionId == request.auth.uid);
+      
+      allow create: if isOwner(request.resource.data.userId);
+      allow update: if isAdmin() || isOwner(resource.data.userId);
+      allow delete: if isAdmin();
+    }
+
+    match /checkIns/{checkInId} {
+      allow read: if true;
+      allow create: if isOwner(request.resource.data.userId);
+      allow update: if isAdmin() || isOwner(resource.data.userId);
+      allow delete: if isAdmin();
+    }
+
+    match /dailyMileage/{mileageId} {
+      allow read: if isAdmin() || isOwner(resource.data.userId);
+      allow create: if isOwner(request.resource.data.userId);
+      allow update: if isAdmin() || isOwner(resource.data.userId);
+      allow delete: if isAdmin();
+    }
+
+    match /materialRequests/{requestId} {
+      allow read: if isAdmin() || isOwner(resource.data.userId);
+      allow create: if isOwner(request.resource.data.userId);
+      allow update: if isAdmin() || isOwner(resource.data.userId);
+      allow delete: if isAdmin();
+    }
+
+    match /reports/{reportId} {
+      allow read: if isAdmin() || isOwner(resource.data.userId);
+      allow create: if isOwner(request.resource.data.userId);
+      allow update: if isAdmin() || isOwner(resource.data.userId);
+      allow delete: if isAdmin();
+    }
+
+    match /transfers/{transferId} {
+      // A transfer involves a fromUserId and a toUserId
+      allow read: if isAdmin() || 
+                  (isAuthenticated() && (resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid));
+      
+      // Both users involved can create/update
+      allow create: if isAuthenticated() && 
+                    (request.resource.data.fromUserId == request.auth.uid || request.resource.data.toUserId == request.auth.uid);
+      
+      allow update: if isAdmin() || 
+                    (isAuthenticated() && (resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid));
+      
+      allow delete: if isAdmin();
+    }
+
+    match /systemNotifications/{notificationId} {
+      allow read: if isAdmin() || isOwner(resource.data.userId);
+      // System functions / admins might create. Operarios might create if they send notifications? 
+      // Safe to allow authenticated to create if they set userId to themselves or are admin.
+      allow create: if isAdmin() || isOwner(request.resource.data.userId);
+      allow update: if isAdmin() || isOwner(resource.data.userId);
+      allow delete: if isAdmin();
+    }
+
+    match /taskExecutions/{executionId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    // -------------------------------------------------------------------------
+    // OTHER / FUTURE COLLECTIONS
+    // -------------------------------------------------------------------------
+    // Add explicitly any other collections you use to avoid access denied
   }
 }

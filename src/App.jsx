@@ -142,6 +142,7 @@ function AdminLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [globalSettings, setGlobalSettings] = useState(null);
   const [pendingValidations, setPendingValidations] = useState(0);
+  const [pendingGPS, setPendingGPS] = useState(0);
 
   useEffect(() => {
     const unsub = onSnapshot(doc(db, 'settings', 'global'), (docSnap) => {
@@ -156,6 +157,14 @@ function AdminLayout() {
     const q = query(collection(db, 'transfers'), where('status', '==', 'pending'));
     const unsub = onSnapshot(q, (snap) => {
       setPendingValidations(snap.size);
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const q = query(collection(db, 'gpsSuggestions'), where('status', '==', 'pending'));
+    const unsub = onSnapshot(q, (snap) => {
+      setPendingGPS(snap.size);
     });
     return () => unsub();
   }, []);
@@ -211,8 +220,19 @@ function AdminLayout() {
                 <span className="sidebar-link-icon">{item.icon}</span>
                 {item.label}
               </div>
-              {item.path === '/admin' && pendingValidations > 0 && (
-                <span className="badge bg-amber-500 text-white border-0 text-xs px-2 py-0.5 shadow-sm animate-pulse">{pendingValidations}</span>
+              {item.path === '/admin' && (pendingValidations > 0 || pendingGPS > 0) && (
+                <div className="flex gap-1">
+                  {pendingValidations > 0 && (
+                    <span className="badge bg-amber-500 text-white border-0 text-xs px-2 py-0.5 shadow-sm animate-pulse" title="Traspasos pendientes">
+                      {pendingValidations}
+                    </span>
+                  )}
+                  {pendingGPS > 0 && (
+                    <span className="badge bg-blue-500 text-white border-0 text-xs px-2 py-0.5 shadow-sm animate-pulse" title="Ubicaciones GPS sugeridas">
+                      {pendingGPS}
+                    </span>
+                  )}
+                </div>
               )}
             </NavLink>
           ))}
@@ -361,41 +381,78 @@ function NotificationManager() {
   useEffect(() => {
     if (!currentUser) return;
 
+    // Tracking para re-alertas: { docId: { count, intervalId } }
+    const repeatTrackers = {};
+    const MAX_REPEATS = 10;
+    const REPEAT_INTERVAL_MS = 20 * 1000; // 20 segundos entre repeticiones
+
+    const cleanupTracker = (docId) => {
+      if (repeatTrackers[docId]) {
+        clearInterval(repeatTrackers[docId].intervalId);
+        delete repeatTrackers[docId];
+      }
+    };
+
     // Escuchar notificaciones no leídas para este usuario
     const q = query(
       collection(db, 'systemNotifications'),
       where('userId', '==', currentUser.uid),
       where('read', '==', false),
-      limit(1)
+      limit(5)
     );
 
     const unsubscribe = onSnapshot(q, async (snapshot) => {
-      snapshot.docs.forEach(async (docSnap) => {
+      // Limpiar trackers de notificaciones que ya fueron leídas
+      const activeDocIds = new Set(snapshot.docs.map(d => d.id));
+      Object.keys(repeatTrackers).forEach(docId => {
+        if (!activeDocIds.has(docId)) {
+          cleanupTracker(docId);
+        }
+      });
+
+      // Procesar notificaciones nuevas
+      for (const docSnap of snapshot.docs) {
+        // Si ya tenemos un tracker para esta notificación, no la reprocesamos
+        if (repeatTrackers[docSnap.id]) continue;
+
         const data = docSnap.data();
-        const { sendNotification } = await import('./utils/geolocation');
+        const { sendNotification, playNotificationSound } = await import('./utils/geolocation');
         
-        // Lanzar notificación nativa
         const title = data.title || 'RyB Limpiezas';
         const body = data.body || data.message || '';
         
+        // 🔊 Primera notificación con sonido
         sendNotification(title, {
           body: body,
-          icon: '/icon-192x192.png',
-          badge: '/icon-192x192.png',
-          tag: docSnap.id
+          icon: '/icons/icon-192.png',
+          badge: '/icons/icon-192.png',
+          tag: docSnap.id,
+          urgent: data.type === 'warning'
         });
 
-        // Backup visual: Alerta en la app si está abierta
-        alert(`🔔 ${title}\n\n${body}`);
-        
-        // Marcar como leída DESPUÉS de cerrar el alert para que el badge se limpie cuando el usuario lo vea
-        import('firebase/firestore').then(({ updateDoc, doc }) => {
-          updateDoc(doc(db, 'systemNotifications', docSnap.id), { read: true });
-        });
-      });
+        // Configurar re-alertas periódicas
+        let repeatCount = 0;
+        const intervalId = setInterval(() => {
+          repeatCount++;
+          if (repeatCount >= MAX_REPEATS) {
+            cleanupTracker(docSnap.id);
+            return;
+          }
+          
+          console.log(`[NotificationManager] Re-alerta #${repeatCount} para: ${title}`);
+          // Solo reproducir sonido (sin crear nueva notificación nativa para no saturar)
+          playNotificationSound(true); // urgent = true en repeticiones
+        }, REPEAT_INTERVAL_MS);
+
+        repeatTrackers[docSnap.id] = { count: 0, intervalId };
+      }
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      // Limpiar todos los intervalos activos
+      Object.keys(repeatTrackers).forEach(cleanupTracker);
+    };
   }, [currentUser]);
 
   return null;
