@@ -261,9 +261,38 @@ export default function ReportsPage() {
               {op.services.map(s => (
                 <div key={s.id} className="flex justify-between items-center text-xs p-1.5 bg-white shadow-sm border border-gray-100 rounded">
                   <span className="font-medium">{getCommunityName(s.communityId)}</span>
-                  <span className={`badge ${s.status === 'completed' ? 'badge-success' : 'badge-warning'}`} style={{ transform: 'scale(0.85)', originX: 'right' }}>
-                    {s.status === 'completed' ? 'Completado' : s.status}
-                  </span>
+                  <div className="flex items-center gap-1">
+                    {s.status === 'pending' && (
+                      <button 
+                        className="btn btn-ghost btn-xs p-0 px-1" 
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if(confirm('¿Marcar este servicio como completado manualmente?')) {
+                            await updateScheduledServiceStatus(s.id, 'completed');
+                            loadReport();
+                          }
+                        }}
+                        style={{ color: 'var(--color-primary)' }}
+                        title="Completar manual"
+                      >
+                        ✓
+                      </button>
+                    )}
+                    <span className={`badge ${s.status === 'completed' ? 'badge-success' : 'badge-warning'}`} style={{ transform: 'scale(0.85)', originX: 'right' }}>
+                      {s.status === 'completed' ? 'Completado' : s.status}
+                    </span>
+                    <button 
+                      className="btn btn-ghost btn-xs p-0 px-1" 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleServiceDelete(s.id);
+                      }}
+                      style={{ color: 'var(--color-danger)' }}
+                      title="Eliminar"
+                    >
+                      🗑️
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -285,7 +314,20 @@ export default function ReportsPage() {
                       {c.checkOutTime?.toDate ? format(c.checkOutTime.toDate(), 'HH:mm') : 'Activo'}
                     </span>
                   </span>
-                  <span className="font-bold text-primary">{formatMinutes(c.durationMinutes)}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-primary">{formatMinutes(c.durationMinutes)}</span>
+                    <button 
+                      className="btn btn-ghost btn-xs p-0 px-1" 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleCheckInDelete(c.id);
+                      }}
+                      style={{ color: 'var(--color-danger)' }}
+                      title="Eliminar"
+                    >
+                      🗑️
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
