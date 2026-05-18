@@ -146,16 +146,28 @@ service cloud.firestore {
     }
 
     match /transfers/{transferId} {
-      // A transfer involves a fromUserId and a toUserId
+      // A transfer involves a fromUserId and a toUserId, or a userId for date reschedules
       allow read: if isAdmin() || 
-                  (isAuthenticated() && (resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid));
+                  (isAuthenticated() && (
+                    resource.data.fromUserId == request.auth.uid || 
+                    resource.data.toUserId == request.auth.uid || 
+                    resource.data.userId == request.auth.uid
+                  ));
       
-      // Both users involved can create/update
+      // Both users involved (or the requesting user for date reschedules) can create
       allow create: if isAuthenticated() && 
-                    (request.resource.data.fromUserId == request.auth.uid || request.resource.data.toUserId == request.auth.uid);
+                    (
+                      request.resource.data.fromUserId == request.auth.uid || 
+                      request.resource.data.toUserId == request.auth.uid || 
+                      request.resource.data.userId == request.auth.uid
+                    );
       
       allow update: if isAdmin() || 
-                    (isAuthenticated() && (resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid));
+                    (isAuthenticated() && (
+                      resource.data.fromUserId == request.auth.uid || 
+                      resource.data.toUserId == request.auth.uid || 
+                      resource.data.userId == request.auth.uid
+                    ));
       
       allow delete: if isAdmin();
     }
