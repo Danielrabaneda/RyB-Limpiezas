@@ -32,8 +32,8 @@ export async function startWorkday(userId, userName = 'Operario') {
 }
 
 
-export async function endWorkday(workdayId, breadcrumbs = []) {
-  const endTime = new Date();
+export async function endWorkday(workdayId, breadcrumbs = [], customEndTime = null) {
+  const endTime = customEndTime instanceof Date ? customEndTime : (customEndTime ? new Date(customEndTime) : new Date());
   const workdayRef = doc(db, COLLECTION_NAME, workdayId);
   
   // Get workday data to calculate duration
@@ -46,6 +46,7 @@ export async function endWorkday(workdayId, breadcrumbs = []) {
     if (workdayData.startTime) {
       const startTimeDate = workdayData.startTime.toDate ? workdayData.startTime.toDate() : new Date(workdayData.startTime);
       duration = differenceInMinutes(endTime, startTimeDate);
+      if (duration < 0) duration = 0;
     }
   }
   
@@ -77,6 +78,8 @@ export async function endWorkday(workdayId, breadcrumbs = []) {
     status: 'completed',
     carActive: false,
     carSessions: updatedCarSessions,
+    retroactiveClosed: !!customEndTime,
+    originalEndTime: customEndTime ? Timestamp.fromDate(new Date()) : null
   });
   
   // Trigger mileage calculation

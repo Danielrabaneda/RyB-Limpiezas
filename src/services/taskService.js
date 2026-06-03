@@ -44,6 +44,7 @@ export async function createCommunityTask(data) {
     monthOfYear: data.monthOfYear !== undefined ? data.monthOfYear : null,
     serviceMode: data.serviceMode || 'periodic',
     printColor: data.printColor || '#ef4444',
+    isUrgent: !!data.isUrgent,
     active: true,
     createdAt: serverTimestamp(),
   });

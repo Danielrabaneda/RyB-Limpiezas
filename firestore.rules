@@ -155,12 +155,12 @@ service cloud.firestore {
                   ));
       
       // Both users involved (or the requesting user for date reschedules) can create
-      allow create: if isAuthenticated() && 
+      allow create: if isAdmin() || (isAuthenticated() && 
                     (
                       request.resource.data.fromUserId == request.auth.uid || 
                       request.resource.data.toUserId == request.auth.uid || 
                       request.resource.data.userId == request.auth.uid
-                    );
+                    ));
       
       allow update: if isAdmin() || 
                     (isAuthenticated() && (
@@ -184,6 +184,21 @@ service cloud.firestore {
     match /taskExecutions/{executionId} {
       allow read: if isAuthenticated();
       allow write: if isAuthenticated();
+    }
+
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /products/{productId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /stockMovements/{movementId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
     }
 
     // -------------------------------------------------------------------------

@@ -24,6 +24,7 @@ export async function createScheduledService(data) {
     assignedUserId: data.assignedUserId,
     scheduledDate,
     flexibleWeek: data.flexibleWeek || false,
+    isUrgent: data.isUrgent || false,
     status: 'pending',
     createdAt: serverTimestamp(),
   });
@@ -43,14 +44,18 @@ export async function deleteFutureServicesForTask(taskId) {
     const snap = await getDocs(q);
     if (snap.empty) return 0;
     
+    // Don't delete services that were manually rescheduled
+    const toDelete = snap.docs.filter(d => !d.data().isRescheduled);
+    if (toDelete.length === 0) return 0;
+    
     const batch = writeBatch(db);
-    snap.docs.forEach(d => {
+    toDelete.forEach(d => {
       batch.delete(d.ref);
     });
     
     await batch.commit();
-    console.log(`[Schedule] Eliminados ${snap.size} servicios futuros pendientes para la tarea ${taskId}`);
-    return snap.size;
+    console.log(`[Schedule] Eliminados ${toDelete.length} servicios futuros pendientes para la tarea ${taskId} (${snap.size - toDelete.length} reprogramados preservados)`);
+    return toDelete.length;
   } catch (error) {
     console.error('[Schedule] Error eliminando servicios futuros:', error);
     throw error;
@@ -504,7 +509,27 @@ export async function generateServicesForRange(startDate, endDate) {
         return `${data.communityTaskId}_${data.assignedUserId}_${format(date, 'yyyy-MM-dd')}`;
       })
     );
-    console.log(`[Schedule] ${existingKeys.size} servicios ya existen en el rango.`);
+
+    // Also check for rescheduled services whose originalDate falls in this range.
+    // These are services that were moved to a different day — we must NOT recreate them
+    // on their original date since the move was intentional.
+    const rescheduledSnap = await getDocs(
+      query(
+        collection(db, 'scheduledServices'),
+        where('isRescheduled', '==', true),
+        where('originalDate', '>=', start),
+        where('originalDate', '<=', end)
+      )
+    );
+    
+    for (const d of rescheduledSnap.docs) {
+      const data = d.data();
+      const origDate = data.originalDate?.toDate ? data.originalDate.toDate() : new Date(data.originalDate);
+      const origKey = `${data.communityTaskId}_${data.assignedUserId}_${format(origDate, 'yyyy-MM-dd')}`;
+      existingKeys.add(origKey);
+    }
+
+    console.log(`[Schedule] ${existingKeys.size} servicios ya existen o fueron reprogramados en el rango.`);
     
     let created = 0;
     
@@ -534,6 +559,7 @@ export async function generateServicesForRange(startDate, endDate) {
             assignedUserId: target.userId,
             scheduledDate: startOfDay(day), // Use direct Date object instead of ISO string
             flexibleWeek: task.flexibleWeek || false,
+            isUrgent: task.isUrgent || false,
           });
           existingKeys.add(key);
           created++;
@@ -589,6 +615,30 @@ export async function generateServicesForTask(taskId, startDate = new Date(), en
       return `${data.communityTaskId}_${data.assignedUserId}_${format(date, 'yyyy-MM-dd')}`;
     }));
 
+    // Also check rescheduled services for this task whose originalDate falls in range.
+    // Prevents recreating a service on the original date when it was moved.
+    try {
+      const rescheduledSnap = await getDocs(
+        query(
+          collection(db, 'scheduledServices'),
+          where('communityTaskId', '==', taskId),
+          where('isRescheduled', '==', true)
+        )
+      );
+      for (const d of rescheduledSnap.docs) {
+        const data = d.data();
+        if (!data.originalDate) continue;
+        const origDate = data.originalDate?.toDate ? data.originalDate.toDate() : new Date(data.originalDate);
+        const origTime = origDate.getTime();
+        if (origTime >= startOfDay(startDate).getTime() && origTime <= endOfDay(endDate).getTime()) {
+          const origKey = `${data.communityTaskId}_${data.assignedUserId}_${format(origDate, 'yyyy-MM-dd')}`;
+          existingKeys.add(origKey);
+        }
+      }
+    } catch (reschErr) {
+      console.warn('[Schedule] Error checking rescheduled services for task:', reschErr);
+    }
+
     let createdCount = 0;
     const days = eachDayOfInterval({ start: startOfDay(startDate), end: startOfDay(endDate) });
 
@@ -607,6 +657,7 @@ export async function generateServicesForTask(taskId, startDate = new Date(), en
           assignedUserId: target.userId,
           scheduledDate: Timestamp.fromDate(startOfDay(day)),
           flexibleWeek: task.flexibleWeek || false,
+          isUrgent: task.isUrgent || false,
         });
         createdCount++;
         existingKeys.add(key); // key already includes task.id
@@ -674,6 +725,24 @@ export async function syncServicesForRange(startDate, endDate) {
     const existingServices = existingSnap.docs.map(d => ({ id: d.id, ref: d.ref, ...d.data() }));
     const pendingServices = existingServices.filter(s => s.status === 'pending');
     const workedServices = existingServices.filter(s => s.status !== 'pending');
+
+    // Fetch rescheduled services whose originalDate falls in this range.
+    // These services were moved from their original date — we must not recreate them.
+    const rescheduledSnap = await getDocs(
+      query(
+        collection(db, 'scheduledServices'),
+        where('isRescheduled', '==', true),
+        where('originalDate', '>=', start),
+        where('originalDate', '<=', end)
+      )
+    );
+    const rescheduledOriginalKeys = new Set();
+    for (const d of rescheduledSnap.docs) {
+      const data = d.data();
+      if (!data.originalDate) continue;
+      const origDate = data.originalDate?.toDate ? data.originalDate.toDate() : new Date(data.originalDate);
+      rescheduledOriginalKeys.add(`${data.communityTaskId}_${data.assignedUserId}_${format(origDate, 'yyyy-MM-dd')}`);
+    }
     
     const desiredKeys = new Set();
     const desiredServices = [];
@@ -704,6 +773,9 @@ export async function syncServicesForRange(startDate, endDate) {
     let batchCount = 0;
     
     for (const svc of pendingServices) {
+      // Never delete a rescheduled service — it was intentionally moved
+      if (svc.isRescheduled) continue;
+
       const svcDate = svc.scheduledDate?.toDate ? svc.scheduledDate.toDate() : new Date(svc.scheduledDate);
       const key = `${svc.communityTaskId}_${svc.assignedUserId}_${format(svcDate, 'yyyy-MM-dd')}`;
       
@@ -736,6 +808,11 @@ export async function syncServicesForRange(startDate, endDate) {
         keptKeys.add(key);
       }
     }
+
+    // Add rescheduled original dates to keptKeys to prevent recreating
+    for (const origKey of rescheduledOriginalKeys) {
+      keptKeys.add(origKey);
+    }
     
     let createdCount = 0;
     for (const ds of desiredServices) {
@@ -750,6 +827,7 @@ export async function syncServicesForRange(startDate, endDate) {
           assignedUserId: ds.targetUserId,
           scheduledDate: startOfDay(ds.day),
           flexibleWeek: ds.task.flexibleWeek || false,
+          isUrgent: ds.task.isUrgent || false,
         });
         keptKeys.add(key);
         createdCount++;

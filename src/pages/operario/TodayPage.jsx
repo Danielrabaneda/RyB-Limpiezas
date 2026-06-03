@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useNotifications } from '../../contexts/NotificationContext';
 import { getScheduledServicesForDate } from '../../services/scheduleService';
 import { getCommunitiesForOperario, getCommunity } from '../../services/communityService';
 import { getCommunityTasks } from '../../services/taskService';
@@ -8,19 +9,18 @@ import { getActiveWorkday, startWorkday, endWorkday, activateCar, deactivateCar,
 import { saveManualMileage } from '../../services/mileageService';
 import { transferService, transferDay, transferWeek } from '../../services/transferService';
 import TransferModal from '../../components/TransferModal';
-import MaterialRequestModal from '../../components/operario/MaterialRequestModal';
 import { getOperarios } from '../../services/authService';
 import { updateWorkdayCompanion } from '../../services/workdayService';
 import { addCompanionToService, removeCompanionFromService } from '../../services/scheduleService';
-import { markAllNotificationsAsRead } from '../../services/notificationService';
 import { useNavigate } from 'react-router-dom';
-import { format, addDays, startOfDay, endOfDay, isSameDay } from 'date-fns';
+import { format, addDays, startOfDay, endOfDay, isSameDay, differenceInMinutes } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { collection, query, where, onSnapshot, Timestamp } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 
 export default function TodayPage() {
   const { userProfile } = useAuth();
+  const { notifications, unreadCount, dismissAll } = useNotifications();
   const navigate = useNavigate();
   const [services, setServices] = useState([]);
   const [enrichedServices, setEnrichedServices] = useState([]);
@@ -31,18 +31,24 @@ export default function TodayPage() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [transferModal, setTransferModal] = useState({ open: false, type: 'single', service: null });
-  const [materialModal, setMaterialModal] = useState({ open: false, communityId: null, communityName: '' });
-  const [unreadCount, setUnreadCount] = useState(0);
   const [permissionsMissing, setPermissionsMissing] = useState(false);
   const [allOperarios, setAllOperarios] = useState([]);
   const [companionSelectorOpen, setCompanionSelectorOpen] = useState(false);
   const [mileageModalOpen, setMileageModalOpen] = useState(false);
   const [manualKm, setManualKm] = useState('');
   const [staleWorkday, setStaleWorkday] = useState(null); // { workday, suggestedEndTime }
+  const [retroactiveModal, setRetroactiveModal] = useState({
+    open: false,
+    suggestedTime: null,
+    suggestedTimeStr: '',
+    actualTimeStr: '',
+    workdayId: null,
+    allTasksCompleted: false
+  });
 
   const [debugLogs, setDebugLogs] = useState([]);
   // Guard to prevent concurrent loadToday() calls from multiple snapshot triggers
-  const isLoadingTodayRef = { current: false };
+  const isLoadingTodayRef = useRef(false);
 
   useEffect(() => {
     if (userProfile?.uid) {
@@ -59,50 +65,7 @@ export default function TodayPage() {
     }
   };
 
-  useEffect(() => {
-    if (!userProfile?.uid) return;
-    const q = query(
-      collection(db, 'systemNotifications'),
-      where('userId', '==', userProfile.uid),
-      where('read', '==', false)
-    );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setUnreadCount(snapshot.size);
-    }, (err) => {
-      console.error("Error in systemNotifications snapshot:", err);
-    });
-    return () => unsubscribe();
-  }, [userProfile]);
 
-  useEffect(() => {
-    const requestImportantPerms = async () => {
-      try {
-        let missing = false;
-        if ('Notification' in window) {
-          let perm = Notification.permission;
-          if (perm === 'default' || perm === 'prompt') {
-            perm = await Notification.requestPermission();
-          }
-          if (perm === 'denied') missing = true;
-        }
-        if ('geolocation' in navigator) {
-          try {
-            await new Promise((resolve, reject) => {
-              navigator.geolocation.getCurrentPosition(resolve, reject, { 
-                enableHighAccuracy: true, timeout: 10000, maximumAge: 0
-              });
-            });
-          } catch(err) {
-            if (err.code === 1 || err.PERMISSION_DENIED) missing = true;
-          }
-        }
-        setPermissionsMissing(missing);
-      } catch (e) {
-        console.error("Error revisando permisos", e);
-      }
-    };
-    requestImportantPerms();
-  }, []);
 
   useEffect(() => {
     let watchId = null;
@@ -326,9 +289,16 @@ export default function TodayPage() {
 
           let tasks = [];
           if (svc.taskName) {
-            tasks = [{ id: svc.communityTaskId || svc.id, taskName: svc.taskName }];
+            tasks = [{ 
+              id: svc.communityTaskId || svc.id, 
+              taskName: svc.taskName,
+              isUrgent: svc.isUrgent || specificTask?.isUrgent || false
+            }];
           } else if (specificTask) {
-            tasks = [specificTask];
+            tasks = [{
+              ...specificTask,
+              isUrgent: specificTask.isUrgent || svc.isUrgent || false
+            }];
           }
 
           enriched.push({
@@ -382,16 +352,76 @@ export default function TodayPage() {
 
   const handleEndWorkday = async () => {
     if (!activeWorkday) return;
-    if (!window.confirm('¿Estás seguro de que quieres finalizar tu jornada laboral?')) return;
     
     setActionLoading(true);
     try {
+      // 1. Buscar la última actividad registrada para este usuario hoy
+      const lastActivity = await findLastActivityForUser(userProfile.uid, new Date(), activeWorkday.id);
+      
+      // 2. Verificar si todas las tareas del día están completadas
+      const allTasksCompleted = enrichedServices.length > 0 && enrichedServices.every(s => s.status === 'completed');
+      
+      if (lastActivity) {
+        const diffMins = differenceInMinutes(new Date(), lastActivity);
+        // Si ha pasado más de 30 minutos desde la última actividad
+        if (diffMins > 30) {
+          setRetroactiveModal({
+            open: true,
+            suggestedTime: lastActivity,
+            suggestedTimeStr: format(lastActivity, 'HH:mm'),
+            actualTimeStr: format(new Date(), 'HH:mm'),
+            workdayId: activeWorkday.id,
+            allTasksCompleted
+          });
+          setActionLoading(false);
+          return;
+        }
+      }
+      
+      // Si ha pasado menos de 30 minutos o no hay actividad previa, confirmación normal
+      setActionLoading(false);
+      if (!window.confirm('¿Estás seguro de que quieres finalizar tu jornada laboral?')) return;
+      
+      setActionLoading(true);
       const breadcrumbs = JSON.parse(localStorage.getItem('ryb_car_breadcrumbs') || '[]');
       await endWorkday(activeWorkday.id, breadcrumbs);
       localStorage.removeItem('ryb_car_breadcrumbs');
       await loadToday();
     } catch (err) {
-      alert('Error al finalizar jornada');
+      console.error('Error al finalizar jornada:', err);
+      alert('Error al finalizar jornada: ' + err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleResolveEndWorkday = async (useRetroactive) => {
+    if (!activeWorkday) return;
+    setActionLoading(true);
+    try {
+      const breadcrumbs = JSON.parse(localStorage.getItem('ryb_car_breadcrumbs') || '[]');
+      
+      if (useRetroactive && retroactiveModal.suggestedTime) {
+        // Finalizar jornada y coche con la hora de última actividad
+        await endWorkday(activeWorkday.id, breadcrumbs, retroactiveModal.suggestedTime);
+      } else {
+        // Finalizar con hora actual
+        await endWorkday(activeWorkday.id, breadcrumbs, null);
+      }
+      
+      localStorage.removeItem('ryb_car_breadcrumbs');
+      setRetroactiveModal({
+        open: false,
+        suggestedTime: null,
+        suggestedTimeStr: '',
+        actualTimeStr: '',
+        workdayId: null,
+        allTasksCompleted: false
+      });
+      await loadToday();
+    } catch (err) {
+      console.error(err);
+      alert('Error al procesar el fin de jornada: ' + err.message);
     } finally {
       setActionLoading(false);
     }
@@ -506,12 +536,7 @@ export default function TodayPage() {
   };
 
   const handleDismissNotifications = async () => {
-    if (!userProfile?.uid) return;
-    try {
-      await markAllNotificationsAsRead(userProfile.uid);
-    } catch (err) {
-      console.error("Error dismissing notifications:", err);
-    }
+    await dismissAll();
   };
 
   const handleResolveStaleWorkday = async () => {
@@ -578,32 +603,58 @@ export default function TodayPage() {
 
       {unreadCount > 0 && (
         <div 
-          className="mb-4 p-4 rounded-xl flex items-center justify-between"
+          className="mb-4 rounded-xl overflow-hidden"
           style={{ 
             background: 'var(--color-danger)', 
             color: 'white', 
             boxShadow: '0 4px 12px rgba(220, 38, 38, 0.3)',
             animation: 'pulse 2s infinite'
           }}
-          onClick={() => alert(`Tienes ${unreadCount} aviso(s) pendiente(s).`)}
         >
-          <div className="flex items-center gap-3">
-            <span style={{ fontSize: '1.4rem' }}>🚨</span>
-            <div>
-              <div className="font-bold leading-tight">AVISO IMPORTANTE</div>
-              <div className="text-xs opacity-90">Toca para descartar los mensajes</div>
+          <div className="p-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span style={{ fontSize: '1.4rem' }}>🚨</span>
+              <div>
+                <div className="font-bold leading-tight">AVISO IMPORTANTE ({unreadCount})</div>
+                <div className="text-xs opacity-90">Toca “OK” para marcar como leído</div>
+              </div>
             </div>
+            <button 
+               className="btn btn-xs btn-ghost" 
+               style={{ color: 'white', border: '1px solid rgba(255,255,255,0.4)' }}
+               onClick={(e) => {
+                 e.stopPropagation();
+                 handleDismissNotifications();
+               }}
+            >
+              OK
+            </button>
           </div>
-          <button 
-             className="btn btn-xs btn-ghost" 
-             style={{ color: 'white', border: '1px solid rgba(255,255,255,0.4)' }}
-             onClick={(e) => {
-               e.stopPropagation();
-               handleDismissNotifications();
-             }}
-          >
-            OK
-          </button>
+          {/* Mostrar contenido de las notificaciones */}
+          <div style={{ padding: '0 16px 12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {notifications.slice(0, 5).map((notif) => (
+              <div 
+                key={notif.id}
+                onClick={() => notif.serviceId && navigate(`/operario/servicio/${notif.serviceId}`)}
+                style={{ 
+                  background: 'rgba(255,255,255,0.15)', 
+                  borderRadius: '8px', 
+                  padding: '8px 12px',
+                  cursor: notif.serviceId ? 'pointer' : 'default',
+                  fontSize: '0.8rem',
+                  lineHeight: 1.3
+                }}
+              >
+                <div style={{ fontWeight: 700 }}>{notif.title || 'Aviso'}</div>
+                {notif.body && <div style={{ opacity: 0.85, marginTop: '2px' }}>{notif.body}</div>}
+              </div>
+            ))}
+            {notifications.length > 5 && (
+              <div style={{ fontSize: '0.7rem', opacity: 0.7, textAlign: 'center', paddingTop: '4px' }}>
+                +{notifications.length - 5} más
+              </div>
+            )}
+          </div>
         </div>
       )}
       <div className="mb-4">
@@ -824,25 +875,7 @@ export default function TodayPage() {
               </div>
             )}
 
-            {(activeWorkday || allServicesIndividual) && (
-              <button 
-                className="btn btn-primary w-full py-4 mb-4 shadow-sm flex items-center justify-center gap-2 animate-fadeIn"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setMaterialModal({ open: true, communityId: null, communityName: 'General / Equipo' });
-                }}
-                style={{ 
-                  background: 'linear-gradient(135deg, #f59e0b, #d97706)',
-                  border: 'none',
-                  fontSize: 'var(--font-md)',
-                  fontWeight: 800,
-                  borderRadius: 'var(--radius-xl)',
-                  boxShadow: '0 8px 16px -4px rgba(217, 119, 6, 0.4)'
-                }}
-              >
-                📦 PEDIR MATERIAL / PRODUCTOS
-              </button>
-            )}
+
           </>
         );
       })()}
@@ -1002,7 +1035,9 @@ export default function TodayPage() {
               <div className="service-tasks" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'nowrap', gap: '8px' }}>
                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', flex: 1 }}>
                   {svc.tasks?.map(t => (
-                    <span key={t.id} className="service-task-chip">{t.taskName}</span>
+                    <span key={t.id} className={`service-task-chip ${t.isUrgent ? 'urgent' : ''}`}>
+                      {t.isUrgent ? '🚨 ' : ''}{t.taskName}
+                    </span>
                   ))}
                 </div>
                 {svc.isCompanion ? (
@@ -1065,12 +1100,7 @@ export default function TodayPage() {
         }
       />
 
-      <MaterialRequestModal 
-        isOpen={materialModal.open}
-        onClose={() => setMaterialModal({ ...materialModal, open: false })}
-        communityId={materialModal.communityId}
-        communityName={materialModal.communityName}
-      />
+
 
       {/* MODAL KILOMETRAJE MANUAL */}
       {mileageModalOpen && (
@@ -1154,6 +1184,74 @@ export default function TodayPage() {
               <p className="text-[10px] text-center text-muted">
                 Debes cerrar la jornada anterior antes de poder iniciar una nueva.
               </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL FINALIZACIÓN INTELIGENTE (RETROACTIVA) */}
+      {retroactiveModal.open && (
+        <div className="modal-overlay">
+          <div className="modal-content animate-scaleIn" style={{ maxWidth: '420px', padding: '24px' }}>
+            <div className="text-center mb-6">
+              <div style={{ fontSize: '3.5rem', marginBottom: '12px' }}>⏰</div>
+              <h3 style={{ fontSize: 'var(--font-xl)', fontWeight: 800, color: 'var(--color-primary)' }}>
+                ¿Ajustar hora de salida?
+              </h3>
+              {retroactiveModal.allTasksCompleted ? (
+                <div className="p-3 bg-emerald-50 text-emerald-800 text-xs rounded-lg inline-flex items-center gap-2 mt-2 font-medium">
+                  ✨ ¡Todas tus tareas del día están completadas!
+                </div>
+              ) : null}
+              <p className="text-sm text-muted mt-3">
+                Detectamos que tu última actividad registrada fue a las <span className="font-bold text-dark">{retroactiveModal.suggestedTimeStr}</span>.
+              </p>
+              <p className="text-xs text-muted mt-1">
+                Parece que han pasado más de 30 minutos desde entonces. ¿Quieres finalizar tu jornada a esa hora para evitar registrar horas de más y corregir el kilometraje del coche?
+              </p>
+            </div>
+
+            <div className="p-4 bg-slate-50 rounded-xl mb-6 border border-slate-200">
+              <div className="flex justify-between items-center text-sm mb-3">
+                <span className="text-muted flex items-center gap-1">⏰ Hora sugerida (último trabajo):</span>
+                <span className="font-bold text-emerald-600" style={{ fontSize: '1.1rem' }}>
+                  {retroactiveModal.suggestedTimeStr}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-sm border-t border-slate-200 pt-3">
+                <span className="text-muted">🕒 Hora actual:</span>
+                <span className="font-semibold text-slate-500">
+                  {retroactiveModal.actualTimeStr}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <button 
+                className="btn btn-primary w-full py-4 font-bold flex justify-center items-center gap-2"
+                onClick={() => handleResolveEndWorkday(true)}
+                disabled={actionLoading}
+                style={{ backgroundColor: 'var(--color-success)', borderColor: 'var(--color-success)' }}
+              >
+                {actionLoading ? 'FINALIZANDO...' : `SÍ, FINALIZAR A LAS ${retroactiveModal.suggestedTimeStr}`}
+              </button>
+              
+              <button 
+                className="btn w-full py-3 text-sm font-semibold border border-slate-300 bg-white hover:bg-slate-50"
+                onClick={() => handleResolveEndWorkday(false)}
+                disabled={actionLoading}
+                style={{ color: 'var(--color-text)' }}
+              >
+                {actionLoading ? 'FINALIZANDO...' : `No, finalizar ahora (${retroactiveModal.actualTimeStr})`}
+              </button>
+
+              <button 
+                className="btn btn-ghost w-full text-sm text-muted"
+                onClick={() => setRetroactiveModal({ open: false, suggestedTime: null, suggestedTimeStr: '', actualTimeStr: '', workdayId: null, allTasksCompleted: false })}
+                disabled={actionLoading}
+              >
+                Cancelar
+              </button>
             </div>
           </div>
         </div>

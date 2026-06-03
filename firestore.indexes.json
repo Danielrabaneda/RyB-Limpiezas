@@ -57,6 +57,22 @@
         { "fieldPath": "userId", "order": "ASCENDING" },
         { "fieldPath": "dateTimestamp", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "scheduledServices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isRescheduled", "order": "ASCENDING" },
+        { "fieldPath": "originalDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "scheduledServices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "communityTaskId", "order": "ASCENDING" },
+        { "fieldPath": "isRescheduled", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

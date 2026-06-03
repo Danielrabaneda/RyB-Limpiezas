@@ -11,7 +11,7 @@ import { es } from 'date-fns/locale';
 import PlanningCalendar from '../../components/PlanningCalendar';
 import TransferRequestsPanel from '../../components/admin/TransferRequestsPanel';
 import GPSSuggestionsPanel from '../../components/admin/GPSSuggestionsPanel';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, getDocs } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 
 export default function DashboardPage() {
@@ -30,6 +30,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [pendingTransfers, setPendingTransfers] = useState(0);
   const [pendingGPS, setPendingGPS] = useState(0);
+  const [activeOpsNames, setActiveOpsNames] = useState([]);
 
   useEffect(() => {
     loadDashboard();
@@ -46,16 +47,54 @@ export default function DashboardPage() {
 
   async function loadDashboard() {
     try {
-      const [communitiesList, ops, todayServices, checkIns] = await Promise.all([
+      const [communitiesList, ops, todayServices, checkIns, activeWorkdaysSnap] = await Promise.all([
         getCommunities(),
         getOperarios(),
         getScheduledServicesRange(new Date(), new Date()),
         getCheckInsRange(new Date(), new Date()),
+        getDocs(query(collection(db, 'workdays'), where('status', '==', 'active')))
       ]);
+
+      const activeWorkdays = activeWorkdaysSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
       const completed = todayServices.filter(s => s.status === 'completed').length;
       const pending = todayServices.filter(s => s.status === 'pending').length;
-      const active = checkIns.filter(c => !c.checkOutTime).length;
+
+      // Calculate real-time active operators from active workdays AND active check-ins
+      const activeUserIds = new Set();
+      
+      // 1. Add all operators with active workdays (and their global companions)
+      activeWorkdays.forEach(wd => {
+        if (wd.userId) activeUserIds.add(wd.userId);
+        if (wd.currentCompanionId) activeUserIds.add(wd.currentCompanionId);
+      });
+
+      // 2. Add all operators with active check-ins (and service-specific companions)
+      const activeCheckInDocs = checkIns.filter(c => !c.checkOutTime);
+      activeCheckInDocs.forEach(c => {
+        if (c.userId) activeUserIds.add(c.userId);
+        
+        if (c.scheduledServiceId) {
+          const service = todayServices.find(s => s.id === c.scheduledServiceId);
+          if (service && Array.isArray(service.companionIds)) {
+            service.companionIds.forEach(companionId => {
+              if (companionId) {
+                activeUserIds.add(companionId);
+              }
+            });
+          }
+        }
+      });
+
+      // Unique UIDs of all active operators
+      const uniqueActiveUserIds = Array.from(activeUserIds);
+      const activeCount = uniqueActiveUserIds.length;
+
+      // Map UIDs to actual operator names
+      const names = uniqueActiveUserIds.map(uid => {
+        const op = ops.find(o => o.uid === uid);
+        return op ? (op.name || op.email) : 'Desconocido';
+      });
 
       setStats({
         communities: communitiesList.length,
@@ -63,9 +102,10 @@ export default function DashboardPage() {
         todayServices: todayServices.length,
         pendingServices: pending,
         completedToday: completed,
-        activeCheckIns: active,
+        activeCheckIns: activeCount,
       });
 
+      setActiveOpsNames(names);
       setOperarios(ops);
     } catch (err) {
       console.error('Error loading dashboard:', err);
@@ -91,7 +131,7 @@ export default function DashboardPage() {
 
   return (
     <div className="animate-fadeIn">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
         <div>
           <h2 style={{ fontSize: 'var(--font-2xl)', fontWeight: 800, color: 'var(--color-text)' }}>
             Hola, {userProfile?.name || 'Admin'} 👋
@@ -145,7 +185,7 @@ export default function DashboardPage() {
                   padding: '8px 16px', fontWeight: 700, fontSize: '0.8rem',
                   cursor: 'pointer', backdropFilter: 'blur(4px)',
                   transition: 'background 0.2s',
-                  whiteSpace: 'nowrap',
+                  whiteSpace: 'normal',
                 }}
                 onMouseOver={e => e.currentTarget.style.background = 'rgba(255,255,255,0.3)'}
                 onMouseOut={e => e.currentTarget.style.background = 'rgba(255,255,255,0.2)'}
@@ -162,7 +202,7 @@ export default function DashboardPage() {
                   padding: '8px 16px', fontWeight: 700, fontSize: '0.8rem',
                   cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
                   transition: 'opacity 0.2s',
-                  whiteSpace: 'nowrap',
+                  whiteSpace: 'normal',
                 }}
                 onMouseOver={e => e.currentTarget.style.opacity = '0.9'}
                 onMouseOut={e => e.currentTarget.style.opacity = '1'}
@@ -200,7 +240,7 @@ export default function DashboardPage() {
 
       {/* Acciones Rápidas */}
       <h3 className="section-title mb-4">⚡ Acciones Rápidas</h3>
-      <div className="grid grid-4 gap-3 mb-8">
+      <div className="grid grid-3 gap-3 mb-8">
         <button 
           onClick={() => navigate('/admin/inventory')}
           className="btn btn-ghost p-4 flex flex-col items-center gap-2 border border-slate-100 hover:border-primary hover:bg-white shadow-sm"
@@ -216,6 +256,14 @@ export default function DashboardPage() {
         >
           <span style={{ fontSize: '1.5rem' }}>📄</span>
           <span className="text-xs font-bold uppercase tracking-wider">Informes</span>
+        </button>
+        <button 
+          onClick={() => navigate('/admin/evidencias')}
+          className="btn btn-ghost p-4 flex flex-col items-center gap-2 border border-slate-100 hover:border-primary hover:bg-white shadow-sm"
+          style={{ height: 'auto', background: 'white' }}
+        >
+          <span style={{ fontSize: '1.5rem' }}>📸</span>
+          <span className="text-xs font-bold uppercase tracking-wider">Evidencias</span>
         </button>
         <button 
           onClick={() => navigate('/admin/communities')}
@@ -269,14 +317,14 @@ export default function DashboardPage() {
 
       <div className="mb-12">
         <h3 className="section-title mb-6">📅 Planificación Mensual</h3>
-        <div className="bg-white rounded-3xl p-2 shadow-sm border border-slate-100">
+        <div className="bg-white rounded-3xl p-2 shadow-sm border border-slate-100" style={{ overflowX: 'auto' }}>
           <PlanningCalendar key={refreshKey} isAdmin operarios={operarios} />
         </div>
       </div>
 
       {/* Operarios activos */}
       <div className="card shadow-md border-0 bg-white" style={{ borderLeft: '4px solid #3b82f6' }}>
-        <div className="card-header border-0 bg-transparent flex items-center justify-between">
+        <div className="card-header border-0 bg-transparent flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-3">
             <span className="text-xl">📍</span>
             <h3 className="card-title text-slate-800 m-0">Operarios activos actualmente</h3>
@@ -288,9 +336,26 @@ export default function DashboardPage() {
           {stats.activeCheckIns === 0 ? (
             <p className="text-muted text-sm italic">Ningún operario fichado en este momento.</p>
           ) : (
-            <div className="flex items-center gap-2">
-              <span className="pulse-dot"></span>
-              <span className="text-sm font-medium text-blue-700">{stats.activeCheckIns} operario(s) realizando servicios en tiempo real.</span>
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-2">
+                <span className="pulse-dot"></span>
+                <span className="text-sm font-medium text-blue-700">
+                  {stats.activeCheckIns} operario{stats.activeCheckIns > 1 ? 's' : ''} realizando servicios en tiempo real.
+                </span>
+              </div>
+              {activeOpsNames.length > 0 && (
+                <div className="mt-1 p-3 bg-slate-50 rounded-xl border border-slate-100 flex flex-col gap-2">
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Operarios en servicio:</span>
+                  <div className="flex flex-wrap gap-2">
+                    {activeOpsNames.map((name, idx) => (
+                      <span key={idx} className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-100">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>
+                        {name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -298,11 +363,16 @@ export default function DashboardPage() {
 
       <style>{`
         .section-title {
-          font-size: 1.25rem;
+          font-size: 1.1rem;
           font-weight: 700;
           color: var(--color-text);
           border-left: 4px solid var(--color-primary);
           padding-left: 12px;
+        }
+        @media (max-width: 480px) {
+          .section-title {
+            font-size: 0.95rem;
+          }
         }
         .pulse-dot {
           width: 8px;

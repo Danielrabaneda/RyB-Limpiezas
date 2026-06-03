@@ -12,6 +12,7 @@ import {
 } from '../../services/checkInService';
 import { uploadPhoto } from '../../services/storageService';
 import { createGPSSuggestion } from '../../services/gpsSuggestionService';
+import { createEvidenceReport } from '../../services/evidenceService';
 import { transferService } from '../../services/transferService';
 import { getOperarios } from '../../services/authService';
 import TransferModal from '../../components/TransferModal';
@@ -47,6 +48,8 @@ export default function ServiceDetailPage() {
   const [suggestedIn, setSuggestedIn] = useState(null);
   const [suggestedOut, setSuggestedOut] = useState(null);
   const [activeWorkday, setActiveWorkday] = useState(null);
+  const [submittingEvidence, setSubmittingEvidence] = useState({});
+  const [submittedEvidence, setSubmittedEvidence] = useState({});
 
   useEffect(() => {
     if (!serviceId) return;
@@ -96,9 +99,18 @@ export default function ServiceDetailPage() {
     if (sIn) setSuggestedIn(new Date(sIn));
     if (sOut) setSuggestedOut(new Date(sOut));
 
+    // Polling para detectar cuando el GeolocationTracker confirma una salida (tras 5 min)
+    const exitPollInterval = setInterval(() => {
+      const confirmedExit = localStorage.getItem(`detected_exit_${serviceId}`);
+      if (confirmedExit && !suggestedOut) {
+        setSuggestedOut(new Date(confirmedExit));
+      }
+    }, 10_000); // cada 10 segundos
+
     return () => {
       unsubService();
       unsubExecs();
+      clearInterval(exitPollInterval);
     };
   }, [serviceId]);
 
@@ -290,8 +302,9 @@ export default function ServiceDetailPage() {
       // Update status
       await updateScheduledServiceStatus(serviceId, 'completed');
 
-      // Limpiar sugerencia utilizada
+      // Limpiar sugerencia utilizada (confirmed + pending)
       localStorage.removeItem(`detected_exit_${serviceId}`);
+      localStorage.removeItem(`detected_exit_pending_${serviceId}`);
       setSuggestedOut(null);
 
       alert(`Servicio finalizado. Duración: ${result.duration} minutos`);
@@ -350,6 +363,42 @@ export default function ServiceDetailPage() {
 
   async function handleSaveNotes(execId) {
     await updateTaskExecution(execId, { notes });
+  }
+
+  async function handleSubmitEvidence(exec) {
+    const task = tasks.find(t => t.id === exec.communityTaskId);
+    const hasPhotos = exec.photoUrls && exec.photoUrls.length > 0;
+    const hasNotes = exec.notes && exec.notes.trim().length > 0;
+    
+    if (!hasPhotos && !hasNotes) {
+      alert('Añade al menos una foto o una nota antes de enviar.');
+      return;
+    }
+
+    setSubmittingEvidence(prev => ({ ...prev, [exec.id]: true }));
+    try {
+      await createEvidenceReport({
+        scheduledServiceId: serviceId,
+        communityId: service.communityId,
+        communityName: community?.name || '',
+        userId: userProfile.uid,
+        userName: userProfile.name || userProfile.email || '',
+        notes: exec.notes || '',
+        photoUrls: exec.photoUrls || [],
+        taskName: task?.taskName || 'Tarea',
+        communityTaskId: exec.communityTaskId || '',
+      });
+      setSubmittedEvidence(prev => ({ ...prev, [exec.id]: true }));
+      // Auto-clear success message after 5s
+      setTimeout(() => {
+        setSubmittedEvidence(prev => ({ ...prev, [exec.id]: false }));
+      }, 5000);
+    } catch (err) {
+      console.error('Error submitting evidence:', err);
+      alert('Error al enviar la evidencia: ' + (err.message || 'Error desconocido'));
+    } finally {
+      setSubmittingEvidence(prev => ({ ...prev, [exec.id]: false }));
+    }
   }
 
   if (loading) {
@@ -504,14 +553,20 @@ export default function ServiceDetailPage() {
           )}
 
           {isCheckedIn && suggestedOut && (
-            <div className="card" style={{ border: '2px dashed var(--color-danger)', background: 'var(--color-danger-light)' }}>
-              <p className="text-xs font-bold mb-2">🏃 Se detectó tu salida a las {format(suggestedOut, 'HH:mm')}</p>
+            <div className="exit-suggestion-card">
+              <div className="exit-suggestion-icon">🏃</div>
+              <div className="exit-suggestion-content">
+                <p className="exit-suggestion-title">Salida confirmada</p>
+                <p className="exit-suggestion-subtitle">
+                  Se detectó tu salida a las <strong>{format(suggestedOut, 'HH:mm')}</strong> y no volviste en 5 minutos
+                </p>
+              </div>
               <button 
-                className="btn btn-danger btn-sm w-full" 
+                className="btn-pulse-glow" 
                 onClick={() => handleCheckOut(suggestedOut)}
                 disabled={actionLoading}
               >
-                Usar hora sugerida
+                ⏱️ Finalizar a las {format(suggestedOut, 'HH:mm')}
               </button>
             </div>
           )}
@@ -573,8 +628,9 @@ export default function ServiceDetailPage() {
             {taskExecutions.map(exec => {
               const task = tasks.find(t => t.id === exec.communityTaskId);
               const isDone = exec.status === 'completed';
+              const isUrgent = task?.isUrgent || service?.isUrgent;
               return (
-                <div key={exec.id} className={`task-item ${isDone ? 'completed' : ''}`}>
+                <div key={exec.id} className={`task-item ${isDone ? 'completed' : ''} ${isUrgent ? 'urgent' : ''}`}>
                   <div
                     className={`task-checkbox ${isDone ? 'checked' : ''}`}
                     onClick={() => canEdit && toggleTaskStatus(exec)}
@@ -583,7 +639,7 @@ export default function ServiceDetailPage() {
                   </div>
                   <div style={{ flex: 1 }}>
                     <div className={`task-name ${isDone ? 'done' : ''}`}>
-                      {task?.taskName || 'Tarea'}
+                      {isUrgent && !isDone ? '🚨 ' : ''}{task?.taskName || 'Tarea'}
                     </div>
                     
                     {/* Notes */}
@@ -629,6 +685,49 @@ export default function ServiceDetailPage() {
                         </label>
                       )}
                     </div>
+
+                    {/* Submit Evidence Button */}
+                    {canEdit && (exec.photoUrls?.length > 0 || (exec.notes && exec.notes.trim())) && (
+                      <div className="mt-3">
+                        {submittedEvidence[exec.id] ? (
+                          <div style={{
+                            padding: '8px 12px',
+                            borderRadius: 'var(--radius-md)',
+                            background: 'var(--color-success-light, #dcfce7)',
+                            color: 'var(--color-success, #16a34a)',
+                            fontSize: 'var(--font-xs)',
+                            fontWeight: 700,
+                            textAlign: 'center',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '6px',
+                          }}>
+                            ✅ Evidencia enviada correctamente
+                          </div>
+                        ) : (
+                          <button
+                            className="btn btn-primary btn-sm w-full"
+                            onClick={() => handleSubmitEvidence(exec)}
+                            disabled={submittingEvidence[exec.id]}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '6px',
+                              fontWeight: 700,
+                              fontSize: '0.8rem',
+                            }}
+                          >
+                            {submittingEvidence[exec.id] ? (
+                              <>⏳ Enviando...</>
+                            ) : (
+                              <>📤 Enviar evidencia</>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    )}
                     {uploadingPhoto && <p className="text-xs text-muted mt-2">Subiendo foto...</p>}
                   </div>
                 </div>

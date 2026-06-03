@@ -1,7 +1,8 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { collection, query, where, limit, getDocs, onSnapshot, orderBy, doc } from 'firebase/firestore';
+import { NotificationProvider, useNotifications } from './contexts/NotificationContext';
+import { collection, query, where, limit, getDocs, onSnapshot, doc } from 'firebase/firestore';
 import { db } from './config/firebase';
 import './index.css';
 
@@ -41,6 +42,7 @@ class ErrorBoundary extends React.Component {
 }
 
 // Lazy loaded pages
+const LandingPage = lazy(() => import('./pages/LandingPage'));
 const LoginPage = lazy(() => import('./pages/auth/LoginPage'));
 const RegisterPage = lazy(() => import('./pages/auth/RegisterPage'));
 const SetupPage = lazy(() => import('./pages/auth/SetupPage'));
@@ -54,22 +56,15 @@ const ControlHorarioPage = lazy(() => import('./pages/admin/ControlHorarioPage')
 const TodayPage = lazy(() => import('./pages/operario/TodayPage'));
 const ServiceDetailPage = lazy(() => import('./pages/operario/ServiceDetailPage'));
 const HistoryPage = lazy(() => import('./pages/operario/HistoryPage'));
+const MaterialRequestPage = lazy(() => import('./pages/operario/MaterialRequestPage'));
 const SettingsPage = lazy(() => import('./pages/admin/SettingsPage'));
+const EvidenceReportsPage = lazy(() => import('./pages/admin/EvidenceReportsPage'));
 
 // Components
 const GeolocationTracker = lazy(() => import('./components/operario/GeolocationTracker'));
 const PermissionsCheck = lazy(() => import('./components/operario/PermissionsCheck'));
 
-// Función para actualizar el número en el icono (Badge)
-const updateIconBadge = (count) => {
-  if ('setAppBadge' in navigator) {
-    if (count > 0) {
-      navigator.setAppBadge(count).catch(console.error);
-    } else {
-      navigator.clearAppBadge().catch(console.error);
-    }
-  }
-};
+
 
 // ==================== ROUTE GUARDS ====================
 function ProtectedRoute({ children, requiredRole }) {
@@ -137,12 +132,14 @@ function ProtectedRoute({ children, requiredRole }) {
 // ==================== ADMIN LAYOUT ====================
 function AdminLayout() {
   const { userProfile, logout } = useAuth();
+  const { unreadCount, dismissAll } = useNotifications();
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [globalSettings, setGlobalSettings] = useState(null);
   const [pendingValidations, setPendingValidations] = useState(0);
   const [pendingGPS, setPendingGPS] = useState(0);
+  const [pendingOrders, setPendingOrders] = useState(0);
 
   useEffect(() => {
     const unsub = onSnapshot(doc(db, 'settings', 'global'), (docSnap) => {
@@ -169,6 +166,14 @@ function AdminLayout() {
     return () => unsub();
   }, []);
 
+  useEffect(() => {
+    const q = query(collection(db, 'materialRequests'), where('status', '==', 'pending'));
+    const unsub = onSnapshot(q, (snap) => {
+      setPendingOrders(snap.size);
+    });
+    return () => unsub();
+  }, []);
+
   async function handleLogout() {
     await logout();
     navigate('/login');
@@ -180,7 +185,9 @@ function AdminLayout() {
     { path: '/admin/operarios', icon: '👷', label: 'Operarios' },
     { path: '/admin/control-horario', icon: '⏱️', label: 'Control Horario' },
     { path: '/admin/informes', icon: '📈', label: 'Informes' },
+    { path: '/admin/evidencias', icon: '📸', label: 'Evidencias' },
     { path: '/admin/kilometraje', icon: '🚗', label: 'Kilometraje' },
+    { path: '/admin/inventory', icon: '📦', label: 'Materiales' },
     { path: '/admin/ajustes', icon: '⚙️', label: 'Ajustes' },
   ];
 
@@ -234,6 +241,11 @@ function AdminLayout() {
                   )}
                 </div>
               )}
+              {item.path === '/admin/inventory' && pendingOrders > 0 && (
+                <span className="badge bg-red-500 text-white border-0 text-xs px-2 py-0.5 shadow-sm animate-pulse" title="Pedidos pendientes">
+                  {pendingOrders}
+                </span>
+              )}
             </NavLink>
           ))}
         </nav>
@@ -258,7 +270,7 @@ function AdminLayout() {
 
       {/* Main */}
       <div className="admin-main">
-        <header className="admin-header">
+        <header className="admin-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div className="flex items-center gap-3">
             <button className="hamburger" onClick={() => setSidebarOpen(!sidebarOpen)}>☰</button>
             <h1 className="admin-header-title">
@@ -266,6 +278,23 @@ function AdminLayout() {
                 n.exact ? location.pathname === n.path : location.pathname.startsWith(n.path) && n.path !== '/admin'
               )?.label || 'Dashboard'}
             </h1>
+          </div>
+          <div className="flex items-center gap-3 pr-4">
+            {unreadCount > 0 && (
+              <button 
+                onClick={() => {
+                  dismissAll();
+                  navigate('/admin/inventory');
+                }}
+                className="relative p-2 text-slate-600 hover:bg-slate-100 rounded-full transition-colors"
+                title={`${unreadCount} avisos pendientes`}
+              >
+                <span style={{ fontSize: '1.2rem' }}>🔔</span>
+                <span className="absolute top-0 right-0 inline-flex items-center justify-center px-2 py-1 text-xs font-bold leading-none text-white transform translate-x-1/4 -translate-y-1/4 bg-red-600 rounded-full animate-pulse">
+                  {unreadCount}
+                </span>
+              </button>
+            )}
           </div>
         </header>
         <main className="admin-content">
@@ -293,6 +322,17 @@ function OperarioLayout() {
     return () => unsub();
   }, []);
 
+  // Escuchar mensajes del Service Worker para navegación desde notificaciones
+  useEffect(() => {
+    const handleSWMessage = (event) => {
+      if (event.data?.type === 'NAVIGATE' && event.data.url) {
+        navigate(event.data.url);
+      }
+    };
+    navigator.serviceWorker?.addEventListener('message', handleSWMessage);
+    return () => navigator.serviceWorker?.removeEventListener('message', handleSWMessage);
+  }, [navigate]);
+
   async function handleLogout() {
     await logout();
     navigate('/login');
@@ -301,6 +341,9 @@ function OperarioLayout() {
   return (
     <div className="operario-layout">
       <PermissionsCheck />
+      <Suspense fallback={null}>
+        <GeolocationTracker />
+      </Suspense>
       <header className="operario-header">
         <div className="flex items-center gap-2" style={{ minWidth: 0, flex: 1 }}>
           {globalSettings?.logoUrl && (
@@ -330,6 +373,13 @@ function OperarioLayout() {
           Hoy
         </NavLink>
         <NavLink
+          to="/operario/materiales"
+          className={({ isActive }) => `operario-nav-link ${isActive ? 'active' : ''}`}
+        >
+          <span className="operario-nav-icon">📦</span>
+          Materiales
+        </NavLink>
+        <NavLink
           to="/operario/historial"
           className={({ isActive }) => `operario-nav-link ${isActive ? 'active' : ''}`}
         >
@@ -354,7 +404,9 @@ function RootRedirect() {
         setHasAdmins(!snap.empty);
       } catch (err) {
         console.error('CheckAdmins error:', err);
-        setHasAdmins(false); // Si hay error (como permisos), dejamos pasar al setup por si acaso
+        // Si hay error de permisos (porque las reglas de seguridad ya están activas y bloquean lecturas públicas),
+        // significa que el sistema ya está configurado y seguro. Por tanto, asumimos que existen admins y redirigimos a login.
+        setHasAdmins(true);
       }
     }
     if (!loading && !currentUser) {
@@ -367,193 +419,77 @@ function RootRedirect() {
   }
 
   if (!currentUser) {
-    return hasAdmins ? <Navigate to="/login" /> : <Navigate to="/setup" />;
+    return hasAdmins ? <LandingPage /> : <Navigate to="/setup" />;
   }
   
   if (userProfile?.role === 'admin') return <Navigate to="/admin" />;
   return <Navigate to="/operario" />;
 }
 
-// Componente para gestionar notificaciones del sistema en tiempo real
-function NotificationManager() {
-  const { currentUser } = useAuth();
 
-  useEffect(() => {
-    if (!currentUser) return;
-
-    // Tracking para re-alertas: { docId: { count, intervalId } }
-    const repeatTrackers = {};
-    const MAX_REPEATS = 10;
-    const REPEAT_INTERVAL_MS = 20 * 1000; // 20 segundos entre repeticiones
-
-    const cleanupTracker = (docId) => {
-      if (repeatTrackers[docId]) {
-        clearInterval(repeatTrackers[docId].intervalId);
-        delete repeatTrackers[docId];
-      }
-    };
-
-    // Escuchar notificaciones no leídas para este usuario
-    const q = query(
-      collection(db, 'systemNotifications'),
-      where('userId', '==', currentUser.uid),
-      where('read', '==', false),
-      limit(5)
-    );
-
-    const unsubscribe = onSnapshot(q, async (snapshot) => {
-      // Limpiar trackers de notificaciones que ya fueron leídas
-      const activeDocIds = new Set(snapshot.docs.map(d => d.id));
-      Object.keys(repeatTrackers).forEach(docId => {
-        if (!activeDocIds.has(docId)) {
-          cleanupTracker(docId);
-        }
-      });
-
-      // Procesar notificaciones nuevas
-      for (const docSnap of snapshot.docs) {
-        // Si ya tenemos un tracker para esta notificación, no la reprocesamos
-        if (repeatTrackers[docSnap.id]) continue;
-
-        const data = docSnap.data();
-        const { sendNotification, playNotificationSound } = await import('./utils/geolocation');
-        
-        const title = data.title || 'RyB Limpiezas';
-        const body = data.body || data.message || '';
-        
-        // 🔊 Primera notificación con sonido
-        sendNotification(title, {
-          body: body,
-          icon: '/icons/icon-192.png',
-          badge: '/icons/icon-192.png',
-          tag: docSnap.id,
-          urgent: data.type === 'warning'
-        });
-
-        // Configurar re-alertas periódicas
-        let repeatCount = 0;
-        const intervalId = setInterval(() => {
-          repeatCount++;
-          if (repeatCount >= MAX_REPEATS) {
-            cleanupTracker(docSnap.id);
-            return;
-          }
-          
-          console.log(`[NotificationManager] Re-alerta #${repeatCount} para: ${title}`);
-          // Solo reproducir sonido (sin crear nueva notificación nativa para no saturar)
-          playNotificationSound(true); // urgent = true en repeticiones
-        }, REPEAT_INTERVAL_MS);
-
-        repeatTrackers[docSnap.id] = { count: 0, intervalId };
-      }
-    });
-
-    return () => {
-      unsubscribe();
-      // Limpiar todos los intervalos activos
-      Object.keys(repeatTrackers).forEach(cleanupTracker);
-    };
-  }, [currentUser]);
-
-  return null;
-}
-
-// Componente para gestionar el número del icono (Badge)
-function BadgeManager() {
-  const { currentUser, isOperario } = useAuth();
-
-  useEffect(() => {
-    if (!isOperario || !currentUser) {
-      updateIconBadge(0);
-      return;
-    }
-
-    // Escuchar notificaciones de sistema sin leer
-    const q = query(
-      collection(db, 'systemNotifications'),
-      where('userId', '==', currentUser.uid),
-      where('read', '==', false)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const unreadCount = snapshot.size;
-      console.log(`[Badge] Notificaciones sin leer: ${unreadCount}`);
-      updateIconBadge(unreadCount);
-    });
-
-    return () => unsubscribe();
-  }, [currentUser, isOperario]);
-
-  return null;
-}
 
 // ==================== APP ====================
 export default function App() {
-  useEffect(() => {
-    // Sistema de notificaciones sincronizado
-  }, []);
-
   return (
     <ErrorBoundary>
       <BrowserRouter>
         <AuthProvider>
-          <NotificationManager />
-          <BadgeManager />
-          <Suspense fallback={null}>
-            <GeolocationTracker />
-          </Suspense>
-          <Suspense fallback={
-            <div className="loading-page">
-              <div className="spinner"></div>
-              <p className="text-muted">Cargando sección...</p>
-            </div>
-          }>
-            <Routes>
-              {/* Public */}
-              <Route path="/login" element={<LoginPage />} />
-              <Route path="/register" element={<RegisterPage />} />
-              <Route path="/setup" element={<SetupPage />} />
+          <NotificationProvider>
+            <Suspense fallback={
+              <div className="loading-page">
+                <div className="spinner"></div>
+                <p className="text-muted">Cargando sección...</p>
+              </div>
+            }>
+              <Routes>
+                {/* Public */}
+                <Route path="/login" element={<LoginPage />} />
+                <Route path="/register" element={<RegisterPage />} />
+                <Route path="/setup" element={<SetupPage />} />
 
-              {/* Root */}
-              <Route path="/" element={<RootRedirect />} />
+                {/* Root */}
+                <Route path="/" element={<RootRedirect />} />
 
-              {/* Admin */}
-              <Route
-                path="/admin"
-                element={
-                  <ProtectedRoute requiredRole="admin">
-                    <AdminLayout />
-                  </ProtectedRoute>
-                }
-              >
-                <Route index element={<DashboardPage />} />
-                <Route path="comunidades" element={<CommunitiesPage />} />
-                <Route path="operarios" element={<OperariosPage />} />
-                <Route path="control-horario" element={<ControlHorarioPage />} />
-                <Route path="informes" element={<ReportsPage />} />
-                <Route path="kilometraje" element={<KilometrajePage />} />
-                <Route path="inventory" element={<InventoryPage />} />
-                <Route path="ajustes" element={<SettingsPage />} />
-              </Route>
+                {/* Admin */}
+                <Route
+                  path="/admin"
+                  element={
+                    <ProtectedRoute requiredRole="admin">
+                      <AdminLayout />
+                    </ProtectedRoute>
+                  }
+                >
+                  <Route index element={<DashboardPage />} />
+                  <Route path="comunidades" element={<CommunitiesPage />} />
+                  <Route path="operarios" element={<OperariosPage />} />
+                  <Route path="control-horario" element={<ControlHorarioPage />} />
+                  <Route path="informes" element={<ReportsPage />} />
+                  <Route path="evidencias" element={<EvidenceReportsPage />} />
+                  <Route path="kilometraje" element={<KilometrajePage />} />
+                  <Route path="inventory" element={<InventoryPage />} />
+                  <Route path="ajustes" element={<SettingsPage />} />
+                </Route>
 
-              {/* Operario */}
-              <Route
-                path="/operario"
-                element={
-                  <ProtectedRoute requiredRole="operario">
-                    <OperarioLayout />
-                  </ProtectedRoute>
-                }
-              >
-                <Route index element={<TodayPage />} />
-                <Route path="servicio/:serviceId" element={<ServiceDetailPage />} />
-                <Route path="historial" element={<HistoryPage />} />
-              </Route>
+                {/* Operario */}
+                <Route
+                  path="/operario"
+                  element={
+                    <ProtectedRoute requiredRole="operario">
+                      <OperarioLayout />
+                    </ProtectedRoute>
+                  }
+                >
+                  <Route index element={<TodayPage />} />
+                  <Route path="servicio/:serviceId" element={<ServiceDetailPage />} />
+                  <Route path="materiales" element={<MaterialRequestPage />} />
+                  <Route path="historial" element={<HistoryPage />} />
+                </Route>
 
-              {/* Catch-all */}
-              <Route path="*" element={<Navigate to="/" />} />
-            </Routes>
-          </Suspense>
+                {/* Catch-all */}
+                <Route path="*" element={<Navigate to="/" />} />
+              </Routes>
+            </Suspense>
+          </NotificationProvider>
         </AuthProvider>
       </BrowserRouter>
     </ErrorBoundary>

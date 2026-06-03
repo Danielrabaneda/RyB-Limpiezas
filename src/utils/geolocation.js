@@ -80,31 +80,65 @@ export function playNotificationSound(urgent = false) {
 }
 
 /**
- * Envía una notificación local con sonido y vibración
+ * Envía una notificación local con sonido y vibración.
+ * Prioriza el Service Worker para que funcione en segundo plano.
  */
-export function sendNotification(title, options) {
-  if (Notification.permission === 'granted') {
-    const notificationOptions = {
-      vibrate: [200, 100, 200, 100, 200], // Patrón de vibración: vibra, para, vibra...
-      requireInteraction: true, // Mantener visible hasta que el usuario interactúe
-      ...options
-    };
+export async function sendNotification(title, options) {
+  if (Notification.permission !== 'granted') return;
 
-    // 🔊 Reproducir sonido de alerta
+  // Intentar actualizar el Badge del icono (el punto rojo)
+  if ('setAppBadge' in navigator) {
+    navigator.setAppBadge(1).catch(() => {});
+  }
+
+  // 🔊 Reproducir sonido en foreground (cuando la app está visible)
+  const isVisible = document.visibilityState === 'visible';
+  if (isVisible) {
     playNotificationSound(options?.urgent || false);
+  }
 
-    // Intentar actualizar el Badge del icono (el punto rojo)
-    if ('setAppBadge' in navigator) {
-      navigator.setAppBadge(1).catch(() => {});
-    }
-
-    // Si tenemos Service Worker, usarlo (mejor para cuando la app está minimizada)
-    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-      navigator.serviceWorker.ready.then(registration => {
-        registration.showNotification(title, notificationOptions);
+  // Siempre enviar a través del Service Worker para soporte en background.
+  // Si ya reprodujimos sonido en foreground, usamos silent:true para evitar doble sonido.
+  if ('serviceWorker' in navigator) {
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      
+      // Método 1: Enviar mensaje al SW para que muestre la notificación
+      if (registration.active) {
+        registration.active.postMessage({
+          type: 'SHOW_NOTIFICATION',
+          title: title,
+          options: {
+            body: options?.body || '',
+            icon: options?.icon || '/icons/icon-192.png',
+            badge: options?.badge || '/icons/icon-192.png',
+            tag: options?.tag || 'ryb-alert-' + Date.now(),
+            vibrate: isVisible ? [] : [200, 100, 200, 100, 200],
+            requireInteraction: options?.requireInteraction !== false,
+            silent: isVisible, // Evitar doble sonido: si ya sonó Web Audio, SW silencioso
+            data: { serviceId: options?.serviceId || null },
+          }
+        });
+        return; // El SW se encarga
+      }
+      
+      // Método 2: fallback showNotification directamente
+      registration.showNotification(title, {
+        body: options?.body || '',
+        icon: options?.icon || '/icons/icon-192.png',
+        badge: options?.badge || '/icons/icon-192.png',
+        vibrate: isVisible ? [] : [200, 100, 200, 100, 200],
+        requireInteraction: options?.requireInteraction !== false,
+        silent: isVisible,
       });
-    } else {
-      new Notification(title, notificationOptions);
+    } catch (err) {
+      console.warn('[Notification] SW fallback failed:', err);
+      // Último recurso: notificación nativa del navegador
+      new Notification(title, options);
     }
+  } else {
+    // Sin Service Worker: notificación simple
+    new Notification(title, options);
   }
 }
+

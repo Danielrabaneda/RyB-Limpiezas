@@ -97,7 +97,7 @@ export default function OperariosPage() {
 
   return (
     <div className="animate-fadeIn">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <h2 style={{ fontSize: 'var(--font-2xl)', fontWeight: 800 }}>Operarios</h2>
         <button className="btn btn-primary" onClick={() => setShowModal(true)}>
           ➕ Nuevo operario
@@ -135,11 +135,13 @@ export default function OperariosPage() {
                     </span>
                   </td>
                   <td>
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-1">
                       <button className="btn btn-secondary btn-sm" onClick={() => handleToggleActive(op)}>
-                        {op.active ? '⏸️ Desactivar' : '▶️ Activar'}
+                        {op.active ? '⏸️' : '▶️'} {op.active ? 'Desactivar' : 'Activar'}
                       </button>
-                      <button className="btn btn-ghost btn-sm" onClick={() => handleResetPassword(op.email)}>
+                      <button className="btn btn-ghost btn-sm" onClick={() => handleResetPassword(op.email)}
+                        title="Resetear contraseña"
+                      >
                         🔑 Reset
                       </button>
                       <button 
@@ -151,8 +153,9 @@ export default function OperariosPage() {
                           options: { deleteHistory: false, deleteMaterials: false, deleteReports: false }
                         })}
                         style={{ color: 'var(--color-danger)' }}
+                        title="Eliminar operario"
                       >
-                        🗑️ Eliminar
+                        🗑️
                       </button>
                     </div>
                   </td>
@@ -206,7 +209,7 @@ export default function OperariosPage() {
       {/* MODAL CONFIRMACIÓN DE ELIMINACIÓN */}
       {deleteConfirm.open && deleteConfirm.operario && (
         <div className="modal-overlay" onClick={() => setDeleteConfirm({ open: false, operario: null, inputName: '', options: { deleteHistory: false, deleteMaterials: false, deleteReports: false } })}>
-          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420, width: '95vw' }}>
             <div className="modal-header">
               <h3 className="modal-title" style={{ color: 'var(--color-danger)' }}>⚠️ Eliminar operario</h3>
               <button className="btn btn-ghost btn-sm" onClick={() => setDeleteConfirm({ open: false, operario: null, inputName: '', options: { deleteHistory: false, deleteMaterials: false, deleteReports: false } })}>✕</button>

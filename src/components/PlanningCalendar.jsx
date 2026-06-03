@@ -745,6 +745,7 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
           onConfirm={handleTransferConfirm}
           loading={actionLoading}
           excludeUserId={transferModal.fromUserId}
+          isAdmin={isAdmin}
           title={
             transferModal.type === 'single' ? 'Traspasar Servicio' :
             transferModal.type === 'day' ? `Traspasar Día ${format(transferModal.date || new Date(), 'dd/MM')}` :

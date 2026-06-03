@@ -237,85 +237,123 @@ export default function ReportsPage() {
       return <p className="text-center text-muted text-sm py-2">Sin actividad registrada</p>;
     }
 
-    return day.operators.map(op => (
-      <div key={op.opId} className="operator-detail pb-3 border-bottom last:border-0" style={{ borderBottom: '1px solid var(--color-bg)' }}>
-        <div className="flex justify-between items-center mb-3">
-          <h5 className="font-bold text-sm text-primary flex items-center gap-2">
-            👤 {op.name}
-          </h5>
-          <div className="flex gap-2">
-            <span className="badge badge-primary">
-              ⏱️ {formatMinutes(op.stats.minutes)}
-            </span>
-          </div>
-        </div>
-        
-        <div className="grid grid-2 gap-6">
-          {/* Services sub-list */}
-          <div className="op-services bg-gray-50 p-3 rounded-lg border border-gray-100">
-            <p className="text-xs font-bold text-muted mb-2 uppercase tracking-wider flex items-center gap-1">
-              📋 Servicios ({op.stats.totalServices})
-            </p>
-            <div className="flex flex-col gap-1">
-              {op.services.length === 0 && <span className="text-xs text-muted italic">Sin servicios asignados</span>}
-              {op.services.map(s => (
-                <div key={s.id} className="flex justify-between items-center text-xs p-1.5 bg-white shadow-sm border border-gray-100 rounded">
-                  <span className="font-medium">{getCommunityName(s.communityId)}</span>
-                  <div className="flex items-center gap-1">
-                    {s.status === 'pending' && (
-                      <button 
-                        className="btn btn-ghost btn-xs p-0 px-1" 
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          if(confirm('¿Marcar este servicio como completado manualmente?')) {
-                            await updateScheduledServiceStatus(s.id, 'completed');
-                            loadReport();
-                          }
-                        }}
-                        style={{ color: 'var(--color-primary)' }}
-                        title="Completar manual"
-                      >
-                        ✓
-                      </button>
-                    )}
-                    <span className={`badge ${s.status === 'completed' ? 'badge-success' : 'badge-warning'}`} style={{ transform: 'scale(0.85)', originX: 'right' }}>
-                      {s.status === 'completed' ? 'Completado' : s.status}
-                    </span>
-                    <button 
-                      className="btn btn-ghost btn-xs p-0 px-1" 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleServiceDelete(s.id);
-                      }}
-                      style={{ color: 'var(--color-danger)' }}
-                      title="Eliminar"
-                    >
-                      🗑️
-                    </button>
-                  </div>
-                </div>
-              ))}
+    return day.operators.map(op => {
+      // Build a map of check-ins by scheduledServiceId for quick lookup
+      const checkInByServiceId = {};
+      const unmatchedCheckIns = [];
+      
+      op.checkIns.forEach(c => {
+        if (c.scheduledServiceId && c.scheduledServiceId !== '') {
+          checkInByServiceId[c.scheduledServiceId] = c;
+        } else {
+          unmatchedCheckIns.push(c);
+        }
+      });
+
+      // Build unified list: each service paired with its check-in
+      const linkedServices = op.services.map(s => ({
+        service: s,
+        checkIn: checkInByServiceId[s.id] || null
+      }));
+
+      // Sort: services with check-ins first (by checkInTime desc), then services without check-ins
+      linkedServices.sort((a, b) => {
+        const aTime = a.checkIn?.checkInTime?.toDate ? a.checkIn.checkInTime.toDate().getTime() : 0;
+        const bTime = b.checkIn?.checkInTime?.toDate ? b.checkIn.checkInTime.toDate().getTime() : 0;
+        if (aTime && bTime) return bTime - aTime; // Both have check-ins: newest first
+        if (aTime && !bTime) return -1; // a has check-in, b doesn't
+        if (!aTime && bTime) return 1;  // b has check-in, a doesn't
+        return 0;
+      });
+
+      // Find check-ins that are not linked to any service in this operator
+      const linkedServiceIds = new Set(op.services.map(s => s.id));
+      const orphanCheckIns = unmatchedCheckIns.filter(c => !linkedServiceIds.has(c.scheduledServiceId));
+
+      return (
+        <div key={op.opId} className="operator-detail pb-3 border-bottom last:border-0" style={{ borderBottom: '1px solid var(--color-bg)' }}>
+          <div className="flex justify-between items-center mb-3">
+            <h5 className="font-bold text-sm text-primary flex items-center gap-2">
+              👤 {op.name}
+            </h5>
+            <div className="flex gap-3">
+              <span className="text-xs text-muted">
+                📋 Servicios ({op.stats.totalServices})
+              </span>
+              <span className="text-xs text-muted">
+                🕒 Fichajes ({op.checkIns.length})
+              </span>
+              <span className="badge badge-primary">
+                ⏱️ {formatMinutes(op.stats.minutes)}
+              </span>
             </div>
           </div>
-
-          {/* Check-ins sub-list */}
-          <div className="op-checkins bg-gray-50 p-3 rounded-lg border border-gray-100">
-            <p className="text-xs font-bold text-muted mb-2 uppercase tracking-wider flex items-center gap-1">
-              🕒 Fichajes ({op.checkIns.length})
-            </p>
-            <div className="flex flex-col gap-1">
-              {op.checkIns.length === 0 && <span className="text-xs text-muted italic">Sin fichajes</span>}
-              {op.checkIns.map(c => (
-                <div key={c.id} className="flex justify-between items-center text-xs p-1.5 bg-white shadow-sm border border-gray-100 rounded">
-                  <span>
+          
+          <div className="flex flex-col gap-1">
+            {linkedServices.length === 0 && orphanCheckIns.length === 0 && (
+              <span className="text-xs text-muted italic">Sin actividad</span>
+            )}
+            {linkedServices.map(({ service: s, checkIn: c }) => {
+              const companions = (s.companionIds || []).map(id => getOperarioName(id)).filter(Boolean);
+              const hasCompanions = companions.length > 0;
+              return (
+              <div key={s.id} className="flex justify-between items-center text-xs p-2 bg-white shadow-sm border border-gray-100 rounded" style={{ gap: '8px' }}>
+                <span className="font-medium" style={{ minWidth: '120px' }}>{getCommunityName(s.communityId)}</span>
+                <div className="flex items-center gap-1">
+                  {s.status === 'pending' && (
+                    <button 
+                      className="btn btn-ghost btn-xs p-0 px-1" 
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if(confirm('¿Marcar este servicio como completado manualmente?')) {
+                          await updateScheduledServiceStatus(s.id, 'completed');
+                          loadReport();
+                        }
+                      }}
+                      style={{ color: 'var(--color-primary)' }}
+                      title="Completar manual"
+                    >
+                      ✓
+                    </button>
+                  )}
+                  <span className={`badge ${s.status === 'completed' ? 'badge-success' : s.status === 'PENDING' || s.status === 'pending' ? 'badge-warning' : 'badge-info'}`} style={{ transform: 'scale(0.85)' }}>
+                    {s.status === 'completed' ? 'COMPLETADO' : s.status === 'pending' ? 'PENDING' : s.status.toUpperCase()}
+                  </span>
+                </div>
+                <span style={{ minWidth: '100px', textAlign: 'center' }} title={hasCompanions ? `Con: ${companions.join(', ')}` : 'Solo'}>
+                  {hasCompanions ? (
+                    <span className="badge" style={{ background: 'var(--color-primary-light, #e0e7ff)', color: 'var(--color-primary)', transform: 'scale(0.85)', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                      👥 {companions.map(n => n.split(' ')[0]).join(', ')}
+                    </span>
+                  ) : (
+                    <span className="badge" style={{ background: 'var(--color-bg, #f3f4f6)', color: 'var(--text-muted)', transform: 'scale(0.85)' }}>👤 Solo</span>
+                  )}
+                </span>
+                {c ? (
+                  <span style={{ minWidth: '110px', textAlign: 'center' }}>
                     <span className="text-success">{c.checkInTime?.toDate ? format(c.checkInTime.toDate(), 'HH:mm') : '--'}</span>
                     {' → '}
                     <span className={c.checkOutTime ? 'text-danger' : 'text-primary'}>
                       {c.checkOutTime?.toDate ? format(c.checkOutTime.toDate(), 'HH:mm') : 'Activo'}
                     </span>
                   </span>
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-primary">{formatMinutes(c.durationMinutes)}</span>
+                ) : (
+                  <span className="text-muted italic" style={{ minWidth: '110px', textAlign: 'center' }}>Sin fichaje</span>
+                )}
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-primary" style={{ minWidth: '45px', textAlign: 'right' }}>{c ? formatMinutes(c.durationMinutes) : '--'}</span>
+                  <button 
+                    className="btn btn-ghost btn-xs p-0 px-1" 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleServiceDelete(s.id);
+                    }}
+                    style={{ color: 'var(--color-danger)' }}
+                    title="Eliminar servicio"
+                  >
+                    🗑️
+                  </button>
+                  {c && (
                     <button 
                       className="btn btn-ghost btn-xs p-0 px-1" 
                       onClick={(e) => {
@@ -323,18 +361,53 @@ export default function ReportsPage() {
                         handleCheckInDelete(c.id);
                       }}
                       style={{ color: 'var(--color-danger)' }}
-                      title="Eliminar"
+                      title="Eliminar fichaje"
                     >
                       🗑️
                     </button>
-                  </div>
+                  )}
                 </div>
-              ))}
-            </div>
+              </div>
+              );
+            })}
+
+            {/* Orphan check-ins: fichajes sin servicio vinculado */}
+            {orphanCheckIns.length > 0 && (
+              <>
+                <p className="text-xs text-muted mt-2 mb-1 italic">Fichajes sin servicio vinculado:</p>
+                {orphanCheckIns.map(c => (
+                  <div key={c.id} className="flex justify-between items-center text-xs p-2 bg-yellow-50 shadow-sm border border-yellow-200 rounded" style={{ gap: '8px' }}>
+                    <span className="font-medium text-muted" style={{ minWidth: '120px' }}>{getCommunityName(c.communityId)}</span>
+                    <span className="badge badge-warning" style={{ transform: 'scale(0.85)' }}>SIN VINCULAR</span>
+                    <span style={{ minWidth: '110px', textAlign: 'center' }}>
+                      <span className="text-success">{c.checkInTime?.toDate ? format(c.checkInTime.toDate(), 'HH:mm') : '--'}</span>
+                      {' → '}
+                      <span className={c.checkOutTime ? 'text-danger' : 'text-primary'}>
+                        {c.checkOutTime?.toDate ? format(c.checkOutTime.toDate(), 'HH:mm') : 'Activo'}
+                      </span>
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-primary" style={{ minWidth: '45px', textAlign: 'right' }}>{formatMinutes(c.durationMinutes)}</span>
+                      <button 
+                        className="btn btn-ghost btn-xs p-0 px-1" 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCheckInDelete(c.id);
+                        }}
+                        style={{ color: 'var(--color-danger)' }}
+                        title="Eliminar fichaje"
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
           </div>
         </div>
-      </div>
-    ));
+      );
+    });
   }
 
   function getCommunityName(id) {
@@ -690,6 +763,7 @@ export default function ReportsPage() {
                       <th>Fecha</th>
                       <th>Comunidad</th>
                       <th>Operario</th>
+                      <th>Equipo</th>
                       <th>Estado</th>
                       <th className="text-right">Acciones</th>
                     </tr>
@@ -707,6 +781,15 @@ export default function ReportsPage() {
                         <td className="text-sm">{s.scheduledDate?.toDate ? format(s.scheduledDate.toDate(), 'dd/MM/yyyy', { locale: es }) : '—'}</td>
                         <td className="font-semibold text-sm">{getCommunityName(s.communityId)}</td>
                         <td className="text-sm">{getOperarioName(s.assignedUserId)}</td>
+                        <td className="text-sm">
+                          {(s.companionIds && s.companionIds.length > 0) ? (
+                            <span className="badge" style={{ background: 'var(--color-primary-light, #e0e7ff)', color: 'var(--color-primary)', display: 'inline-flex', alignItems: 'center', gap: '3px' }} title={s.companionIds.map(id => getOperarioName(id)).join(', ')}>
+                              👥 {s.companionIds.map(id => getOperarioName(id).split(' ')[0]).join(', ')}
+                            </span>
+                          ) : (
+                            <span className="badge" style={{ background: 'var(--color-bg, #f3f4f6)', color: 'var(--text-muted)' }}>👤 Solo</span>
+                          )}
+                        </td>
                         <td className="text-right flex items-center justify-end gap-2">
                           {s.status === 'pending' && (
                             <>
@@ -751,7 +834,7 @@ export default function ReportsPage() {
                       </tr>
                     ))}
                     {services.length === 0 && (
-                      <tr><td colSpan="6" className="text-center text-muted p-6">Sin datos para este rango</td></tr>
+                      <tr><td colSpan="7" className="text-center text-muted p-6">Sin datos para este rango</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -914,6 +997,7 @@ export default function ReportsPage() {
       onClose={() => setTransferModal({ open: false, service: null })}
       onConfirm={handleAdminTransfer}
       loading={actionLoading}
+      isAdmin={true}
       title="Reasignar Servicio"
     />
   </>

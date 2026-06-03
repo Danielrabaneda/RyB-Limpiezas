@@ -4,7 +4,7 @@ import { getActiveWorkday } from '../../services/workdayService';
 import { getScheduledServicesForDate } from '../../services/scheduleService';
 import { getCommunity } from '../../services/communityService';
 import { getActiveCheckIn } from '../../services/checkInService';
-import { getDistance, requestNotificationPermission, sendNotification } from '../../utils/geolocation';
+import { getDistance, sendNotification } from '../../utils/geolocation';
 import { createSystemNotification } from '../../services/notificationService';
 import { format } from 'date-fns';
 
@@ -12,6 +12,7 @@ const CHECK_INTERVAL = 30 * 1000; // 30s para ahorrar batería, pero reactivo
 const PROXIMITY_RADIUS_ENTRY = 20; // Reducido a 20m por petición del usuario
 const PROXIMITY_RADIUS_EXIT = 40; // Reducido a 40m (doble del radio de entrada)
 const RE_NOTIFY_INTERVAL_MS = 3 * 60 * 1000; // Re-notificar cada 3 minutos si sigue cerca
+const EXIT_CONFIRM_DELAY_MS = 5 * 60 * 1000; // 5 minutos para confirmar salida
 
 /**
  * Obtiene la lista de serviceIds completados hoy desde localStorage.
@@ -66,7 +67,7 @@ export default function GeolocationTracker() {
       localStorage.removeItem('tracker_debug_logs');
       localStorage.removeItem('completed_services_today');
       Object.keys(localStorage).forEach(key => {
-        if (key.startsWith('detected_entry_') || key.startsWith('detected_exit_')) {
+        if (key.startsWith('detected_entry_') || key.startsWith('detected_exit_') || key.startsWith('detected_exit_pending_')) {
           localStorage.removeItem(key);
         }
       });
@@ -74,7 +75,7 @@ export default function GeolocationTracker() {
     }
     // ----------------------------------------
 
-    requestNotificationPermission();
+
 
     const processPosition = async (position) => {
       try {
@@ -123,39 +124,71 @@ export default function GeolocationTracker() {
         }
         localStorage.setItem('tracker_debug_logs', JSON.stringify(trackerLogs));
 
-        // 4. Si no hay jornada, no enviamos notificaciones pero ya hemos logueado la distancia
-        if (!workday) {
-          console.log("[Tracker] Sin jornada activa - no se envían notificaciones");
-          return;
-        }
+
 
         // --- LÓGICA DE DETECCIÓN ---
 
-        // CASO A: Trabajando en un servicio (Detectar SALIDA)
+        // CASO A: Trabajando en un servicio (Detectar SALIDA con confirmación de 5 min)
         if (checkIn) {
           const activeSvc = servicesWithDistance.find(s => s.id === checkIn.scheduledServiceId);
           if (activeSvc) {
             const isInside = activeSvc.distance <= PROXIMITY_RADIUS_EXIT;
             const previousState = lastStateRef.current[activeSvc.id] || 'INSIDE';
+            const pendingKey = `detected_exit_pending_${activeSvc.id}`;
+            const confirmedKey = `detected_exit_${activeSvc.id}`;
 
-            if (!isInside && previousState === 'INSIDE') {
-              console.log("[Tracker] SALIDA DETECTADA");
-              lastStateRef.current[activeSvc.id] = 'OUTSIDE';
-              const now = new Date().toISOString();
-              
-              localStorage.setItem(`detected_exit_${activeSvc.id}`, now);
-              
-              const title = `🏃 Has salido de ${activeSvc.communityName}`;
-              const body = `Se ha detectado tu salida. ¿Quieres finalizar el servicio?`;
+            if (!isInside) {
+              if (previousState === 'INSIDE') {
+                // Primera detección de salida → guardar como PENDING
+                console.log("[Tracker] SALIDA DETECTADA - Iniciando espera de 5 minutos para confirmar");
+                lastStateRef.current[activeSvc.id] = 'OUTSIDE';
+                const now = new Date().toISOString();
+                
+                localStorage.setItem(pendingKey, JSON.stringify({
+                  exitTime: now,
+                  firstDetectedAt: Date.now()
+                }));
+              } else {
+                // Ya estaba fuera (OUTSIDE) → comprobar si han pasado 5 min
+                const pendingRaw = localStorage.getItem(pendingKey);
+                if (pendingRaw && !localStorage.getItem(confirmedKey)) {
+                  try {
+                    const pending = JSON.parse(pendingRaw);
+                    const elapsed = Date.now() - pending.firstDetectedAt;
+                    
+                    if (elapsed >= EXIT_CONFIRM_DELAY_MS) {
+                      // ¡Confirmado! Han pasado 5 min fuera → promover a confirmed
+                      console.log("[Tracker] SALIDA CONFIRMADA tras 5 minutos fuera");
+                      localStorage.setItem(confirmedKey, pending.exitTime);
+                      localStorage.removeItem(pendingKey);
+                      
+                      const title = `🏃 Salida confirmada de ${activeSvc.communityName}`;
+                      const body = `Llevas 5 min fuera. Puedes finalizar el servicio con la hora de salida detectada.`;
 
-              createSystemNotification(
-                userProfile.uid,
-                title,
-                body,
-                'warning',
-                activeSvc.id
-              );
-            } else if (isInside) {
+                      createSystemNotification(
+                        userProfile.uid,
+                        title,
+                        body,
+                        'warning',
+                        activeSvc.id
+                      );
+                    } else {
+                      const remaining = Math.ceil((EXIT_CONFIRM_DELAY_MS - elapsed) / 1000);
+                      console.log(`[Tracker] Esperando confirmación de salida... ${remaining}s restantes`);
+                    }
+                  } catch (e) {
+                    console.error("[Tracker] Error parsing pending exit:", e);
+                    localStorage.removeItem(pendingKey);
+                  }
+                }
+              }
+            } else {
+              // Ha vuelto a entrar → cancelar pending si existía
+              if (previousState === 'OUTSIDE') {
+                console.log("[Tracker] Ha vuelto a entrar - Cancelando salida pendiente");
+                localStorage.removeItem(pendingKey);
+                // NO limpiamos confirmed si ya se confirmó previamente (usuario puede seguir usándolo)
+              }
               lastStateRef.current[activeSvc.id] = 'INSIDE';
             }
           }

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { getOperarios } from '../services/authService';
 
-export default function TransferModal({ isOpen, onClose, onConfirm, title, loading: actionLoading, excludeUserId }) {
+export default function TransferModal({ isOpen, onClose, onConfirm, title, loading: actionLoading, excludeUserId, isAdmin = false }) {
   const [operarios, setOperarios] = useState([]);
   const [selectedOp, setSelectedOp] = useState('');
   const [loading, setLoading] = useState(true);
@@ -38,7 +38,9 @@ export default function TransferModal({ isOpen, onClose, onConfirm, title, loadi
         <div className="modal-body">
           <p className="text-sm text-muted mb-4">
             Selecciona al compañero que recibirá este trabajo. 
-            El administrador recibirá un aviso para validar el traspaso.
+            {isAdmin 
+              ? ' Este traspaso se aplicará de forma inmediata en el calendario.' 
+              : ' El administrador recibirá un aviso para validar el traspaso.'}
           </p>
           
           <div className="form-group">

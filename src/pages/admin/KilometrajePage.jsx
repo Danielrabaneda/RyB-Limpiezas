@@ -5,7 +5,7 @@ import { getCommunities } from '../../services/communityService';
 import { getOperarios } from '../../services/authService';
 import { getWorkdaysForAdmin } from '../../services/workdayService';
 import { calculateDailyMileage } from '../../services/mileageService';
-import { format, subDays } from 'date-fns';
+import { format, subDays, startOfWeek, endOfWeek, isPast, isSameDay } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 export default function KilometrajePage() {
@@ -19,7 +19,28 @@ export default function KilometrajePage() {
   const [mileageData, setMileageData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [recalculating, setRecalculating] = useState(false);
-  const [expandedRow, setExpandedRow] = useState(null);
+  const [expandedWeeks, setExpandedWeeks] = useState(new Set());
+  const [expandedDays, setExpandedDays] = useState(new Set());
+
+  // Auto-expand current week on data load
+  useEffect(() => {
+    if (mileageData.length > 0) {
+      const today = new Date();
+      const start = startOfWeek(today, { weekStartsOn: 1 });
+      const end = endOfWeek(today, { weekStartsOn: 1 });
+      const currentWeekKey = `${format(start, 'yyyy-MM-dd')}_${format(end, 'yyyy-MM-dd')}`;
+      
+      const newExpanded = new Set(expandedWeeks);
+      newExpanded.add(currentWeekKey);
+      setExpandedWeeks(newExpanded);
+      
+      // Also expand today
+      const todayKey = format(today, 'yyyy-MM-dd');
+      const newDays = new Set(expandedDays);
+      newDays.add(todayKey);
+      setExpandedDays(newDays);
+    }
+  }, [mileageData.length]);
 
   useEffect(() => {
     loadBaseData();
@@ -56,7 +77,6 @@ export default function KilometrajePage() {
       results = results.filter(r => (r.totalKm || 0) > 0);
       
       setMileageData(results);
-      setExpandedRow(null);
     } catch (err) {
       console.error('[Kilometraje] Error cargando informe:', err);
     } finally {
@@ -140,6 +160,269 @@ export default function KilometrajePage() {
   const totalTramos = mileageData.reduce((acc, d) => acc + (d.totalTramos || 0), 0);
   const totalSospechosos = mileageData.reduce((acc, d) => acc + (d.tramosSospechosos || 0), 0);
 
+  const toggleWeek = (id) => {
+    const newSet = new Set(expandedWeeks);
+    if (newSet.has(id)) newSet.delete(id);
+    else newSet.add(id);
+    setExpandedWeeks(newSet);
+  };
+
+  const toggleDay = (id) => {
+    const newSet = new Set(expandedDays);
+    if (newSet.has(id)) newSet.delete(id);
+    else newSet.add(id);
+    setExpandedDays(newSet);
+  };
+
+  // Hierarchical Grouping (Week -> Day -> Operario)
+  const hierarchicalData = (() => {
+    const groups = {};
+
+    const getWeekKey = (date) => {
+      const start = startOfWeek(date, { weekStartsOn: 1 });
+      const end = endOfWeek(date, { weekStartsOn: 1 });
+      return `${format(start, 'yyyy-MM-dd')}_${format(end, 'yyyy-MM-dd')}`;
+    };
+
+    const parseDate = (d) => d?.toDate ? d.toDate() : new Date(d);
+
+    const initOp = (weekKey, dayKey, opId, opName) => {
+      if (!groups[weekKey]) {
+        const [startStr, endStr] = weekKey.split('_');
+        const startDateObj = new Date(startStr);
+        const endDateObj = new Date(endStr);
+        groups[weekKey] = {
+          weekId: weekKey,
+          label: `Semana ${format(startDateObj, 'dd/MM')} - ${format(endDateObj, 'dd/MM')}`,
+          days: {},
+          stats: { totalKm: 0, totalTramos: 0, tramosSospechosos: 0, count: 0 },
+          isComplete: isPast(endDateObj) && !isSameDay(endDateObj, new Date())
+        };
+      }
+      if (!groups[weekKey].days[dayKey]) {
+        const dayDate = new Date(dayKey);
+        groups[weekKey].days[dayKey] = {
+          dayId: dayKey,
+          label: format(dayDate, "EEEE d 'de' MMMM", { locale: es }),
+          date: dayDate,
+          operators: {},
+          stats: { totalKm: 0, totalTramos: 0, tramosSospechosos: 0, count: 0 }
+        };
+      }
+      if (!groups[weekKey].days[dayKey].operators[opId]) {
+        groups[weekKey].days[dayKey].operators[opId] = {
+          opId,
+          name: opName,
+          records: [],
+          stats: { totalKm: 0 }
+        };
+      }
+      return groups[weekKey].days[dayKey].operators[opId];
+    };
+
+    mileageData.forEach(record => {
+      const date = parseDate(record.date);
+      if (!date || isNaN(date.getTime())) return;
+      const weekKey = getWeekKey(date);
+      const dayKey = format(date, 'yyyy-MM-dd');
+      const opId = record.userId;
+      const opName = record.userName || getOperarioName(opId);
+
+      const op = initOp(weekKey, dayKey, opId, opName);
+      op.records.push(record);
+      const km = record.totalKm || 0;
+      op.stats.totalKm += km;
+      
+      groups[weekKey].stats.totalKm += km;
+      groups[weekKey].stats.totalTramos += (record.totalTramos || 0);
+      groups[weekKey].stats.tramosSospechosos += (record.tramosSospechosos || 0);
+      groups[weekKey].stats.count++;
+      
+      groups[weekKey].days[dayKey].stats.totalKm += km;
+      groups[weekKey].days[dayKey].stats.totalTramos += (record.totalTramos || 0);
+      groups[weekKey].days[dayKey].stats.tramosSospechosos += (record.tramosSospechosos || 0);
+      groups[weekKey].days[dayKey].stats.count++;
+    });
+
+    return Object.values(groups)
+      .sort((a, b) => b.weekId.localeCompare(a.weekId))
+      .map(week => ({
+        ...week,
+        days: Object.values(week.days)
+          .sort((a, b) => b.dayId.localeCompare(a.dayId))
+          .map(day => ({
+            ...day,
+            operators: Object.values(day.operators).sort((a, b) => a.name.localeCompare(b.name))
+          }))
+      }));
+  })();
+
+  function renderDayRow(day, isRecent = false) {
+    const isExpanded = expandedDays.has(day.dayId);
+    return (
+      <div key={day.dayId} className="day-card mb-3">
+        <div 
+          className={`day-header card ${isExpanded ? 'expanded' : ''}`}
+          onClick={() => toggleDay(day.dayId)}
+          style={{ 
+            padding: 'var(--space-4)',
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center', 
+            cursor: 'pointer',
+            background: 'white',
+            boxShadow: 'var(--shadow-md)',
+            borderRadius: 'var(--radius-lg)',
+            borderLeft: isExpanded ? '6px solid var(--color-accent)' : (isRecent ? '4px solid #e2e8f0' : '1px solid var(--color-border)')
+          }}
+        >
+          <div className="flex items-center gap-3">
+            <div className="day-icon" style={{ fontSize: '1.2rem', background: 'var(--color-bg)', padding: '8px', borderRadius: '50%' }}>
+              🚗
+            </div>
+            <div>
+              <h3 style={{ fontSize: 'var(--font-base)', fontWeight: 700, textTransform: 'capitalize' }}>{day.label}</h3>
+              {isRecent && <span className="text-xs text-accent font-bold">Esta Semana</span>}
+            </div>
+          </div>
+          <div className="day-stats flex gap-4 text-sm font-semibold">
+            <span title="Km Totales" style={{ color: 'var(--color-primary)' }}>
+              📏 {day.stats.totalKm.toFixed(1)} km
+            </span>
+            {day.stats.tramosSospechosos > 0 && (
+              <span title="Tramos Sospechosos" className="text-danger">
+                ⚠️ {day.stats.tramosSospechosos}
+              </span>
+            )}
+            <span style={{ color: 'var(--text-muted)' }}>{isExpanded ? '🔽' : '▶️'}</span>
+          </div>
+        </div>
+
+        {isExpanded && (
+          <div className="day-content mt-2 ml-2 flex flex-col gap-4 p-4 bg-white rounded-lg border border-gray-100 shadow-inner">
+            {day.operators.map(op => (
+              <div key={op.opId} className="operator-block border-b last:border-0 pb-4 last:pb-0">
+                {op.records.map((record, rIdx) => (
+                  <div key={record.id || rIdx} className="mb-2">
+                    <div className="flex justify-between items-center mb-3 flex-wrap gap-2">
+                      <h4 className="font-bold text-primary flex items-center gap-2" style={{ margin: 0 }}>
+                        👤 {op.name}
+                      </h4>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-sm" style={{ color: 'var(--color-primary)', fontSize: 'var(--font-md)' }}>
+                          {record.totalKm?.toFixed(1)} km
+                        </span>
+                        {record.type === 'manual' && (
+                          <span className="badge badge-warning" style={{ fontSize: '10px' }}>
+                            MANUAL
+                          </span>
+                        )}
+                        {record.tramosSospechosos > 0 && (
+                          <span className="badge badge-danger" style={{ fontSize: '10px' }}>
+                            ⚠️ {record.tramosSospechosos}
+                          </span>
+                        )}
+                        <button
+                          className="btn btn-ghost btn-xs"
+                          onClick={(e) => { e.stopPropagation(); handleRecalculateDay(record); }}
+                          disabled={recalculating}
+                          title="Recalcular este día"
+                          style={{ padding: '2px 6px' }}
+                        >
+                          🔄
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Route detail */}
+                    <div style={{ 
+                      padding: 'var(--space-4)', 
+                      background: 'var(--bg-subtle)',
+                      borderRadius: 'var(--radius-lg)',
+                      borderLeft: '4px solid var(--color-primary)'
+                    }}>
+                      <div style={{ marginBottom: 'var(--space-3)' }} className="flex justify-between items-center flex-wrap gap-2">
+                        <p className="text-xs text-muted" style={{ margin: 0 }}>
+                          {record.type === 'manual' ? 'Registro Manual' : `${record.totalTramos || 0} tramos`} | Versión: {record.version || 1}
+                        </p>
+                      </div>
+
+                      {record.type === 'manual' ? (
+                        <div className="alert alert-warning text-xs mb-0" style={{ padding: 'var(--space-2) var(--space-3)' }}>
+                          ℹ️ Este kilometraje fue ingresado manualmente por el operario y no dispone de detalle de tramos.
+                        </div>
+                      ) : (!record.tramos || record.tramos.length === 0) ? (
+                        <p className="text-xs text-muted mb-0" style={{ textAlign: 'center' }}>
+                          Sin tramos registrados este día
+                        </p>
+                      ) : (
+                        <div className="flex flex-col gap-2">
+                          {record.tramos.map((tramo, tIdx) => (
+                            <div 
+                              key={tIdx}
+                              style={{
+                                padding: 'var(--space-2) var(--space-3)',
+                                borderRadius: 'var(--radius-md)',
+                                background: tramo.sospechoso 
+                                  ? 'linear-gradient(135deg, #fef2f2, #fee2e2)' 
+                                  : tramo.mismoCentro 
+                                    ? '#f1f5f9'
+                                    : 'white',
+                                border: tramo.sospechoso 
+                                  ? '1px solid #fca5a5' 
+                                  : '1px solid var(--border-light)',
+                                opacity: tramo.mismoCentro ? 0.6 : 1
+                              }}
+                            >
+                              <div className="flex items-center justify-between flex-wrap gap-2">
+                                <div className="font-semibold text-xs text-gray-800">
+                                  {tIdx + 1}. {tramo.origenNombre} → {tramo.destinoNombre}
+                                  {tramo.sospechoso && <span style={{ marginLeft: '0.5rem' }}>⚠️</span>}
+                                  {tramo.mismoCentro && <span className="text-[10px] text-muted" style={{ marginLeft: '0.5rem' }}>(mismo centro)</span>}
+                                  {tramo.esCaminando && <span className="badge badge-success" style={{ marginLeft: '0.5rem', background: '#dcfce7', color: '#166534', fontSize: '9px', padding: '1px 4px' }}>🚶 Caminando</span>}
+                                  {!tramo.mismoCentro && !tramo.esCaminando && !tramo.enCoche && <span className="badge badge-neutral" style={{ marginLeft: '0.5rem', background: '#e2e8f0', color: '#475569', fontSize: '9px', padding: '1px 4px' }}>❌ Sin coche</span>}
+                                </div>
+                              </div>
+                              
+                              {!tramo.mismoCentro && !tramo.esCaminando && (
+                                <div className="flex gap-3 flex-wrap mt-1 text-[10px] text-muted">
+                                  <span>
+                                    🕐 {tramo.horaSalida?.toDate 
+                                      ? format(tramo.horaSalida.toDate(), 'HH:mm')
+                                      : '??'} → {tramo.horaLlegada?.toDate 
+                                      ? format(tramo.horaLlegada.toDate(), 'HH:mm') 
+                                      : '??'} ({tramo.minutosDesplazamiento} min)
+                                  </span>
+                                  <span>📏 {tramo.kmEstimados?.toFixed(1)} km</span>
+                                  <span>🚗 ~{tramo.velocidadEstimada?.toFixed(0)} km/h</span>
+                                  {tramo.sospechoso && (
+                                    <span style={{ color: 'var(--color-danger)', fontWeight: 600 }}>
+                                      ⚠️ SOSPECHOSO
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+
+                              {tramo.esCaminando && (
+                                <div className="text-[10px] text-muted mt-0.5">
+                                  Distancia muy corta ({Math.round(tramo.kmLineaRecta * 1000)}m). Se asume desplazamiento a pie.
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="animate-fadeIn">
       <h2 style={{ fontSize: 'var(--font-2xl)', fontWeight: 800, marginBottom: 'var(--space-6)' }}>🚗 Kilometraje</h2>
@@ -205,160 +488,70 @@ export default function KilometrajePage() {
       {loading ? (
         <div className="flex justify-center p-6"><div className="spinner"></div></div>
       ) : (
-        <div className="card" style={{ padding: 0 }}>
-          <div className="table-container">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Fecha</th>
-                  <th>Operario</th>
-                  <th className="text-right">km Total</th>
-                  <th className="text-center">Tramos</th>
-                  <th className="text-center">⚠️</th>
-                  <th className="text-right">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {mileageData.map((record, idx) => (
-                  <>
-                    <tr 
-                      key={record.id || idx}
-                      onClick={() => setExpandedRow(expandedRow === idx ? null : idx)}
-                      style={{ cursor: 'pointer', transition: 'background 0.15s' }}
-                      className={expandedRow === idx ? 'bg-primary-50' : ''}
-                    >
-                      <td className="font-semibold text-sm">
-                        {format(new Date(record.date), 'dd/MM/yyyy (EEE)', { locale: es })}
-                      </td>
-                      <td className="text-sm">{record.userName || getOperarioName(record.userId)}</td>
-                      <td className="text-right font-semibold" style={{ color: 'var(--color-primary)' }}>
-                        {record.totalKm?.toFixed(1)} km
-                        {record.type === 'manual' && (
-                          <span className="badge badge-warning" style={{ fontSize: '9px', marginLeft: '4px' }}>
-                            MANUAL
-                          </span>
-                        )}
-                      </td>
-                      <td className="text-center text-sm">{record.totalTramos || 0}</td>
-                      <td className="text-center">
-                        {record.tramosSospechosos > 0 
-                          ? <span className="badge badge-danger">⚠️ {record.tramosSospechosos}</span>
-                          : <span className="text-sm text-muted">—</span>
-                        }
-                      </td>
-                      <td className="text-right">
-                        <button
-                          className="btn btn-ghost btn-xs"
-                          onClick={(e) => { e.stopPropagation(); handleRecalculateDay(record); }}
-                          disabled={recalculating}
-                          title="Recalcular este día"
-                        >
-                          🔄
-                        </button>
-                      </td>
-                    </tr>
+        <div className="hierarchical-reports">
+          {hierarchicalData.map(week => {
+            const isCurrentWeek = !week.isComplete;
 
-                    {/* Detalle expandido */}
-                    {expandedRow === idx && (
-                      <tr key={`detail-${idx}`}>
-                        <td colSpan="6" style={{ padding: 0 }}>
-                          <div style={{ 
-                            padding: 'var(--space-4)', 
-                            background: 'var(--bg-subtle)',
-                            borderTop: '2px solid var(--color-primary)',
-                            borderBottom: '2px solid var(--color-primary)'
-                          }}>
-                            <div style={{ marginBottom: 'var(--space-3)' }}>
-                              <h4 style={{ fontWeight: 700, fontSize: 'var(--font-md)', marginBottom: 'var(--space-1)' }}>
-                                📍 Detalle de ruta — {record.userName} — {format(new Date(record.date), 'dd/MM/yyyy')}
-                              </h4>
-                              <p className="text-sm text-muted">
-                                Total: {record.totalKm?.toFixed(1)} km | {record.type === 'manual' ? 'Registro Manual' : `${record.totalTramos} tramos`} | Versión: {record.version || 1}
-                              </p>
-                            </div>
+            if (isCurrentWeek) {
+              // Show days of current week directly
+              return week.days.map(day => renderDayRow(day, true));
+            } else {
+              // Show collapsed week
+              return (
+                <div key={week.weekId} className="week-card mb-4">
+                  <div 
+                    className={`week-header card ${expandedWeeks.has(week.weekId) ? 'expanded' : ''}`}
+                    onClick={() => toggleWeek(week.weekId)}
+                    style={{ 
+                      display: 'flex', 
+                      justifyContent: 'space-between', 
+                      alignItems: 'center', 
+                      cursor: 'pointer',
+                      background: 'var(--color-bg-input)',
+                      borderLeft: expandedWeeks.has(week.weekId) ? '4px solid var(--color-accent)' : '1px solid var(--color-border)',
+                      padding: 'var(--space-4)'
+                    }}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="week-icon" style={{ fontSize: '1.2rem' }}>
+                        {expandedWeeks.has(week.weekId) ? '📂' : '📁'}
+                      </div>
+                      <div>
+                        <h3 style={{ fontSize: 'var(--font-base)', fontWeight: 700 }}>{week.label}</h3>
+                        <span className="text-xs text-muted">Semana Finalizada</span>
+                      </div>
+                    </div>
+                    <div className="week-stats flex gap-4 text-sm font-semibold">
+                      <span title="Días con Registro" style={{ color: 'var(--color-primary)' }}>
+                        📅 {week.stats.count} registros
+                      </span>
+                      <span title="Km Totales" style={{ color: 'var(--color-accent)' }}>
+                        📏 {week.stats.totalKm.toFixed(1)} km
+                      </span>
+                      {week.stats.tramosSospechosos > 0 && (
+                        <span title="Tramos Sospechosos" className="text-danger">
+                          ⚠️ {week.stats.tramosSospechosos}
+                        </span>
+                      )}
+                      <span style={{ color: 'var(--text-muted)' }}>{expandedWeeks.has(week.weekId) ? '🔽' : '▶️'}</span>
+                    </div>
+                  </div>
 
-                            {record.type === 'manual' ? (
-                              <div className="alert alert-warning text-sm">
-                                ℹ️ Este kilometraje fue ingresado manualmente por el operario y no dispone de detalle de tramos.
-                              </div>
-                            ) : (!record.tramos || record.tramos.length === 0) ? (
-                              <p className="text-sm text-muted" style={{ padding: 'var(--space-4)', textAlign: 'center' }}>
-                                Sin tramos registrados este día
-                              </p>
-                            ) : (
-                              <div className="flex flex-col gap-3">
-                                {record.tramos.map((tramo, tIdx) => (
-                                  <div 
-                                    key={tIdx}
-                                    style={{
-                                      padding: 'var(--space-3)',
-                                      borderRadius: 'var(--radius-lg)',
-                                      background: tramo.sospechoso 
-                                        ? 'linear-gradient(135deg, #fef2f2, #fee2e2)' 
-                                        : tramo.mismoCentro 
-                                          ? '#f1f5f9'
-                                          : 'white',
-                                      border: tramo.sospechoso 
-                                        ? '1px solid #fca5a5' 
-                                        : '1px solid var(--border-light)',
-                                      opacity: tramo.mismoCentro ? 0.6 : 1
-                                    }}
-                                  >
-                                    <div className="flex items-center justify-between mb-1">
-                                      <div className="font-semibold text-sm">
-                                        {tIdx + 1}. {tramo.origenNombre} → {tramo.destinoNombre}
-                                        {tramo.sospechoso && <span style={{ marginLeft: '0.5rem' }}>⚠️</span>}
-                                        {tramo.mismoCentro && <span className="text-xs text-muted" style={{ marginLeft: '0.5rem' }}>(mismo centro)</span>}
-                                        {tramo.esCaminando && <span className="badge badge-success" style={{ marginLeft: '0.5rem', background: '#dcfce7', color: '#166534', fontSize: '10px' }}>🚶 Caminando</span>}
-                                        {!tramo.mismoCentro && !tramo.esCaminando && !tramo.enCoche && <span className="badge badge-neutral" style={{ marginLeft: '0.5rem', background: '#e2e8f0', color: '#475569', fontSize: '10px' }}>❌ Sin coche</span>}
-                                      </div>
-                                    </div>
-                                    
-                                    {!tramo.mismoCentro && !tramo.esCaminando && (
-                                      <div className="flex gap-4 flex-wrap" style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>
-                                        <span>
-                                          🕐 {tramo.horaSalida?.toDate 
-                                            ? format(tramo.horaSalida.toDate(), 'HH:mm')
-                                            : '??'} → {tramo.horaLlegada?.toDate 
-                                            ? format(tramo.horaLlegada.toDate(), 'HH:mm') 
-                                            : '??'} ({tramo.minutosDesplazamiento} min)
-                                        </span>
-                                        <span>📏 {tramo.kmEstimados?.toFixed(1)} km</span>
-                                        <span>🚗 ~{tramo.velocidadEstimada?.toFixed(0)} km/h</span>
-                                        {tramo.sospechoso && (
-                                          <span style={{ color: 'var(--color-danger)', fontWeight: 600 }}>
-                                            ⚠️ SOSPECHOSO
-                                          </span>
-                                        )}
-                                      </div>
-                                    )}
+                  {expandedWeeks.has(week.weekId) && (
+                    <div className="week-content mt-2 ml-4 flex flex-col gap-2">
+                      {week.days.map(day => renderDayRow(day, false))}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+          })}
 
-                                    {tramo.esCaminando && (
-                                      <div className="text-xs text-muted">
-                                        Distancia muy corta ({Math.round(tramo.kmLineaRecta * 1000)}m). Se asume desplazamiento a pie.
-                                      </div>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </>
-                ))}
-
-                {mileageData.length === 0 && (
-                  <tr>
-                    <td colSpan="6" className="text-center text-muted p-6">
-                      Sin datos de kilometraje para este periodo. Los km se calculan automáticamente cuando el operario activa el modo coche y finaliza su jornada.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          {hierarchicalData.length === 0 && (
+            <div className="card text-center p-12 text-muted italic">
+              📭 Sin datos de kilometraje para este periodo. Los km se calculan automáticamente cuando el operario activa el modo coche y finaliza su jornada.
+            </div>
+          )}
         </div>
       )}
 

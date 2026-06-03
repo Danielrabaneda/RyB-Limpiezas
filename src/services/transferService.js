@@ -25,6 +25,8 @@ export async function rescheduleService({ serviceId, newDate, requesterRole, use
   if (requesterRole === 'admin') {
     batch.update(serviceRef, {
       scheduledDate: Timestamp.fromDate(startOfNewDate),
+      originalDate: serviceData.originalDate || serviceData.scheduledDate,
+      isRescheduled: true,
       updatedAt: serverTimestamp()
     });
   } else {
@@ -42,7 +44,8 @@ export async function rescheduleService({ serviceId, newDate, requesterRole, use
     
     batch.update(serviceRef, {
       scheduledDate: Timestamp.fromDate(startOfNewDate),
-      originalDate: serviceData.scheduledDate,
+      originalDate: serviceData.originalDate || serviceData.scheduledDate,
+      isRescheduled: true,
       rescheduleId: transferRef.id,
       rescheduleValidated: false,
       updatedAt: serverTimestamp()
@@ -102,7 +105,9 @@ export async function transferDay({ date, fromUserId, toUserId, requesterRole })
   );
 
   const snap = await getDocs(q);
-  if (snap.empty) return null;
+  if (snap.empty) {
+    throw new Error('No hay servicios pendientes asignados a este operario para el día seleccionado.');
+  }
 
   // Si es operario, validar que NINGÚN servicio haya comenzado
   if (requesterRole !== 'admin') {
@@ -158,7 +163,9 @@ export async function transferWeek({ dateInWeek, fromUserId, toUserId, requester
   );
 
   const snap = await getDocs(q);
-  if (snap.empty) return null;
+  if (snap.empty) {
+    throw new Error('No hay servicios pendientes asignados a este operario para la semana seleccionada.');
+  }
 
   // Si es operario, validar que NINGÚN servicio de la semana haya comenzado
   if (requesterRole !== 'admin') {

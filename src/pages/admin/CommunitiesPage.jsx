@@ -264,6 +264,7 @@ export default function CommunitiesPage() {
       flexibleWeek: task.flexibleWeek || false,
       isGarage: task.isGarage || false,
       printColor: task.printColor || '#ef4444',
+      isUrgent: task.isUrgent || false,
     });
     setShowTaskModal(true);
   }
@@ -276,6 +277,7 @@ export default function CommunitiesPage() {
       startDate: '', endDate: '', weekOfMonth: '', monthOfYear: '', assignedUserId: '', flexibleWeek: false,
       isGarage: false,
       printColor: '#ef4444',
+      isUrgent: false,
     });
     setShowTaskModal(true);
   }
@@ -299,6 +301,7 @@ export default function CommunitiesPage() {
       flexibleWeek: taskForm.flexibleWeek || false,
       isGarage: taskForm.isGarage || false,
       printColor: taskForm.printColor || '#ef4444',
+      isUrgent: taskForm.isUrgent || false,
     };
 
     try {
@@ -719,6 +722,7 @@ export default function CommunitiesPage() {
                         <div className="font-semibold text-sm flex items-center gap-2">
                           <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: task.printColor || '#ef4444', display: 'inline-block', flexShrink: 0, border: '1px solid rgba(0,0,0,0.15)' }}></span>
                           {task.taskName}
+                          {task.isUrgent && <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-xs font-bold border border-red-200 uppercase tracking-wider animate-pulse">🚨 Urgente</span>}
                           {task.assignedUserId && <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs font-medium border border-purple-200">👤 {operarios.find(o => o.uid === task.assignedUserId)?.name || 'Asignado'}</span>}
                         </div>
                         <div className="text-xs text-muted">
@@ -1033,6 +1037,21 @@ export default function CommunitiesPage() {
                 </div>
 
                 <div className="form-group">
+                  <label className="flex items-center gap-3 cursor-pointer p-3 rounded-xl border" style={{ background: taskForm.isUrgent ? '#fff5f5' : '#f8fafc', borderColor: taskForm.isUrgent ? '#fecaca' : '#e2e8f0', transition: 'all 0.2s ease' }}>
+                    <input 
+                      type="checkbox" 
+                      style={{ width: '20px', height: '20px', cursor: 'pointer' }}
+                      checked={taskForm.isUrgent || false}
+                      onChange={e => setTaskForm(f => ({...f, isUrgent: e.target.checked}))}
+                    />
+                    <div>
+                      <span className="font-bold block" style={{ color: taskForm.isUrgent ? '#991b1b' : '#0f172a' }}>🚨 Marcar como Urgente (Rojo e Intermitente)</span>
+                      <span className="text-xs text-slate-500">Si se marca, la tarea aparecerá en rojo y con brillo parpadeante en la app móvil.</span>
+                    </div>
+                  </label>
+                </div>
+
+                <div className="form-group">
                   <label className="form-label">Asignar a operario (Opcional)</label>
                   <select className="form-select" value={taskForm.assignedUserId} onChange={e => setTaskForm(f => ({...f, assignedUserId: e.target.value}))}>
                     <option value="">— Cualquiera asignado a la comunidad —</option>
@@ -1248,6 +1267,7 @@ export default function CommunitiesPage() {
         onClose={() => setReassignModal({ open: false, task: null })}
         onConfirm={handlePermanentReassign}
         loading={actionLoading}
+        isAdmin={true}
         title={`Reasignar PERMANENTEMENTE: ${reassignModal.task?.taskName}`}
         excludeUserId={reassignModal.task?.assignedUserId}
       />

@@ -7,6 +7,7 @@ export default function ServiceItem({ service, communityName, isOp = false, onTr
   // Encontrar el nombre de la tarea específica
   const specificTask = allTasks.find(t => t.id === service.communityTaskId);
   const taskName = service.taskName || specificTask?.taskName || 'Servicio de Limpieza';
+  const isUrgent = service.isUrgent || specificTask?.isUrgent || false;
 
   const statusClass = isCompleted ? 'completed' : isInProgress ? 'in-progress' : '';
 
@@ -69,7 +70,9 @@ export default function ServiceItem({ service, communityName, isOp = false, onTr
       </div>
 
       <div className="service-tasks">
-        <span className="service-task-chip flex items-center gap-1">📋 {taskName}</span>
+        <span className={`service-task-chip flex items-center gap-1 ${isUrgent ? 'urgent' : ''}`}>
+          {isUrgent ? '🚨' : '📋'} {taskName}
+        </span>
       </div>
     </div>
   );
