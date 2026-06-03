@@ -369,7 +369,7 @@ export async function findLastActivityForUser(userId, date, workdayId = null) {
     const start = Timestamp.fromDate(startOfDay(date));
     const end = Timestamp.fromDate(endOfDay(date));
     
-    // 1. Get check-ins
+    // 1. Get check-ins where user is the titular
     const qCheckIns = query(
       collection(db, 'checkIns'),
       where('userId', '==', userId),
@@ -413,6 +413,79 @@ export async function findLastActivityForUser(userId, date, workdayId = null) {
           }
         });
       }
+    }
+
+    // 3. Check services where the user was a companion (acompañante)
+    // This covers the case where the user accompanied another operario
+    try {
+      const qCompanionServices = query(
+        collection(db, 'scheduledServices'),
+        where('companionIds', 'array-contains', userId)
+      );
+      const snapCompanion = await getDocs(qCompanionServices);
+      
+      for (const docSnap of snapCompanion.docs) {
+        const svcData = docSnap.data();
+        
+        // Filter to today's services only
+        const svcDate = svcData.scheduledDate?.toDate ? svcData.scheduledDate.toDate() : new Date(svcData.scheduledDate);
+        if (!isSameDay(svcDate, date)) continue;
+        
+        // Check companionLogs for this user's leftAt time
+        const companionLogs = svcData.companionLogs || [];
+        for (const log of companionLogs) {
+          if (log.userId !== userId) continue;
+          
+          if (log.leftAt) {
+            const leftDate = typeof log.leftAt === 'string' ? new Date(log.leftAt) : (log.leftAt?.toDate ? log.leftAt.toDate() : new Date(log.leftAt));
+            if (!lastTime || leftDate > lastTime) lastTime = leftDate;
+          }
+          if (log.joinedAt) {
+            const joinedDate = typeof log.joinedAt === 'string' ? new Date(log.joinedAt) : (log.joinedAt?.toDate ? log.joinedAt.toDate() : new Date(log.joinedAt));
+            if (!lastTime || joinedDate > lastTime) lastTime = joinedDate;
+          }
+        }
+
+        // Also check the service's updatedAt / completedAt if the service is completed
+        if (svcData.status === 'completed' && svcData.updatedAt) {
+          const updatedDate = svcData.updatedAt?.toDate ? svcData.updatedAt.toDate() : new Date(svcData.updatedAt);
+          if (isSameDay(updatedDate, date)) {
+            if (!lastTime || updatedDate > lastTime) lastTime = updatedDate;
+          }
+        }
+      }
+
+      // 4. Check check-ins from the titular of services where this user was companion
+      // The titular's check-out represents the companion's activity end too
+      const titularIdsFromCompanionServices = new Set();
+      for (const docSnap of snapCompanion.docs) {
+        const svcData = docSnap.data();
+        const svcDate = svcData.scheduledDate?.toDate ? svcData.scheduledDate.toDate() : new Date(svcData.scheduledDate);
+        if (!isSameDay(svcDate, date) || !svcData.assignedUserId) continue;
+        titularIdsFromCompanionServices.add(svcData.assignedUserId);
+      }
+
+      for (const titularId of titularIdsFromCompanionServices) {
+        const qTitularCheckIns = query(
+          collection(db, 'checkIns'),
+          where('userId', '==', titularId),
+          where('checkInTime', '>=', start),
+          where('checkInTime', '<=', end)
+        );
+        const snapTitular = await getDocs(qTitularCheckIns);
+        for (const ciDoc of snapTitular.docs) {
+          const ci = ciDoc.data();
+          const time = ci.checkOutTime || ci.checkInTime;
+          if (time) {
+            const dateObj = time.toDate ? time.toDate() : new Date(time);
+            if (!lastTime || dateObj > lastTime) {
+              lastTime = dateObj;
+            }
+          }
+        }
+      }
+    } catch (companionErr) {
+      console.warn('[findLastActivity] Error checking companion services:', companionErr);
     }
 
     return lastTime;

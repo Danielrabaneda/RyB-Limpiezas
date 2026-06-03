@@ -1203,24 +1203,24 @@ export default function TodayPage() {
                   ✨ ¡Todas tus tareas del día están completadas!
                 </div>
               ) : null}
-              <p className="text-sm text-muted mt-3">
-                Detectamos que tu última actividad registrada fue a las <span className="font-bold text-dark">{retroactiveModal.suggestedTimeStr}</span>.
+              <p className="text-sm mt-3" style={{ color: '#334155' }}>
+                Detectamos que tu última actividad registrada fue a las <span className="font-bold" style={{ color: '#0f172a' }}>{retroactiveModal.suggestedTimeStr}</span>.
               </p>
-              <p className="text-xs text-muted mt-1">
+              <p className="text-xs mt-1" style={{ color: '#475569', lineHeight: 1.5 }}>
                 Parece que han pasado más de 30 minutos desde entonces. ¿Quieres finalizar tu jornada a esa hora para evitar registrar horas de más y corregir el kilometraje del coche?
               </p>
             </div>
 
             <div className="p-4 bg-slate-50 rounded-xl mb-6 border border-slate-200">
               <div className="flex justify-between items-center text-sm mb-3">
-                <span className="text-muted flex items-center gap-1">⏰ Hora sugerida (último trabajo):</span>
-                <span className="font-bold text-emerald-600" style={{ fontSize: '1.1rem' }}>
+                <span className="flex items-center gap-1" style={{ color: '#475569', fontWeight: 500 }}>⏰ Hora sugerida (último trabajo):</span>
+                <span className="font-bold text-emerald-600" style={{ fontSize: '1.3rem' }}>
                   {retroactiveModal.suggestedTimeStr}
                 </span>
               </div>
               <div className="flex justify-between items-center text-sm border-t border-slate-200 pt-3">
-                <span className="text-muted">🕒 Hora actual:</span>
-                <span className="font-semibold text-slate-500">
+                <span style={{ color: '#475569', fontWeight: 500 }}>🕒 Hora actual:</span>
+                <span className="font-semibold" style={{ color: '#64748b', fontSize: '1.1rem' }}>
                   {retroactiveModal.actualTimeStr}
                 </span>
               </div>
