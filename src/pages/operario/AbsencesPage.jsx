@@ -139,7 +139,7 @@ export default function AbsencesPage() {
             </select>
           </div>
 
-          <div className="grid grid-2 gap-4" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <div className="form-group">
               <label className="form-label text-xs font-bold">Fecha Inicio</label>
               <input 
