@@ -38,6 +38,16 @@ const getCurrentLocation = () => {
   });
 };
 
+const getOrigDateStr = (originalDate) => {
+  if (!originalDate) return '';
+  try {
+    const dateObj = originalDate.toDate ? originalDate.toDate() : new Date(originalDate);
+    return format(dateObj, 'dd/MM');
+  } catch (e) {
+    return '';
+  }
+};
+
 export default function TodayPage() {
   const { userProfile } = useAuth();
   const { notifications, unreadCount, dismissAll } = useNotifications();
@@ -1126,6 +1136,16 @@ export default function TodayPage() {
                     {svc.isCompanion && (
                       <span style={{ fontSize: '10px', background: '#e0f2fe', color: '#0369a1', padding: '2px 6px', borderRadius: '12px', border: '1px solid currentColor', fontWeight: 'bold' }}>
                         🤝 Apoyo prestado
+                      </span>
+                    )}
+                    {svc.isTransferred && (
+                      <span style={{ fontSize: '10px', background: '#fef2f2', color: '#ef4444', padding: '2px 6px', borderRadius: '12px', border: '1px solid currentColor', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
+                        ↪️ Traspasado{svc.transferValidated === false ? ' (Pte.)' : ''}
+                      </span>
+                    )}
+                    {svc.isRescheduled && (
+                      <span style={{ fontSize: '10px', background: '#faf5ff', color: '#7c3aed', padding: '2px 6px', borderRadius: '12px', border: '1px solid currentColor', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
+                        📅 Cambiado{getOrigDateStr(svc.originalDate) ? ` (era ${getOrigDateStr(svc.originalDate)})` : ''}{svc.rescheduleValidated === false ? ' (Pte.)' : ''}
                       </span>
                     )}
                   </div>

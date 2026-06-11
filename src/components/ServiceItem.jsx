@@ -1,4 +1,5 @@
 import React from 'react';
+import { format } from 'date-fns';
 
 export default function ServiceItem({ service, communityName, isOp = false, onTransfer, onReschedule, isAdmin, allTasks = [] }) {
   const isCompleted = service.status === 'completed';
@@ -23,21 +24,34 @@ export default function ServiceItem({ service, communityName, isOp = false, onTr
 
   const isGarage = service.isGarage || specificTask?.isGarage;
 
+  const getOrigDateStr = (originalDate) => {
+    if (!originalDate) return '';
+    try {
+      const dateObj = originalDate.toDate ? originalDate.toDate() : new Date(originalDate);
+      return format(dateObj, 'dd/MM');
+    } catch (e) {
+      return '';
+    }
+  };
+  const originalDateStr = getOrigDateStr(service.originalDate);
+
   return (
     <div className={`service-card ${statusClass} ${isGarage ? 'garage' : ''}`}>
       <div className="service-card-header">
         <div>
-          <div className="service-community">{communityName}</div>
-          {service.isTransferred && (
-            <div className="text-[10px] text-amber-600 font-bold mt-1 uppercase tracking-wider">
-              🔄 Traspasado de usuario
-            </div>
-          )}
-          {service.rescheduleValidated === false && (
-            <div className="text-[10px] text-purple-600 font-bold mt-1 uppercase tracking-wider">
-              📅 Cambio de día pte. validación
-            </div>
-          )}
+          <div className="service-community" style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+            {communityName}
+            {service.isTransferred && (
+              <span style={{ fontSize: '9px', background: '#fef2f2', color: '#ef4444', padding: '1px 5px', borderRadius: '12px', border: '1px solid currentColor', fontWeight: 'bold', textTransform: 'none', letterSpacing: 'normal', display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
+                ↪️ Traspasado{service.transferValidated === false ? ' (Pte.)' : ''}
+              </span>
+            )}
+            {service.isRescheduled && (
+              <span style={{ fontSize: '9px', background: '#faf5ff', color: '#7c3aed', padding: '1px 5px', borderRadius: '12px', border: '1px solid currentColor', fontWeight: 'bold', textTransform: 'none', letterSpacing: 'normal', display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
+                📅 Cambiado{originalDateStr ? ` (era ${originalDateStr})` : ''}{service.rescheduleValidated === false ? ' (Pte.)' : ''}
+              </span>
+            )}
+          </div>
         </div>
         {getStatusBadge()}
       </div>
