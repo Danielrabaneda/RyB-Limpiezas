@@ -205,3 +205,35 @@ export async function generateMonthlyDrafts(month, year) {
   
   return count;
 }
+
+// ==================== INVOICE TEMPLATES ====================
+export async function getInvoiceTemplates() {
+  const q = query(collection(db, 'invoice_templates'), orderBy('name', 'asc'));
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+export async function saveInvoiceTemplate(data) {
+  const q = query(collection(db, 'invoice_templates'), where('name', '==', data.name));
+  const snap = await getDocs(q);
+  
+  const templateData = {
+    ...data,
+    updatedAt: serverTimestamp()
+  };
+  
+  if (!snap.empty) {
+    const docRef = doc(db, 'invoice_templates', snap.docs[0].id);
+    await updateDoc(docRef, templateData);
+    return snap.docs[0].id;
+  } else {
+    templateData.createdAt = serverTimestamp();
+    const docRef = await addDoc(collection(db, 'invoice_templates'), templateData);
+    return docRef.id;
+  }
+}
+
+export async function deleteInvoiceTemplate(id) {
+  await deleteDoc(doc(db, 'invoice_templates', id));
+}
+

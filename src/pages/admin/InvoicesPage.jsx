@@ -8,7 +8,10 @@ import {
   deleteInvoice, 
   emitInvoice, 
   updateInvoiceStatus, 
-  generateMonthlyDrafts 
+  generateMonthlyDrafts,
+  getInvoiceTemplates,
+  saveInvoiceTemplate,
+  deleteInvoiceTemplate
 } from '../../services/invoiceService';
 import { getCommunities } from '../../services/communityService';
 import { format } from 'date-fns';
@@ -36,6 +39,25 @@ export default function InvoicesPage() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [previewModal, setPreviewModal] = useState({ open: false, pdfUrl: '' });
+  
+  // Templates and Add Modal states
+  const [templates, setTemplates] = useState([]);
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [addForm, setAddForm] = useState({
+    clientType: 'community', // 'community' or 'manual'
+    selectedCommunityId: '',
+    clientName: '',
+    clientCif: '',
+    clientAddress: '',
+    clientEmail: '',
+    paymentMethod: 'transferencia',
+    items: [{ description: '', quantity: 1, price: 0, total: 0 }],
+    taxRate: 21,
+    year: String(currentYear),
+    month: String(currentMonth),
+    saveAsTemplate: false,
+    templateName: ''
+  });
   
   // Modal states
   const [editModal, setEditModal] = useState({ open: false, invoice: null });
@@ -78,18 +100,29 @@ export default function InvoicesPage() {
   const loadInitialData = async () => {
     setLoading(true);
     try {
-      const [settings, comms] = await Promise.all([
+      const [settings, comms, tmpls] = await Promise.all([
         getBillingSettings(),
-        getCommunities()
+        getCommunities(),
+        getInvoiceTemplates()
       ]);
       setBillingSettings(settings);
       setSettingsForm(settings);
       setCommunities(comms);
+      setTemplates(tmpls);
       await loadInvoices();
     } catch (err) {
       console.error("Error loading initial billing data:", err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadTemplates = async () => {
+    try {
+      const tmpls = await getInvoiceTemplates();
+      setTemplates(tmpls);
+    } catch (err) {
+      console.error("Error loading templates:", err);
     }
   };
 
@@ -238,6 +271,203 @@ export default function InvoicesPage() {
       img.src = event.target.result;
     };
     reader.readAsDataURL(file);
+  };
+
+  // Modal add handlers
+  const handleOpenAddInvoice = () => {
+    setAddForm({
+      clientType: 'community',
+      selectedCommunityId: '',
+      clientName: '',
+      clientCif: '',
+      clientAddress: '',
+      clientEmail: '',
+      paymentMethod: 'transferencia',
+      items: [{ description: '', quantity: 1, price: 0, total: 0 }],
+      taxRate: 21,
+      year: filterYear,
+      month: filterMonth,
+      saveAsTemplate: false,
+      templateName: ''
+    });
+    setAddModalOpen(true);
+  };
+
+  const handleSelectTemplate = (templateId) => {
+    if (!templateId) return;
+    const tmpl = templates.find(t => t.id === templateId);
+    if (!tmpl) return;
+    
+    setAddForm(prev => ({
+      ...prev,
+      clientType: 'manual', // Force manual type to show fields
+      selectedCommunityId: '',
+      clientName: tmpl.client?.name || '',
+      clientCif: tmpl.client?.cif || '',
+      clientAddress: tmpl.client?.billingAddress || '',
+      clientEmail: tmpl.client?.email || '',
+      paymentMethod: tmpl.paymentMethod || 'transferencia',
+      items: tmpl.items ? tmpl.items.map(item => ({ ...item })) : [{ description: '', quantity: 1, price: 0, total: 0 }],
+      taxRate: tmpl.taxRate || 21
+    }));
+  };
+
+  const handleDeleteTemplate = async (templateId) => {
+    if (!templateId) return;
+    if (!confirm('¿Seguro que deseas eliminar esta plantilla frecuente?')) return;
+    
+    setActionLoading(true);
+    try {
+      await deleteInvoiceTemplate(templateId);
+      alert('Plantilla eliminada con éxito.');
+      await loadTemplates();
+    } catch (err) {
+      console.error(err);
+      alert('Error al eliminar plantilla: ' + err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleSelectCommunity = (commId) => {
+    if (!commId) {
+      setAddForm(prev => ({
+        ...prev,
+        selectedCommunityId: '',
+        clientName: '',
+        clientCif: '',
+        clientAddress: '',
+        clientEmail: '',
+        paymentMethod: 'transferencia'
+      }));
+      return;
+    }
+    
+    const comm = communities.find(c => c.id === commId);
+    if (!comm) return;
+    
+    setAddForm(prev => ({
+      ...prev,
+      selectedCommunityId: commId,
+      clientName: comm.name,
+      clientCif: comm.billingCif || '',
+      clientAddress: comm.billingAddress || comm.address || '',
+      clientEmail: comm.billingEmail || comm.contactPhone || '',
+      paymentMethod: comm.paymentMethod || 'transferencia'
+    }));
+  };
+
+  const handleAddAddItemRow = () => {
+    setAddForm(prev => ({
+      ...prev,
+      items: [...prev.items, { description: '', quantity: 1, price: 0, total: 0 }]
+    }));
+  };
+
+  const handleAddRemoveItemRow = (idx) => {
+    setAddForm(prev => ({
+      ...prev,
+      items: prev.items.filter((_, i) => i !== idx)
+    }));
+  };
+
+  const handleAddItemChange = (idx, field, value) => {
+    setAddForm(prev => {
+      const newItems = prev.items.map((item, i) => {
+        if (i !== idx) return item;
+        
+        const updated = { ...item, [field]: value };
+        if (field === 'quantity' || field === 'price') {
+          const q = field === 'quantity' ? parseFloat(value) || 0 : parseFloat(item.quantity) || 0;
+          const p = field === 'price' ? parseFloat(value) || 0 : parseFloat(item.price) || 0;
+          updated.total = parseFloat((q * p).toFixed(2));
+        }
+        return updated;
+      });
+      return { ...prev, items: newItems };
+    });
+  };
+
+  const handleSaveNewInvoice = async (e) => {
+    e.preventDefault();
+    if (addForm.items.length === 0) {
+      alert('La factura debe tener al menos un concepto.');
+      return;
+    }
+    if (addForm.items.some(item => !item.description.trim())) {
+      alert('Todos los conceptos deben tener descripción.');
+      return;
+    }
+    if (addForm.saveAsTemplate && !addForm.templateName.trim()) {
+      alert('Por favor, indica un nombre para la plantilla frecuente.');
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const subtotal = addForm.items.reduce((sum, item) => sum + (parseFloat(item.total) || 0), 0);
+      const taxAmount = parseFloat((subtotal * (parseFloat(addForm.taxRate) / 100)).toFixed(2));
+      const totalAmount = parseFloat((subtotal + taxAmount).toFixed(2));
+
+      const invoiceData = {
+        invoiceNumber: "Borrador",
+        status: "draft",
+        year: parseInt(addForm.year),
+        month: parseInt(addForm.month),
+        client: {
+          communityId: addForm.clientType === 'community' ? addForm.selectedCommunityId : '',
+          name: addForm.clientName,
+          cif: addForm.clientCif,
+          billingAddress: addForm.clientAddress,
+          email: addForm.clientEmail
+        },
+        items: addForm.items.map(item => ({
+          description: item.description,
+          quantity: parseFloat(item.quantity) || 1,
+          price: parseFloat(item.price) || 0,
+          total: parseFloat(item.total) || 0
+        })),
+        subtotal,
+        taxRate: parseFloat(addForm.taxRate) || 0,
+        taxAmount,
+        totalAmount,
+        paymentMethod: addForm.paymentMethod,
+        issueDate: null,
+        dueDate: null
+      };
+
+      await createInvoice(invoiceData);
+
+      if (addForm.saveAsTemplate) {
+        const templateData = {
+          name: addForm.templateName.trim(),
+          client: {
+            name: addForm.clientName,
+            cif: addForm.clientCif,
+            billingAddress: addForm.clientAddress,
+            email: addForm.clientEmail
+          },
+          items: addForm.items.map(item => ({
+            description: item.description,
+            quantity: parseFloat(item.quantity) || 1,
+            price: parseFloat(item.price) || 0,
+            total: parseFloat(item.total) || 0
+          })),
+          taxRate: parseFloat(addForm.taxRate) || 0,
+          paymentMethod: addForm.paymentMethod
+        };
+        await saveInvoiceTemplate(templateData);
+      }
+
+      alert('Factura manual creada correctamente en borradores.');
+      setAddModalOpen(false);
+      await Promise.all([loadInvoices(), loadTemplates()]);
+    } catch (err) {
+      console.error(err);
+      alert('Error al crear la factura manual: ' + err.message);
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   // Modal edit handlers
@@ -745,13 +975,21 @@ export default function InvoicesPage() {
                 </div>
               </div>
             </div>
-            <div>
+            <div className="flex flex-col gap-2">
               <button 
-                className="btn btn-primary" 
+                className="btn btn-primary w-full" 
                 onClick={handleGenerateDrafts}
                 disabled={actionLoading || loading}
               >
                 ⚡ Generar Borradores del Mes
+              </button>
+              <button 
+                type="button"
+                className="btn btn-success w-full" 
+                onClick={handleOpenAddInvoice}
+                disabled={actionLoading || loading}
+              >
+                ➕ Añadir Factura Manual
               </button>
             </div>
           </div>
@@ -1169,6 +1407,335 @@ export default function InvoicesPage() {
               )}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Modal: Add Manual Invoice */}
+      {addModalOpen && (
+        <div className="modal-overlay" onClick={() => setAddModalOpen(false)}>
+          <div className="modal" style={{ maxWidth: '650px', width: '95vw' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">➕ Añadir Factura Manual</h3>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAddModalOpen(false)}>✕</button>
+            </div>
+            <form onSubmit={handleSaveNewInvoice}>
+              <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+                
+                {/* Templates Selection */}
+                <div style={{ padding: '12px', background: '#f1f5f9', borderRadius: '8px', marginBottom: '16px', border: '1px solid #cbd5e1' }}>
+                  <h4 style={{ fontWeight: 'bold', fontSize: '0.875rem', marginBottom: '8px', color: 'var(--color-primary)' }}>📁 Cargar de Plantilla Frecuente</h4>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <select 
+                      className="form-select" 
+                      style={{ flex: 1 }}
+                      value="" 
+                      onChange={e => handleSelectTemplate(e.target.value)}
+                    >
+                      <option value="">-- Seleccionar plantilla... --</option>
+                      {templates.map(tmpl => (
+                        <option key={tmpl.id} value={tmpl.id}>{tmpl.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {templates.length > 0 && (
+                    <div style={{ marginTop: '8px', fontSize: '11px', color: '#64748b' }}>
+                      O gestiona plantillas existentes:
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '4px' }}>
+                        {templates.map(tmpl => (
+                          <div key={tmpl.id} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#fff', padding: '2px 8px', borderRadius: '4px', border: '1px solid #cbd5e1' }}>
+                            <span>{tmpl.name}</span>
+                            <button 
+                              type="button" 
+                              style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#dc2626', fontWeight: 'bold', fontSize: '10px', marginLeft: '4px' }} 
+                              onClick={() => handleDeleteTemplate(tmpl.id)}
+                              title="Eliminar plantilla"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Client Type Toggle */}
+                <div className="form-group">
+                  <label className="form-label" style={{ fontSize: '12px' }}>Tipo de Cliente</label>
+                  <div style={{ display: 'flex', gap: '16px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer' }}>
+                      <input 
+                        type="radio" 
+                        name="add-client-type" 
+                        value="community" 
+                        checked={addForm.clientType === 'community'}
+                        onChange={() => setAddForm(prev => ({ ...prev, clientType: 'community', selectedCommunityId: '', clientName: '', clientCif: '', clientAddress: '', clientEmail: '', paymentMethod: 'transferencia' }))}
+                      />
+                      Comunidad Registrada
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer' }}>
+                      <input 
+                        type="radio" 
+                        name="add-client-type" 
+                        value="manual" 
+                        checked={addForm.clientType === 'manual'}
+                        onChange={() => setAddForm(prev => ({ ...prev, clientType: 'manual', selectedCommunityId: '', clientName: '', clientCif: '', clientAddress: '', clientEmail: '', paymentMethod: 'transferencia' }))}
+                      />
+                      Datos Manuales / Cliente Puntual
+                    </label>
+                  </div>
+                </div>
+
+                {/* Community Selector (only if community type) */}
+                {addForm.clientType === 'community' && (
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontSize: '12px' }}>Seleccionar Comunidad</label>
+                    <select 
+                      className="form-select"
+                      required
+                      value={addForm.selectedCommunityId}
+                      onChange={e => handleSelectCommunity(e.target.value)}
+                    >
+                      <option value="">-- Elige una comunidad --</option>
+                      {communities.map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* Client fiscal details section */}
+                <h4 style={{ fontWeight: 'bold', fontSize: '0.875rem', marginBottom: '10px', color: 'var(--color-primary)', borderTop: '1px solid #e2e8f0', paddingTop: '12px' }}>👤 Datos Fiscales del Cliente</h4>
+                <div className="grid grid-2 gap-3 mb-4">
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontSize: '12px' }}>Nombre / Razón Social</label>
+                    <input 
+                      type="text" 
+                      className="form-input" 
+                      required
+                      value={addForm.clientName}
+                      onChange={e => setAddForm({...addForm, clientName: e.target.value})}
+                      disabled={addForm.clientType === 'community' && addForm.selectedCommunityId}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontSize: '12px' }}>CIF / NIF</label>
+                    <input 
+                      type="text" 
+                      className="form-input" 
+                      value={addForm.clientCif}
+                      onChange={e => setAddForm({...addForm, clientCif: e.target.value})}
+                      disabled={addForm.clientType === 'community' && addForm.selectedCommunityId}
+                    />
+                  </div>
+                  <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                    <label className="form-label" style={{ fontSize: '12px' }}>Dirección de Facturación</label>
+                    <input 
+                      type="text" 
+                      className="form-input" 
+                      value={addForm.clientAddress}
+                      onChange={e => setAddForm({...addForm, clientAddress: e.target.value})}
+                      disabled={addForm.clientType === 'community' && addForm.selectedCommunityId}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontSize: '12px' }}>Email / Teléfono de Envío</label>
+                    <input 
+                      type="text" 
+                      className="form-input" 
+                      placeholder="Ej: admin@comunidad.com"
+                      value={addForm.clientEmail}
+                      onChange={e => setAddForm({...addForm, clientEmail: e.target.value})}
+                      disabled={addForm.clientType === 'community' && addForm.selectedCommunityId}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontSize: '12px' }}>Método de Pago</label>
+                    <select 
+                      className="form-select"
+                      value={addForm.paymentMethod}
+                      onChange={e => setAddForm({...addForm, paymentMethod: e.target.value})}
+                      disabled={addForm.clientType === 'community' && addForm.selectedCommunityId}
+                    >
+                      <option value="transferencia">Transferencia Bancaria</option>
+                      <option value="recibo">Recibo Domiciliado</option>
+                      <option value="efectivo">Efectivo</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Period Section */}
+                <h4 style={{ fontWeight: 'bold', fontSize: '0.875rem', marginBottom: '10px', color: 'var(--color-primary)', borderTop: '1px solid #e2e8f0', paddingTop: '12px' }}>📅 Período de Facturación</h4>
+                <div className="grid grid-2 gap-3 mb-4">
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontSize: '12px' }}>Año período</label>
+                    <select 
+                      className="form-select"
+                      value={addForm.year}
+                      onChange={e => setAddForm({...addForm, year: e.target.value})}
+                    >
+                      {[currentYear - 2, currentYear - 1, currentYear, currentYear + 1, currentYear + 2].map(y => (
+                        <option key={y} value={y}>{y}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontSize: '12px' }}>Mes período</label>
+                    <select 
+                      className="form-select"
+                      value={addForm.month}
+                      onChange={e => setAddForm({...addForm, month: e.target.value})}
+                    >
+                      {Array.from({ length: 12 }).map((_, i) => (
+                        <option key={i} value={i}>{getMonthName(i)}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Concept rows list */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', borderTop: '1px solid #e2e8f0', paddingTop: '12px' }}>
+                  <h4 style={{ fontWeight: 'bold', fontSize: '0.875rem', color: 'var(--color-primary)', margin: 0 }}>📋 Conceptos Facturados</h4>
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={handleAddAddItemRow}>
+                    ➕ Añadir Concepto
+                  </button>
+                </div>
+
+                <div className="flex flex-col gap-3 mb-4">
+                  {addForm.items.map((item, idx) => (
+                    <div key={idx} style={{ display: 'flex', gap: '8px', alignItems: 'center', background: '#f8fafc', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                      <div style={{ flex: 1 }}>
+                        <label className="form-label" style={{ fontSize: '11px', marginBottom: '2px' }}>Descripción</label>
+                        <input 
+                          type="text" 
+                          className="form-input"
+                          required
+                          placeholder="Ej: Abrillantado extraordinario portal"
+                          value={item.description}
+                          onChange={e => handleAddItemChange(idx, 'description', e.target.value)}
+                        />
+                      </div>
+                      <div style={{ width: '60px' }}>
+                        <label className="form-label" style={{ fontSize: '11px', marginBottom: '2px' }}>Cant.</label>
+                        <input 
+                          type="number" 
+                          className="form-input text-center"
+                          style={{ padding: '8px 4px' }}
+                          required
+                          min="0.1"
+                          step="0.1"
+                          value={item.quantity}
+                          onChange={e => handleAddItemChange(idx, 'quantity', e.target.value)}
+                        />
+                      </div>
+                      <div style={{ width: '90px' }}>
+                        <label className="form-label" style={{ fontSize: '11px', marginBottom: '2px' }}>Precio (€)</label>
+                        <input 
+                          type="number" 
+                          className="form-input text-right"
+                          style={{ padding: '8px' }}
+                          required
+                          min="0"
+                          step="0.01"
+                          value={item.price}
+                          onChange={e => handleAddItemChange(idx, 'price', e.target.value)}
+                        />
+                      </div>
+                      <div style={{ width: '90px' }}>
+                        <label className="form-label" style={{ fontSize: '11px', marginBottom: '2px' }}>Total (€)</label>
+                        <input 
+                          type="text" 
+                          className="form-input text-right"
+                          style={{ padding: '8px', background: '#f1f5f9', fontWeight: 'bold' }}
+                          readOnly
+                          value={(item.total || 0).toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+                        />
+                      </div>
+                      <button 
+                        type="button" 
+                        className="btn btn-ghost btn-icon text-danger"
+                        style={{ alignSelf: 'flex-end', minWidth: '36px' }}
+                        onClick={() => handleAddRemoveItemRow(idx)}
+                        disabled={addForm.items.length <= 1}
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Calculations summary */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '20px', borderTop: '1px solid #e2e8f0', paddingTop: '12px' }}>
+                  <div style={{ width: '100px' }}>
+                    <label className="form-label" style={{ fontSize: '11px' }}>Tipo IVA (%)</label>
+                    <input 
+                      type="number" 
+                      className="form-input text-center"
+                      min="0"
+                      max="100"
+                      value={addForm.taxRate}
+                      onChange={e => setAddForm({...addForm, taxRate: parseFloat(e.target.value) || 0})}
+                    />
+                  </div>
+                  <div style={{ textAlign: 'right', fontSize: '0.875rem', display: 'flex', flexDirection: 'column', gap: '4px', alignSelf: 'flex-end' }}>
+                    <div>
+                      Subtotal: <strong className="text-slate-800">
+                        {addForm.items.reduce((sum, item) => sum + (parseFloat(item.total) || 0), 0).toLocaleString('es-ES', { minimumFractionDigits: 2 })} €
+                      </strong>
+                    </div>
+                    <div>
+                      IVA ({addForm.taxRate}%): <strong className="text-slate-800">
+                        {(addForm.items.reduce((sum, item) => sum + (parseFloat(item.total) || 0), 0) * (addForm.taxRate / 100)).toLocaleString('es-ES', { minimumFractionDigits: 2 })} €
+                      </strong>
+                    </div>
+                    <div style={{ fontSize: '1.05rem', marginTop: '4px' }}>
+                      Importe Total: <strong className="text-primary" style={{ fontSize: '1.2rem' }}>
+                        {(addForm.items.reduce((sum, item) => sum + (parseFloat(item.total) || 0), 0) * (1 + addForm.taxRate / 100)).toLocaleString('es-ES', { minimumFractionDigits: 2 })} €
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Template option to save */}
+                <div style={{ marginTop: '16px', padding: '12px', background: '#eff6ff', borderRadius: '8px', border: '1px solid #bfdbfe' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <input 
+                      type="checkbox"
+                      id="saveAsTemplate"
+                      checked={addForm.saveAsTemplate}
+                      onChange={e => setAddForm({...addForm, saveAsTemplate: e.target.checked})}
+                      style={{ width: '18px', height: '18px', accentColor: 'var(--color-primary)', cursor: 'pointer' }}
+                    />
+                    <label htmlFor="saveAsTemplate" style={{ fontSize: '0.875rem', fontWeight: 'bold', color: 'var(--color-primary)', cursor: 'pointer' }}>
+                      Guardar como plantilla de factura frecuente
+                    </label>
+                  </div>
+                  {addForm.saveAsTemplate && (
+                    <div style={{ marginTop: '8px' }}>
+                      <label className="form-label" style={{ fontSize: '12px', marginBottom: '4px' }}>Nombre identificativo de la plantilla</label>
+                      <input 
+                        type="text" 
+                        className="form-input" 
+                        required
+                        placeholder="Ej: Limpieza puntual - Cristalera Edif. B"
+                        value={addForm.templateName}
+                        onChange={e => setAddForm({...addForm, templateName: e.target.value})}
+                      />
+                    </div>
+                  )}
+                </div>
+
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setAddModalOpen(false)} disabled={actionLoading}>
+                  Cancelar
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={actionLoading}>
+                  {actionLoading ? 'Creando...' : 'Crear Borrador'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 
