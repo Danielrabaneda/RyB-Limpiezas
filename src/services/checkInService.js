@@ -22,7 +22,7 @@ export async function createCheckIn(data) {
   return ref.id;
 }
 
-export async function completeCheckOut(checkInId, lat, lng, manualTime = null) {
+export async function completeCheckOut(checkInId, lat, lng, manualTime = null, signatureData = null) {
   const checkOutTime = manualTime ? new Date(manualTime) : new Date();
   
   // Get checkin data to calculate duration
@@ -41,11 +41,21 @@ export async function completeCheckOut(checkInId, lat, lng, manualTime = null) {
     }
   }
   
-  await updateDoc(checkInRef, {
+  const updateData = {
     checkOutTime: Timestamp.fromDate(checkOutTime),
     checkOutLocation: new GeoPoint(lat, lng),
     durationMinutes: Math.max(0, duration),
-  });
+  };
+
+  if (signatureData) {
+    updateData.signature = {
+      imageUrl: signatureData.imageUrl,
+      signerName: signatureData.signerName,
+      signedAt: Timestamp.fromDate(signatureData.signedAt || new Date()),
+    };
+  }
+  
+  await updateDoc(checkInRef, updateData);
   
   return { duration };
 }

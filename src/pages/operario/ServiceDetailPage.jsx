@@ -16,6 +16,8 @@ import { createEvidenceReport } from '../../services/evidenceService';
 import { transferService } from '../../services/transferService';
 import { getOperarios } from '../../services/authService';
 import TransferModal from '../../components/TransferModal';
+import SignatureCanvas from '../../components/SignatureCanvas';
+import { getCommunityGuides } from '../../services/documentVaultService';
 import { getActiveWorkday } from '../../services/workdayService';
 import { doc, onSnapshot, collection, query, where, updateDoc, arrayUnion, getDocs, Timestamp } from 'firebase/firestore';
 import { db } from '../../config/firebase';
@@ -50,6 +52,9 @@ export default function ServiceDetailPage() {
   const [activeWorkday, setActiveWorkday] = useState(null);
   const [submittingEvidence, setSubmittingEvidence] = useState({});
   const [submittedEvidence, setSubmittedEvidence] = useState({});
+  const [showSignatureModal, setShowSignatureModal] = useState(false);
+  const [clientSignature, setClientSignature] = useState(null);
+  const [communityDocs, setCommunityDocs] = useState([]);
 
   useEffect(() => {
     if (!serviceId) return;
@@ -61,6 +66,9 @@ export default function ServiceDetailPage() {
     setTasks([]);
     setTaskExecutions([]);
     setDistanceInfo(null);
+    setClientSignature(null);
+    setShowSignatureModal(false);
+    setCommunityDocs([]);
 
     // 1. Listen to service document
     const unsubService = onSnapshot(doc(db, 'scheduledServices', serviceId), async (snap) => {
@@ -78,6 +86,9 @@ export default function ServiceDetailPage() {
         
         const commTasks = await getCommunityTasks(svcData.communityId);
         setTasks(commTasks);
+
+        const docs = await getCommunityGuides(svcData.communityId);
+        setCommunityDocs(docs || []);
       }
     });
 
@@ -373,7 +384,7 @@ export default function ServiceDetailPage() {
         }
       }
       
-      const result = await completeCheckOut(activeCheckIn.id, pos.lat, pos.lng, manualTime);
+      const result = await completeCheckOut(activeCheckIn.id, pos.lat, pos.lng, manualTime, clientSignature);
 
       // Update status
       await updateScheduledServiceStatus(serviceId, 'completed');
@@ -385,6 +396,7 @@ export default function ServiceDetailPage() {
 
       alert(`Servicio finalizado. Duración: ${result.duration} minutos`);
       setActiveCheckIn(null);
+      setClientSignature(null);
       loadStaticData();
     } catch (err) {
       alert('Error: ' + err);
@@ -589,6 +601,35 @@ export default function ServiceDetailPage() {
         )}
       </div>
 
+      {/* Guías e instrucciones */}
+      {communityDocs.length > 0 && (
+        <div className="card mb-4 animate-fadeIn">
+          <h3 className="card-title text-sm mb-3" style={{ fontSize: 'var(--font-sm)', fontWeight: 'bold' }}>📄 Biblioteca Digital (Instrucciones)</h3>
+          <div className="flex flex-col gap-2">
+            {communityDocs.map(doc => (
+              <div 
+                key={doc.id} 
+                className="flex items-center justify-between p-2" 
+                style={{ background: 'var(--color-bg-light)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}
+              >
+                <span className="text-xs font-semibold truncate" style={{ flex: 1, marginRight: '8px' }}>
+                  📄 {doc.title}
+                </span>
+                <a 
+                  href={doc.fileUrl} 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="btn btn-secondary btn-xs font-bold"
+                  style={{ textDecoration: 'none', padding: '4px 8px', whiteSpace: 'nowrap' }}
+                >
+                  Abrir PDF
+                </a>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <TransferModal 
         isOpen={transferModalOpen}
         onClose={() => setTransferModalOpen(false)}
@@ -686,13 +727,48 @@ export default function ServiceDetailPage() {
               )}
             </div>
           ) : (
-            <button
-              className="checkin-btn stop"
-              onClick={() => handleCheckOut()}
-              disabled={actionLoading || geoLoading}
-            >
-              {actionLoading ? '📍 Finalizando...' : '🛑 Finalizar servicio'}
-            </button>
+            <div className="flex flex-col gap-2 w-full animate-fadeIn">
+              {/* Card de firma del cliente */}
+              <div className="card" style={{ border: '1px solid var(--color-border)', background: 'var(--color-bg-light)', padding: 'var(--space-3) var(--space-4)', margin: 0 }}>
+                <h4 style={{ fontSize: 'var(--font-sm)', fontWeight: 'bold', margin: '0 0 var(--space-2) 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  ✍️ Firma del Cliente (Opcional)
+                </h4>
+                {clientSignature ? (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: 'var(--color-success-light)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-success-light)' }}>
+                    <div style={{ flex: 1 }}>
+                      <span className="text-xs font-bold text-success" style={{ display: 'block' }}>✅ Firma de conformidad registrada</span>
+                      <span className="text-[10px] text-muted" style={{ display: 'block' }}>Nombre: {clientSignature.signerName}</span>
+                    </div>
+                    <button 
+                      type="button" 
+                      className="btn btn-ghost btn-xs" 
+                      onClick={() => setClientSignature(null)}
+                      style={{ color: 'var(--color-danger)', border: '1px solid var(--color-danger)', padding: '2px 6px', fontSize: '10px' }}
+                    >
+                      Borrar
+                    </button>
+                  </div>
+                ) : (
+                  <button 
+                    type="button" 
+                    className="btn btn-secondary btn-sm w-full" 
+                    onClick={() => setShowSignatureModal(true)}
+                    disabled={actionLoading}
+                    style={{ fontSize: '0.8rem', padding: '8px 12px' }}
+                  >
+                    ✍️ Capturar firma de conformidad
+                  </button>
+                )}
+              </div>
+
+              <button
+                className="checkin-btn stop"
+                onClick={() => handleCheckOut()}
+                disabled={actionLoading || geoLoading}
+              >
+                {actionLoading ? '📍 Finalizando...' : '🛑 Finalizar servicio'}
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -871,6 +947,40 @@ export default function ServiceDetailPage() {
             </div>
           )}
         </div>
+      )}
+
+      {showSignatureModal && (
+        <SignatureCanvas 
+          onSave={async ({ base64Image, signerName }) => {
+            setShowSignatureModal(false);
+            setActionLoading(true);
+            try {
+              // Convert base64 to file
+              const byteString = atob(base64Image.split(',')[1]);
+              const ab = new ArrayBuffer(byteString.length);
+              const ia = new Uint8Array(ab);
+              for (let i = 0; i < byteString.length; i++) {
+                ia[i] = byteString.charCodeAt(i);
+              }
+              const blob = new Blob([ab], { type: 'image/png' });
+              const file = new File([blob], `signature_${serviceId}_${Date.now()}.png`, { type: 'image/png' });
+              
+              const imageUrl = await uploadPhoto(file, userProfile.uid, serviceId);
+              setClientSignature({
+                imageUrl,
+                signerName,
+                signedAt: new Date()
+              });
+              alert('Firma guardada correctamente.');
+            } catch (err) {
+              console.error(err);
+              alert('Error al guardar firma: ' + err.message);
+            } finally {
+              setActionLoading(false);
+            }
+          }}
+          onCancel={() => setShowSignatureModal(false)}
+        />
       )}
     </div>
   );

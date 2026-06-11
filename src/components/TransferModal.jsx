@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { getOperarios } from '../services/authService';
+import { findSubstitutesForService } from '../services/substitutionService';
 
-export default function TransferModal({ isOpen, onClose, onConfirm, title, loading: actionLoading, excludeUserId, isAdmin = false }) {
+export default function TransferModal({ isOpen, onClose, onConfirm, title, loading: actionLoading, excludeUserId, isAdmin = false, serviceId = null, date = null }) {
   const [operarios, setOperarios] = useState([]);
   const [selectedOp, setSelectedOp] = useState('');
   const [loading, setLoading] = useState(true);
@@ -10,17 +11,30 @@ export default function TransferModal({ isOpen, onClose, onConfirm, title, loadi
     if (isOpen) {
       loadOperarios();
     }
-  }, [isOpen]);
+  }, [isOpen, serviceId, date]);
 
   async function loadOperarios() {
     try {
-      let ops = await getOperarios();
+      setLoading(true);
+      let ops = [];
+      if (serviceId) {
+        const dateObj = date ? new Date(date) : new Date();
+        ops = await findSubstitutesForService({ serviceId, date: dateObj });
+      } else {
+        ops = await getOperarios();
+      }
+      
       if (excludeUserId) {
         ops = ops.filter(op => op.uid !== excludeUserId);
       }
       setOperarios(ops);
     } catch (err) {
-      console.error(err);
+      console.warn('GPS Proximity failed, falling back to all operators:', err);
+      let ops = await getOperarios();
+      if (excludeUserId) {
+        ops = ops.filter(op => op.uid !== excludeUserId);
+      }
+      setOperarios(ops);
     } finally {
       setLoading(false);
     }
@@ -55,9 +69,14 @@ export default function TransferModal({ isOpen, onClose, onConfirm, title, loadi
                 autoFocus
               >
                 <option value="">Seleccionar operario...</option>
-                {operarios.map(op => (
-                  <option key={op.uid} value={op.uid}>{op.name}</option>
-                ))}
+                {operarios.map(op => {
+                  const distText = op.distanceKm && op.distanceKm !== '—' ? ` (A ${op.distanceKm} km)` : '';
+                  return (
+                    <option key={op.uid} value={op.uid}>
+                      {op.name}{distText}
+                    </option>
+                  );
+                })}
               </select>
             )}
           </div>

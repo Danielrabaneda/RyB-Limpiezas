@@ -24,6 +24,7 @@ export default function ReportsPage() {
   const [services, setServices] = useState([]);
   const [checkIns, setCheckIns] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selectedSignature, setSelectedSignature] = useState(null);
 
   // Auto-expand current week on data load
   useEffect(() => {
@@ -336,6 +337,20 @@ export default function ReportsPage() {
                     <span className={c.checkOutTime ? 'text-danger' : 'text-primary'}>
                       {c.checkOutTime?.toDate ? format(c.checkOutTime.toDate(), 'HH:mm') : 'Activo'}
                     </span>
+                    {c.signature && (
+                      <button 
+                        type="button"
+                        className="btn btn-ghost btn-xs p-0 ml-1" 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedSignature(c.signature);
+                        }}
+                        title={`Firma de conformidad de: ${c.signature.signerName}`}
+                        style={{ fontSize: '10px' }}
+                      >
+                        ✍️
+                      </button>
+                    )}
                   </span>
                 ) : (
                   <span className="text-muted italic" style={{ minWidth: '110px', textAlign: 'center' }}>Sin fichaje</span>
@@ -904,7 +919,7 @@ export default function ReportsPage() {
               <div className="table-container">
                 <table className="table">
                   <thead>
-                    <tr><th>Fecha</th><th>Operario</th><th>Comunidad</th><th>Entrada</th><th>Salida</th><th>Duración</th><th className="text-right">Acciones</th></tr>
+                    <tr><th>Fecha</th><th>Operario</th><th>Comunidad</th><th>Entrada</th><th>Salida</th><th>Duración</th><th>Firma</th><th className="text-right">Acciones</th></tr>
                   </thead>
                   <tbody>
                     {checkIns.map(c => (
@@ -915,6 +930,21 @@ export default function ReportsPage() {
                         <td className="text-sm">{c.checkInTime?.toDate ? format(c.checkInTime.toDate(), 'HH:mm') : '—'}</td>
                         <td className="text-sm">{c.checkOutTime?.toDate ? format(c.checkOutTime.toDate(), 'HH:mm') : '🔴 Activo'}</td>
                         <td>{c.durationMinutes ? formatMinutes(c.durationMinutes) : '—'}</td>
+                        <td>
+                          {c.signature ? (
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-xs text-primary font-bold"
+                              onClick={() => setSelectedSignature(c.signature)}
+                              title={`Firmado por: ${c.signature.signerName}`}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}
+                            >
+                              ✍️ Ver ({c.signature.signerName.split(' ')[0]})
+                            </button>
+                          ) : (
+                            <span className="text-muted text-xs">—</span>
+                          )}
+                        </td>
                         <td className="text-right">
                           <button 
                             className="btn btn-ghost btn-sm text-danger hover:bg-red-50"
@@ -1000,6 +1030,39 @@ export default function ReportsPage() {
       isAdmin={true}
       title="Reasignar Servicio"
     />
+
+    {/* Modal para ver la Firma de Conformidad */}
+    {selectedSignature && (
+      <div className="modal-overlay" style={{ zIndex: 2000 }} onClick={() => setSelectedSignature(null)}>
+        <div className="modal" style={{ maxWidth: '400px', width: '90vw' }} onClick={e => e.stopPropagation()}>
+          <div className="modal-header">
+            <h3 className="modal-title">Firma de Conformidad del Cliente</h3>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSelectedSignature(null)}>✕</button>
+          </div>
+          <div className="modal-body text-center">
+            <p className="text-sm mb-1"><strong>Persona que firmó:</strong></p>
+            <p className="text-base font-bold mb-3" style={{ color: 'var(--color-primary)' }}>{selectedSignature.signerName}</p>
+            
+            <p className="text-xs text-muted mb-4">
+              <strong>Fecha:</strong> {selectedSignature.signedAt?.toDate 
+                ? format(selectedSignature.signedAt.toDate(), 'dd/MM/yyyy HH:mm') 
+                : format(new Date(selectedSignature.signedAt), 'dd/MM/yyyy HH:mm')}
+            </p>
+            
+            <div style={{ background: '#f8fafc', border: '2px dashed #e2e8f0', borderRadius: '8px', padding: '12px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+              <img 
+                src={selectedSignature.imageUrl} 
+                alt="Firma del cliente" 
+                style={{ maxWidth: '100%', maxHeight: '180px', objectFit: 'contain', display: 'block' }} 
+              />
+            </div>
+          </div>
+          <div className="modal-footer">
+            <button type="button" className="btn btn-secondary w-full" onClick={() => setSelectedSignature(null)}>Cerrar ventana</button>
+          </div>
+        </div>
+      </div>
+    )}
   </>
   );
 }

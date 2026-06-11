@@ -24,6 +24,7 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
   const [allTasks, setAllTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [absences, setAbsences] = useState([]);
   
   // Transfer state
   const [transferModal, setTransferModal] = useState({ open: false, type: '', date: null, serviceId: null, fromUserId: null });
@@ -63,14 +64,35 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
       const start = startOfMonth(currentMonth);
       const end = endOfMonth(currentMonth);
       const filters = userId ? { userId } : {};
-      const svcs = await getScheduledServicesRange(start, end, filters);
+      
+      const [svcs, absSnap] = await Promise.all([
+        getScheduledServicesRange(start, end, filters),
+        getDocs(query(collection(db, 'absences'), where('status', '==', 'approved')))
+      ]);
+
       setMonthServices(svcs);
+      setAbsences(absSnap.docs.map(d => ({ id: d.id, ...d.data() })));
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
     }
   }
+
+  const getAbsenceForUserAndDate = (opId, date) => {
+    if (!date) return null;
+    return absences.find(abs => {
+      if (abs.userId !== opId) return false;
+      const start = abs.startDate?.toDate ? abs.startDate.toDate() : new Date(abs.startDate);
+      const end = abs.endDate?.toDate ? abs.endDate.toDate() : new Date(abs.endDate);
+      
+      const checkTime = new Date(date).setHours(12, 0, 0, 0);
+      const startDateNormalized = new Date(start).setHours(0, 0, 0, 0);
+      const endDateNormalized = new Date(end).setHours(23, 59, 59, 999);
+      
+      return checkTime >= startDateNormalized && checkTime <= endDateNormalized;
+    });
+  };
 
   async function handleGenerate() {
     if (!isAdmin) return;
@@ -586,15 +608,21 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
             const isSelected = isSameDay(day, selectedDate);
             const isCurrentMonth = isSameMonth(day, currentMonth);
             const today = isToday(day);
+            const hasConflict = daySvcs.some(s => getAbsenceForUserAndDate(s.assignedUserId, day));
 
             return (
               <div 
                 key={day instanceof Date && !isNaN(day.getTime()) ? day.toISOString() : idx} 
                 className={`calendar-day-cell ${!isCurrentMonth ? 'outside' : ''} ${isSelected ? 'selected' : ''} ${today ? 'today' : ''}`}
                 onClick={() => setSelectedDate(day)}
-                style={{ animationDelay: `${idx * 0.01}s` }}
+                style={{ animationDelay: `${idx * 0.01}s`, position: 'relative' }}
               >
                 <span className="day-number">{format(day, 'd')}</span>
+                {hasConflict && (
+                  <span className="text-[10px]" style={{ position: 'absolute', top: '2px', left: '4px', color: '#dc2626', zIndex: 5 }} title="Conflicto de Ausencia/Baja de Operario">
+                    ⚠️
+                  </span>
+                )}
                 {daySvcs.length > 0 && (
                   <div className="svc-indicators">
                     <span className="svc-count">{daySvcs.length}</span>
@@ -669,8 +697,23 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
                     <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-600 to-blue-700 flex items-center justify-center text-sm font-black text-white shadow-sm">
                       {op.name.charAt(0)}
                     </div>
-                    <div className="flex flex-col">
-                      <span className="font-bold text-slate-800 text-sm leading-tight">{op.name}</span>
+                    <div className="flex flex-col" style={{ flex: 1, minWidth: 0 }}>
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <span className="font-bold text-slate-800 text-sm leading-tight">{op.name}</span>
+                        {(() => {
+                          const opAbsence = getAbsenceForUserAndDate(op.uid, selectedDate);
+                          if (!opAbsence) return null;
+                          return (
+                            <span 
+                              className="badge badge-danger text-[9px] font-bold px-1.5 py-0.5 ml-1 animate-pulse" 
+                              style={{ background: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5', whiteSpace: 'nowrap' }} 
+                              title="Operario ausente (de baja/vacaciones) este día"
+                            >
+                              ⚠️ Ausente ({opAbsence.type === 'vacation' ? 'Vacaciones' : opAbsence.type === 'sick_leave' ? 'Baja' : 'Asuntos'})
+                            </span>
+                          );
+                        })()}
+                      </div>
                       <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">{opSvcs.length} servicios</span>
                     </div>
                     
@@ -699,7 +742,7 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
                         service={s} 
                         communityName={getCommunityName(s.communityId)} 
                         allTasks={allTasks}
-                        onTransfer={() => setTransferModal({ open: true, type: 'single', serviceId: s.id, fromUserId: op.uid })}
+                        onTransfer={() => setTransferModal({ open: true, type: 'single', serviceId: s.id, date: selectedDate, fromUserId: op.uid })}
                         onReschedule={() => setRescheduleModal({ open: true, serviceId: s.id, currentDate: s.scheduledDate })}
                         isAdmin={isAdmin}
                       />
@@ -719,7 +762,7 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
                     service={s} 
                     communityName={getCommunityName(s.communityId)} 
                     allTasks={allTasks}
-                    onTransfer={() => setTransferModal({ open: true, type: 'single', serviceId: s.id, fromUserId: userId })}
+                    onTransfer={() => setTransferModal({ open: true, type: 'single', serviceId: s.id, date: selectedDate, fromUserId: userId })}
                     onReschedule={() => setRescheduleModal({ open: true, serviceId: s.id, currentDate: s.scheduledDate })}
                     isOp 
                     isAdmin={isAdmin}
@@ -746,6 +789,8 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
           loading={actionLoading}
           excludeUserId={transferModal.fromUserId}
           isAdmin={isAdmin}
+          serviceId={transferModal.type === 'single' ? transferModal.serviceId : null}
+          date={transferModal.date}
           title={
             transferModal.type === 'single' ? 'Traspasar Servicio' :
             transferModal.type === 'day' ? `Traspasar Día ${format(transferModal.date || new Date(), 'dd/MM')}` :

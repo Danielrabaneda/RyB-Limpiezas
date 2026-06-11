@@ -12,6 +12,8 @@ import TransferModal from '../../components/TransferModal';
 import GarageYearlyView from '../../components/GarageYearlyView';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../config/firebase';
+import { uploadDocument, getCommunityGuides, deleteDocument } from '../../services/documentVaultService';
+import { uploadPhoto } from '../../services/storageService';
 
 export default function CommunitiesPage() {
   const { userProfile } = useAuth();
@@ -30,6 +32,10 @@ export default function CommunitiesPage() {
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [editingTask, setEditingTask] = useState(null); // null = create mode, task = edit mode
   const [activeTab, setActiveTab] = useState('list'); // 'list' or 'garages'
+  const [communityDocs, setCommunityDocs] = useState([]);
+  const [showDocModal, setShowDocModal] = useState(false);
+  const [docForm, setDocForm] = useState({ title: '', file: null });
+  const [uploadingDoc, setUploadingDoc] = useState(false);
 
   // GPS notification state
   const [pendingGPSCommunityIds, setPendingGPSCommunityIds] = useState(new Set());
@@ -100,15 +106,58 @@ export default function CommunitiesPage() {
     if (!community) return;
     try {
       setSelectedCommunity(community);
-      const [tasks, assigns] = await Promise.all([
+      const [tasks, assigns, docs] = await Promise.all([
         getCommunityTasks(community.id),
         getAssignmentsForCommunity(community.id),
+        getCommunityGuides(community.id)
       ]);
       setCommunityTasks(tasks || []);
       setAssignments(assigns || []);
+      setCommunityDocs(docs || []);
     } catch (err) {
       console.error("Error selecting community:", err);
       alert('Error al cargar detalles de la comunidad.');
+    }
+  }
+
+  async function handleAddDocument(e) {
+    e.preventDefault();
+    if (!docForm.title || !docForm.file) {
+      alert('Por favor, indica un título y selecciona un archivo.');
+      return;
+    }
+    setUploadingDoc(true);
+    try {
+      const fileUrl = await uploadPhoto(docForm.file, userProfile.uid, `guides_${selectedCommunity.id}`);
+      await uploadDocument({
+        title: docForm.title,
+        category: 'community_guide',
+        communityId: selectedCommunity.id,
+        fileUrl
+      });
+      alert('Documento guardado con éxito.');
+      setShowDocModal(false);
+      setDocForm({ title: '', file: null });
+      const updatedDocs = await getCommunityGuides(selectedCommunity.id);
+      setCommunityDocs(updatedDocs);
+    } catch (err) {
+      console.error(err);
+      alert('Error al subir documento: ' + err.message);
+    } finally {
+      setUploadingDoc(false);
+    }
+  }
+
+  async function handleDeleteDoc(docId) {
+    if (!confirm('¿Seguro que deseas eliminar este documento?')) return;
+    try {
+      await deleteDocument(docId);
+      alert('Documento eliminado.');
+      const updatedDocs = await getCommunityGuides(selectedCommunity.id);
+      setCommunityDocs(updatedDocs);
+    } catch (err) {
+      console.error(err);
+      alert('Error al eliminar documento: ' + err.message);
     }
   }
 
@@ -820,6 +869,61 @@ export default function CommunitiesPage() {
                 </div>
               )}
             </div>
+
+            {/* Biblioteca Digital / Documentos */}
+            <div className="card animate-fadeIn">
+              <div className="card-header">
+                <h3 className="card-title">📄 Biblioteca Digital (Guías e Instrucciones)</h3>
+                <button 
+                  type="button" 
+                  className="btn btn-primary btn-sm" 
+                  onClick={() => setShowDocModal(true)}
+                >
+                  ➕ Añadir Documento
+                </button>
+              </div>
+              {communityDocs.length === 0 ? (
+                <p className="text-muted text-sm italic">No hay documentos subidos para esta comunidad.</p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {communityDocs.map(doc => (
+                    <div 
+                      key={doc.id} 
+                      className="flex items-center justify-between" 
+                      style={{ padding: 'var(--space-3)', background: 'var(--color-bg)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="font-semibold text-sm truncate" style={{ color: 'var(--color-text)' }}>
+                          📄 {doc.title}
+                        </div>
+                        <div className="text-[10px] text-muted">
+                          Subido: {doc.uploadedAt?.toDate ? format(doc.uploadedAt.toDate(), 'dd/MM/yyyy HH:mm') : '—'}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <a 
+                          href={doc.fileUrl} 
+                          target="_blank" 
+                          rel="noopener noreferrer" 
+                          className="btn btn-ghost btn-sm text-primary font-bold"
+                          style={{ textDecoration: 'none', padding: '4px 8px' }}
+                        >
+                          Ver
+                        </a>
+                        <button 
+                          type="button" 
+                          className="btn btn-ghost btn-sm text-danger" 
+                          onClick={() => handleDeleteDoc(doc.id)}
+                          style={{ padding: '4px 8px' }}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         ) : (
           <div className="card">
@@ -1389,6 +1493,50 @@ export default function CommunitiesPage() {
         title={`Reasignar PERMANENTEMENTE: ${reassignModal.task?.taskName}`}
         excludeUserId={reassignModal.task?.assignedUserId}
       />
+
+      {/* Modal: Subir Documento a la Biblioteca */}
+      {showDocModal && (
+        <div className="modal-overlay" onClick={() => setShowDocModal(false)}>
+          <div className="modal" style={{ maxWidth: '450px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">📄 Subir Documento a la Biblioteca</h3>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowDocModal(false)}>✕</button>
+            </div>
+            <form onSubmit={handleAddDocument}>
+              <div className="modal-body">
+                <div className="form-group">
+                  <label className="form-label text-xs font-bold">Título del Documento</label>
+                  <input 
+                    type="text" 
+                    className="form-input" 
+                    placeholder="Ej. Instrucciones del Cuarto de Contadores"
+                    value={docForm.title}
+                    onChange={e => setDocForm(f => ({ ...f, title: e.target.value }))}
+                    required
+                  />
+                </div>
+                
+                <div className="form-group">
+                  <label className="form-label text-xs font-bold">Archivo (PDF o Imagen)</label>
+                  <input 
+                    type="file" 
+                    className="form-input"
+                    accept="application/pdf,image/*"
+                    onChange={e => setDocForm(f => ({ ...f, file: e.target.files[0] }))}
+                    required
+                  />
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowDocModal(false)}>Cancelar</button>
+                <button type="submit" className="btn btn-primary" disabled={uploadingDoc}>
+                  {uploadingDoc ? 'Subiendo...' : 'Subir Documento'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

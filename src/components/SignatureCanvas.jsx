@@ -12,6 +12,7 @@ export default function SignatureCanvas({ onSave, onCancel, title = 'Firma de Co
   const canvasRef = useRef(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [hasSignature, setHasSignature] = useState(false);
+  const [signerName, setSignerName] = useState('');
 
   // Inicializar canvas y configurar tamaño para pantallas de retina/móviles
   useEffect(() => {
@@ -94,14 +95,14 @@ export default function SignatureCanvas({ onSave, onCancel, title = 'Firma de Co
   };
 
   const handleSave = () => {
-    if (!hasSignature) return;
+    if (!hasSignature || !signerName.trim()) return;
 
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     // Obtener la imagen en base64 png
     const base64Image = canvas.toDataURL('image/png');
-    onSave(base64Image);
+    onSave({ base64Image, signerName: signerName.trim() });
   };
 
   return (
@@ -113,6 +114,21 @@ export default function SignatureCanvas({ onSave, onCancel, title = 'Firma de Co
         </div>
         
         <div className="modal-body">
+          <div className="form-group mb-3">
+            <label className="form-label text-xs font-bold mb-1" style={{ display: 'block', fontWeight: 'bold' }}>
+              Nombre de la persona que firma
+            </label>
+            <input 
+              type="text" 
+              className="form-input" 
+              placeholder="Ej. Juan Pérez (Conserje)" 
+              value={signerName}
+              onChange={e => setSignerName(e.target.value)}
+              style={{ width: '100%', padding: '8px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}
+              required
+            />
+          </div>
+
           <p className="text-xs text-muted mb-3">
             Pide al conserje o cliente que firme con el dedo dentro del recuadro inferior.
           </p>
@@ -172,7 +188,7 @@ export default function SignatureCanvas({ onSave, onCancel, title = 'Firma de Co
           <button className="btn btn-ghost" onClick={onCancel}>
             Cancelar
           </button>
-          <button className="btn btn-primary" onClick={handleSave} disabled={!hasSignature}>
+          <button className="btn btn-primary" onClick={handleSave} disabled={!hasSignature || !signerName.trim()}>
             Confirmar firma
           </button>
         </div>

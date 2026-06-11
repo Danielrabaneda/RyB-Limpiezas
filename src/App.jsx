@@ -60,6 +60,8 @@ const HistoryPage = lazy(() => import('./pages/operario/HistoryPage'));
 const MaterialRequestPage = lazy(() => import('./pages/operario/MaterialRequestPage'));
 const SettingsPage = lazy(() => import('./pages/admin/SettingsPage'));
 const EvidenceReportsPage = lazy(() => import('./pages/admin/EvidenceReportsPage'));
+const AbsencesPage = lazy(() => import('./pages/operario/AbsencesPage'));
+const AbsencesAdminPage = lazy(() => import('./pages/admin/AbsencesAdminPage'));
 
 // Components
 const GeolocationTracker = lazy(() => import('./components/operario/GeolocationTracker'));
@@ -190,6 +192,7 @@ function AdminLayout() {
     { path: '/admin/comunidades', icon: '🏢', label: 'Comunidades' },
     { path: '/admin/operarios', icon: '👷', label: 'Operarios' },
     { path: '/admin/control-horario', icon: '⏱️', label: 'Control Horario' },
+    { path: '/admin/ausencias', icon: '🌴', label: 'Ausencias' },
     { path: '/admin/informes', icon: '📈', label: 'Informes' },
     { path: '/admin/facturas', icon: '📄', label: 'Facturas' },
     { path: '/admin/evidencias', icon: '📸', label: 'Evidencias' },
@@ -400,6 +403,13 @@ function OperarioLayout() {
           Materiales
         </NavLink>
         <NavLink
+          to="/operario/ausencias"
+          className={({ isActive }) => `operario-nav-link ${isActive ? 'active' : ''}`}
+        >
+          <span className="operario-nav-icon">🌴</span>
+          Ausencias
+        </NavLink>
+        <NavLink
           to="/operario/historial"
           className={({ isActive }) => `operario-nav-link ${isActive ? 'active' : ''}`}
         >
@@ -493,6 +503,7 @@ export default function App() {
                   <Route path="kilometraje" element={<KilometrajePage />} />
                   <Route path="inventory" element={<InventoryPage />} />
                   <Route path="ajustes" element={<SettingsPage />} />
+                  <Route path="ausencias" element={<AbsencesAdminPage />} />
                 </Route>
 
                 {/* Operario */}
@@ -507,6 +518,7 @@ export default function App() {
                   <Route index element={<TodayPage />} />
                   <Route path="servicio/:serviceId" element={<ServiceDetailPage />} />
                   <Route path="materiales" element={<MaterialRequestPage />} />
+                  <Route path="ausencias" element={<AbsencesPage />} />
                   <Route path="historial" element={<HistoryPage />} />
                 </Route>
 
