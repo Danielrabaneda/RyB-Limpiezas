@@ -313,6 +313,12 @@ export default function GeolocationTracker() {
           // Resetear estados de comunidades lejanas
           servicesWithDistance.forEach(s => {
             if (s.distance > PROXIMITY_RADIUS_EXIT * 2) {
+              // Si el operario estaba dentro de la comunidad pero se alejó sin fichar,
+              // registramos la hora de salida para permitir el fichaje retroactivo posterior
+              if (lastStateRef.current[s.id] === 'INSIDE') {
+                console.log(`[Tracker] Detectada salida de comunidad sin fichaje: ${s.communityName}`);
+                localStorage.setItem(`detected_exit_${s.id}`, new Date().toISOString());
+              }
               lastStateRef.current[s.id] = 'OUTSIDE';
               // También limpiar el tiempo de última notificación
               delete lastNotifyTimeRef.current[s.id];
