@@ -19,9 +19,19 @@ export async function createProduct(data) {
     unit: data.unit || 'uds', // uds, litros, paquetes...
     category: data.category || 'general',
     currentStock: 0,
+    minStock: parseFloat(data.minStock) || 0,
     createdAt: serverTimestamp()
   });
-  return { id: ref.id, ...data };
+  return { id: ref.id, ...data, currentStock: 0, minStock: parseFloat(data.minStock) || 0 };
+}
+
+export async function updateProduct(id, data) {
+  const ref = doc(db, 'products', id);
+  await updateDoc(ref, {
+    name: data.name,
+    unit: data.unit,
+    minStock: parseFloat(data.minStock) || 0
+  });
 }
 
 export async function deleteProduct(id) {

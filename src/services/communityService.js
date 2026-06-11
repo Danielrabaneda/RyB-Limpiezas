@@ -15,6 +15,7 @@ export async function createCommunity(data) {
     type: data.type || 'comunidad',
     contactPerson: data.contactPerson || '',
     contactPhone: data.contactPhone || '',
+    preferredTime: data.preferredTime || null,
     active: true,
     createdAt: serverTimestamp(),
   };

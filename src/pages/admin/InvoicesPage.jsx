@@ -1,0 +1,1416 @@
+import { useState, useEffect } from 'react';
+import { 
+  getBillingSettings, 
+  saveBillingSettings, 
+  getInvoices, 
+  createInvoice, 
+  updateInvoice, 
+  deleteInvoice, 
+  emitInvoice, 
+  updateInvoiceStatus, 
+  generateMonthlyDrafts 
+} from '../../services/invoiceService';
+import { getCommunities } from '../../services/communityService';
+import { format } from 'date-fns';
+import { es } from 'date-fns/locale';
+import { useAuth } from '../../contexts/AuthContext';
+import jsPDF from 'jspdf';
+
+export default function InvoicesPage() {
+  const { currentUser, userProfile } = useAuth();
+  
+  // Date filter states
+  const currentYear = new Date().getFullYear();
+  const currentMonth = new Date().getMonth();
+  const [filterYear, setFilterYear] = useState(String(currentYear));
+  const [filterMonth, setFilterMonth] = useState(String(currentMonth));
+  
+  // Tabs: 'drafts', 'pending', 'paid', 'settings'
+  const [activeTab, setActiveTab] = useState('drafts');
+  const [searchTerm, setSearchTerm] = useState('');
+  
+  // Data states
+  const [invoices, setInvoices] = useState([]);
+  const [communities, setCommunities] = useState([]);
+  const [billingSettings, setBillingSettings] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [previewModal, setPreviewModal] = useState({ open: false, pdfUrl: '' });
+  
+  // Modal states
+  const [editModal, setEditModal] = useState({ open: false, invoice: null });
+  const [editForm, setEditForm] = useState({
+    clientName: '',
+    clientCif: '',
+    clientAddress: '',
+    clientEmail: '',
+    items: [],
+    taxRate: 21,
+    paymentMethod: 'transferencia'
+  });
+
+  // Settings states local (for logo adjustment)
+  const [settingsForm, setSettingsForm] = useState({
+    companyName: '',
+    nif: '',
+    address: '',
+    phone: '',
+    contactPerson: '',
+    inscriptionText: '',
+    logoBase64: '',
+    logoWidth: 45,
+    logoHeight: 20,
+    bankAccount: '',
+    nextInvoiceSeq: 1,
+    invoiceNumberFormat: 'numeric',
+    fileNamePattern: 'Factura_{numero}_{comunidad}',
+    useSaveAsDialog: false
+  });
+
+  useEffect(() => {
+    loadInitialData();
+  }, []);
+
+  useEffect(() => {
+    loadInvoices();
+  }, [filterYear, filterMonth]);
+
+  const loadInitialData = async () => {
+    setLoading(true);
+    try {
+      const [settings, comms] = await Promise.all([
+        getBillingSettings(),
+        getCommunities()
+      ]);
+      setBillingSettings(settings);
+      setSettingsForm(settings);
+      setCommunities(comms);
+      await loadInvoices();
+    } catch (err) {
+      console.error("Error loading initial billing data:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadInvoices = async () => {
+    try {
+      const list = await getInvoices(filterYear, filterMonth);
+      setInvoices(list);
+    } catch (err) {
+      console.error("Error loading invoices:", err);
+    }
+  };
+
+  const handleGenerateDrafts = async () => {
+    if (!confirm(`¿Generar automáticamente los borradores del mes de ${getMonthName(parseInt(filterMonth))} de ${filterYear}?`)) {
+      return;
+    }
+    setActionLoading(true);
+    try {
+      const count = await generateMonthlyDrafts(parseInt(filterMonth), parseInt(filterYear));
+      alert(`Se han generado ${count} borradores con éxito.`);
+      await loadInvoices();
+      setActiveTab('drafts');
+    } catch (err) {
+      console.error(err);
+      alert('Error al generar los borradores: ' + err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleEmitInvoice = async (id) => {
+    if (!confirm('¿Emitir factura oficial? Se le asignará un número oficial correlativo y no podrá editarse.')) {
+      return;
+    }
+    setActionLoading(true);
+    try {
+      await emitInvoice(id);
+      alert('Factura emitida con éxito.');
+      await loadInvoices();
+      setActiveTab('pending');
+    } catch (err) {
+      console.error(err);
+      alert('Error al emitir la factura: ' + err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleMarkAsPaid = async (id) => {
+    setActionLoading(true);
+    try {
+      await updateInvoiceStatus(id, 'paid');
+      await loadInvoices();
+      setActiveTab('paid');
+    } catch (err) {
+      console.error(err);
+      alert('Error al marcar factura como pagada: ' + err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleResetToPending = async (id) => {
+    setActionLoading(true);
+    try {
+      await updateInvoiceStatus(id, 'pending');
+      await loadInvoices();
+      setActiveTab('pending');
+    } catch (err) {
+      console.error(err);
+      alert('Error al cambiar estado: ' + err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleDeleteInvoice = async (id) => {
+    if (!confirm('¿Seguro que deseas eliminar esta factura?')) return;
+    setActionLoading(true);
+    try {
+      await deleteInvoice(id);
+      await loadInvoices();
+    } catch (err) {
+      console.error(err);
+      alert('Error al borrar: ' + err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleSaveSettings = async (e) => {
+    e.preventDefault();
+    setActionLoading(true);
+    try {
+      await saveBillingSettings(settingsForm);
+      setBillingSettings(settingsForm);
+      alert('Configuración guardada correctamente.');
+    } catch (err) {
+      console.error(err);
+      alert('Error al guardar configuración: ' + err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Logo file upload handler with automatic resizing/compression
+  const handleLogoUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    // Verify file is image
+    if (!file.type.startsWith('image/')) {
+      alert('Por favor, selecciona un archivo de imagen válido (PNG, JPG).');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        // Create canvas to resize image
+        const canvas = document.createElement('canvas');
+        const MAX_WIDTH = 400; // 400px is more than enough for a PDF logo (rendered at ~45mm)
+        let width = img.width;
+        let height = img.height;
+        
+        if (width > MAX_WIDTH) {
+          height = Math.round((height * MAX_WIDTH) / width);
+          width = MAX_WIDTH;
+        }
+        
+        canvas.width = width;
+        canvas.height = height;
+        
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        // Convert to base64 with quality compression
+        const compressedBase64 = canvas.toDataURL('image/png');
+        
+        setSettingsForm(prev => ({
+          ...prev,
+          logoBase64: compressedBase64
+        }));
+      };
+      img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Modal edit handlers
+  const handleOpenEdit = (inv) => {
+    setEditModal({ open: true, invoice: inv });
+    setEditForm({
+      clientName: inv.client.name,
+      clientCif: inv.client.cif || '',
+      clientAddress: inv.client.billingAddress || '',
+      clientEmail: inv.client.email || '',
+      items: inv.items.map(item => ({ ...item })),
+      taxRate: inv.taxRate || 21,
+      paymentMethod: inv.paymentMethod || 'transferencia'
+    });
+  };
+
+  const handleAddItemRow = () => {
+    setEditForm(prev => ({
+      ...prev,
+      items: [...prev.items, { description: '', quantity: 1, price: 0, total: 0 }]
+    }));
+  };
+
+  const handleRemoveItemRow = (idx) => {
+    setEditForm(prev => ({
+      ...prev,
+      items: prev.items.filter((_, i) => i !== idx)
+    }));
+  };
+
+  const handleItemChange = (idx, field, value) => {
+    setEditForm(prev => {
+      const newItems = prev.items.map((item, i) => {
+        if (i !== idx) return item;
+        
+        const updated = { ...item, [field]: value };
+        if (field === 'quantity' || field === 'price') {
+          const q = field === 'quantity' ? parseFloat(value) || 0 : parseFloat(item.quantity) || 0;
+          const p = field === 'price' ? parseFloat(value) || 0 : parseFloat(item.price) || 0;
+          updated.total = parseFloat((q * p).toFixed(2));
+        }
+        return updated;
+      });
+      return { ...prev, items: newItems };
+    });
+  };
+
+  const handleSaveInvoiceEdit = async (e) => {
+    e.preventDefault();
+    if (editForm.items.length === 0) {
+      alert('La factura debe tener al menos un concepto.');
+      return;
+    }
+    if (editForm.items.some(item => !item.description.trim())) {
+      alert('Todos los conceptos deben tener descripción.');
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const subtotal = editForm.items.reduce((sum, item) => sum + (parseFloat(item.total) || 0), 0);
+      const taxAmount = parseFloat((subtotal * (parseFloat(editForm.taxRate) / 100)).toFixed(2));
+      const totalAmount = parseFloat((subtotal + taxAmount).toFixed(2));
+
+      const updatedData = {
+        client: {
+          ...editModal.invoice.client,
+          name: editForm.clientName,
+          cif: editForm.clientCif,
+          billingAddress: editForm.clientAddress,
+          email: editForm.clientEmail
+        },
+        items: editForm.items,
+        taxRate: parseFloat(editForm.taxRate) || 0,
+        subtotal,
+        taxAmount,
+        totalAmount,
+        paymentMethod: editForm.paymentMethod
+      };
+
+      await updateInvoice(editModal.invoice.id, updatedData);
+      setEditModal({ open: false, invoice: null });
+      await loadInvoices();
+    } catch (err) {
+      console.error(err);
+      alert('Error al guardar la factura');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // WhatsApp link generator
+  const handleSendWhatsApp = (inv) => {
+    const phone = inv.client.email?.replace(/[^0-9]/g, '') || ''; // fallback phone in email field sometimes
+    const numFact = inv.invoiceNumber || 'Borrador';
+    const amount = inv.totalAmount.toLocaleString('es-ES', { minimumFractionDigits: 2 }) + '€';
+    
+    let text = `Hola, le adjuntamos los detalles de la factura *${numFact}* de RyB Limpiezas correspondiente a la comunidad *${inv.client.name}*.\n\n`;
+    text += `• Importe Total: *${amount}* (IVA incl.)\n`;
+    text += `• Método de Pago: *${inv.paymentMethod === 'transferencia' ? 'Transferencia Bancaria' : inv.paymentMethod === 'recibo' ? 'Recibo Domiciliado' : 'Efectivo'}*\n`;
+    if (inv.paymentMethod === 'transferencia' && billingSettings?.bankAccount) {
+      text += `• IBAN para ingreso: *${billingSettings.bankAccount}*\n`;
+    }
+    text += `\nQuedamos a su disposición para cualquier duda. ¡Gracias por confiar en nosotros!`;
+    
+    const encoded = encodeURIComponent(text);
+    const url = `https://wa.me/${phone ? phone : ''}?text=${encoded}`;
+    window.open(url, '_blank');
+  };
+
+  // PDF generator exactly like the image
+  const generatePDF = async (inv, mode = 'download') => {
+    if (!billingSettings) return;
+    
+    const doc = new jsPDF('p', 'mm', 'a4');
+    
+    // 1. Logo (Editable in size)
+    if (billingSettings.logoBase64) {
+      try {
+        doc.addImage(
+          billingSettings.logoBase64, 
+          'PNG', 
+          14, 
+          12, 
+          parseFloat(billingSettings.logoWidth) || 45, 
+          parseFloat(billingSettings.logoHeight) || 20
+        );
+      } catch (e) {
+        console.error("Error drawing logo in PDF:", e);
+        // Fallback text logo
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(18);
+        doc.setTextColor(37, 99, 235);
+        doc.text(billingSettings.companyName || 'RyB Limpiezas', 14, 22);
+      }
+    } else {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(18);
+      doc.setTextColor(37, 99, 235);
+      doc.text(billingSettings.companyName || 'RyB Limpiezas', 14, 22);
+    }
+    
+    // 2. Title "FACTURA" (right-aligned, light gray)
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(28);
+    doc.setTextColor(215, 218, 224); // light gray
+    doc.text('FACTURA', 196, 22, { align: 'right' });
+    
+    // 3. Company details (left column, below logo)
+    doc.setTextColor(15, 23, 42); // slate-900
+    doc.setFontSize(9.5);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`NIF: ${billingSettings.nif || ''}`, 14, 40);
+    
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(71, 85, 105); // slate-600
+    
+    const companyAddressLines = doc.splitTextToSize(billingSettings.address || '', 75);
+    doc.text(companyAddressLines, 14, 45);
+    
+    const phoneY = 45 + (companyAddressLines.length * 4.5);
+    doc.text(`Teléfono: ${billingSettings.phone || ''}`, 14, phoneY);
+    
+    // 4. Metadata right column (FECHA, Nº FACTURA, PARA, FACTURAR A)
+    doc.setFontSize(9);
+    const labelX = 115;
+    const valueX = 148;
+    
+    // Row 1: FECHA
+    doc.setFont('helvetica', 'oblique');
+    doc.setTextColor(120, 120, 120);
+    doc.text('FECHA:', labelX, 33);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(15, 23, 42);
+    const dateFormatted = inv.issueDate ? format(inv.issueDate.toDate ? inv.issueDate.toDate() : new Date(inv.issueDate), 'dd/MM/yyyy') : format(new Date(), 'dd/MM/yyyy');
+    doc.text(dateFormatted, valueX, 33);
+    
+    // Row 2: Nº DE FACTURA
+    doc.setFont('helvetica', 'oblique');
+    doc.setTextColor(120, 120, 120);
+    doc.text('Nº DE FACTURA:', labelX, 39);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(15, 23, 42);
+    doc.text(String(inv.invoiceNumber || 'Borrador'), valueX, 39);
+    
+    // Row 3: PARA
+    doc.setFont('helvetica', 'oblique');
+    doc.setTextColor(120, 120, 120);
+    doc.text('PARA:', labelX, 45);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(15, 23, 42);
+    doc.text(String(inv.client.name || ''), valueX, 45);
+    
+    // Row 4: FACTURAR A
+    doc.setFont('helvetica', 'oblique');
+    doc.setTextColor(120, 120, 120);
+    doc.text('FACTURAR A:', labelX, 51);
+    
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(15, 23, 42);
+    
+    const billToLines = [
+      inv.client.name || '',
+      inv.client.cif ? `NIF:  ${inv.client.cif}` : '',
+      ...doc.splitTextToSize(inv.client.billingAddress || '', 48)
+    ].filter(Boolean);
+    
+    doc.text(billToLines, valueX, 51);
+    
+    // 5. Drawing Table Grid (Exactly like the image)
+    const tableStartY = 70;
+    const tableEndY = 175;
+    const rowHeight = 6.2;
+    const tableWidth = 182;
+    const startX = 14;
+    const endX = startX + tableWidth;
+    
+    const colSplit1 = 130; // DESCRIPCIÓN split
+    const colSplit2 = 155; // I split
+    
+    // Fill header background
+    doc.setFillColor(235, 237, 240); // Light gray
+    doc.rect(startX, tableStartY, tableWidth, 7, 'F');
+    
+    // Table outer border
+    doc.setDrawColor(200, 200, 200);
+    doc.setLineWidth(0.25);
+    doc.rect(startX, tableStartY, tableWidth, tableEndY - tableStartY);
+    
+    // Table vertical dividers
+    doc.line(colSplit1, tableStartY, colSplit1, tableEndY);
+    doc.line(colSplit2, tableStartY, colSplit2, tableEndY);
+    
+    // Table horizontal row dividers
+    const numRows = Math.floor((tableEndY - (tableStartY + 7)) / rowHeight);
+    for (let r = 0; r <= numRows; r++) {
+      const yLine = tableStartY + 7 + r * rowHeight;
+      if (yLine < tableEndY) {
+        doc.line(startX, yLine, endX, yLine);
+      }
+    }
+    
+    // Table Header Text
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(71, 85, 105);
+    doc.text('DESCRIPCIÓN', startX + 2, tableStartY + 4.8);
+    doc.text('I', (colSplit1 + colSplit2) / 2, tableStartY + 4.8, { align: 'center' });
+    doc.text('IMPORTE', (colSplit2 + endX) / 2, tableStartY + 4.8, { align: 'center' });
+    
+    // Table Row Content
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(15, 23, 42);
+    
+    (inv.items || []).forEach((item, idx) => {
+      const yPos = tableStartY + 7 + idx * rowHeight + 4.3;
+      if (yPos < tableEndY) {
+        doc.text(String(item.description || ''), startX + 2, yPos);
+        doc.text(String(item.quantity || '1'), (colSplit1 + colSplit2) / 2, yPos, { align: 'center' });
+        
+        // Format price
+        doc.text('€', colSplit2 + 3, yPos);
+        const priceFormatted = parseFloat(item.total || 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        doc.text(priceFormatted, endX - 2, yPos, { align: 'right' });
+      }
+    });
+    
+    // 6. Totals Grid (Below Table, on the right side)
+    const totalsStartY = tableEndY;
+    const totalsRowHeight = 6.2;
+    const totalsSplitX = colSplit2; // 155
+    
+    // Total fields: TOTAL BRUTO, IVA, TOTAL IVA, OTROS, TOTAL
+    const totalFields = [
+      { label: 'TOTAL BRUTO', val: parseFloat(inv.subtotal || 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), hasCurrency: true },
+      { label: 'IVA', val: `${parseFloat(inv.taxRate || 21).toFixed(2).replace('.', ',')}%`, hasCurrency: false },
+      { label: 'TOTAL IVA', val: parseFloat(inv.taxAmount || 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), hasCurrency: true },
+      { label: 'OTROS', val: '-', hasCurrency: false },
+      { label: 'TOTAL', val: parseFloat(inv.totalAmount || 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), hasCurrency: true, isBold: true }
+    ];
+    
+    totalFields.forEach((field, idx) => {
+      const yLineTop = totalsStartY + idx * totalsRowHeight;
+      
+      // Draw border boxes for values
+      doc.setDrawColor(200, 200, 200);
+      doc.rect(totalsSplitX, yLineTop, endX - totalsSplitX, totalsRowHeight);
+      
+      // Label text
+      doc.setTextColor(120, 120, 120);
+      doc.setFontSize(8.5);
+      if (field.isBold) {
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(15, 23, 42);
+        doc.setFontSize(9.5);
+      } else {
+        doc.setFont('helvetica', 'oblique');
+      }
+      doc.text(field.label, totalsSplitX - 2, yLineTop + 4.5, { align: 'right' });
+      
+      // Value text inside box
+      if (field.isBold) {
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(15, 23, 42);
+      } else {
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(15, 23, 42);
+      }
+      
+      if (field.hasCurrency) {
+        doc.text('€', totalsSplitX + 3, yLineTop + 4.5);
+      }
+      doc.text(field.val, endX - 2, yLineTop + 4.5, { align: 'right' });
+    });
+    
+    // 7. Footer Message (on the left, aligned with totals)
+    const msgStartY = totalsStartY + 4;
+    doc.setTextColor(100, 116, 139); // slate-500
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text(`Si tiene alguna pregunta acerca de esta factura, póngase en contacto con`, startX, msgStartY);
+    doc.text(`${billingSettings.contactPerson || 'Daniel Rabaneda'}, Teléfono: ${billingSettings.phone || '687983162'}`, startX, msgStartY + 4.5);
+    
+    doc.setFont('helvetica', 'bolditalic');
+    doc.setTextColor(15, 23, 42);
+    doc.setFontSize(9.5);
+    doc.text('GRACIAS POR CONFIAR EN NOSOTROS', startX, msgStartY + 11);
+    
+    // 8. Bank Account details (Optional)
+    if (billingSettings.bankAccount) {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(100, 116, 139);
+      doc.text(`Número de Cuenta (IBAN) para transferencia: ${billingSettings.bankAccount}`, startX, msgStartY + 19);
+    }
+    
+    // 9. Mercantile Registry Inscription (Bottom Center)
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(148, 163, 184); // slate-400
+    const inscriptionText = billingSettings.inscriptionText || "";
+    const inscriptionLines = doc.splitTextToSize(inscriptionText, 180);
+    doc.text(inscriptionLines, 105, 280, { align: 'center' });
+    
+    // Build filename from configured pattern
+    const pdfMonthNames = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+    const dateForFile = inv.issueDate 
+      ? format(inv.issueDate.toDate ? inv.issueDate.toDate() : new Date(inv.issueDate), 'dd-MM-yyyy')
+      : format(new Date(), 'dd-MM-yyyy');
+    const pattern = billingSettings?.fileNamePattern || 'Factura_{numero}_{comunidad}';
+    const filename = pattern
+      .replace('{numero}', inv.invoiceNumber || 'Borrador')
+      .replace('{comunidad}', (inv.client.name || '').replace(/\s+/g, '_'))
+      .replace('{fecha}', dateForFile)
+      .replace('{mes}', pdfMonthNames[inv.month] || '')
+      .replace('{a\u00f1o}', String(inv.year || new Date().getFullYear()))
+      + '.pdf';
+    
+    if (mode === 'preview') {
+      // Preview mode: show in modal
+      const pdfBlob = doc.output('blob');
+      const pdfUrl = URL.createObjectURL(pdfBlob);
+      setPreviewModal({ open: true, pdfUrl });
+    } else {
+      // Download mode
+      if (billingSettings?.useSaveAsDialog && window.showSaveFilePicker) {
+        try {
+          const handle = await window.showSaveFilePicker({
+            suggestedName: filename,
+            types: [{
+              description: 'Documento PDF',
+              accept: { 'application/pdf': ['.pdf'] }
+            }]
+          });
+          const writable = await handle.createWritable();
+          const blob = doc.output('blob');
+          await writable.write(blob);
+          await writable.close();
+        } catch (err) {
+          if (err.name !== 'AbortError') {
+            console.error('Error saving PDF:', err);
+            doc.save(filename);
+          }
+        }
+      } else {
+        doc.save(filename);
+      }
+    }
+  };
+
+  // Helper translations
+  const getMonthName = (m) => {
+    const names = [
+      'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+      'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+    ];
+    return names[m];
+  };
+
+  const filteredInvoices = invoices.filter(inv => {
+    let matchesTab = false;
+    if (activeTab === 'drafts') matchesTab = inv.status === 'draft';
+    else if (activeTab === 'pending') matchesTab = inv.status === 'pending';
+    else if (activeTab === 'paid') matchesTab = inv.status === 'paid';
+    
+    if (!matchesTab) return false;
+    
+    if (!searchTerm) return true;
+    const term = searchTerm.toLowerCase();
+    const name = (inv.client?.name || '').toLowerCase();
+    const cif = (inv.client?.cif || '').toLowerCase();
+    const invNum = (inv.invoiceNumber || '').toLowerCase();
+    return name.includes(term) || cif.includes(term) || invNum.includes(term);
+  });
+
+  // Calculate totals for summary cards
+  const summaryTotals = (() => {
+    let facturado = 0;
+    let cobrado = 0;
+    let pendiente = 0;
+    
+    invoices.forEach(inv => {
+      if (inv.status === 'pending') {
+        facturado += inv.totalAmount;
+        pendiente += inv.totalAmount;
+      } else if (inv.status === 'paid') {
+        facturado += inv.totalAmount;
+        cobrado += inv.totalAmount;
+      }
+    });
+    return { facturado, cobrado, pendiente };
+  })();
+
+  return (
+    <div className="page-container animate-fadeIn">
+      {/* Header section */}
+      <div className="header-section mb-6">
+        <p className="page-subtitle">Generación, edición y control de cobro de facturas mensuales</p>
+      </div>
+
+      {/* KPI Cards */}
+      <div className="grid grid-3 gap-4 mb-6">
+        <div className="stat-card">
+          <div className="stat-icon blue">📊</div>
+          <div className="stat-value">{summaryTotals.facturado.toLocaleString('es-ES', { minimumFractionDigits: 2 })} €</div>
+          <div className="stat-label">Total Facturado (Emitido)</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-icon green">✅</div>
+          <div className="stat-value">{summaryTotals.cobrado.toLocaleString('es-ES', { minimumFractionDigits: 2 })} €</div>
+          <div className="stat-label">Total Cobrado</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-icon orange">⏳</div>
+          <div className="stat-value">{summaryTotals.pendiente.toLocaleString('es-ES', { minimumFractionDigits: 2 })} €</div>
+          <div className="stat-label">Total Pendiente de Cobro</div>
+        </div>
+      </div>
+
+      {/* Filter and Global Actions Card */}
+      {activeTab !== 'settings' && (
+        <div className="card mb-6 p-4">
+          <div className="flex flex-wrap justify-between items-end gap-4">
+            <div className="flex gap-4 items-end flex-wrap flex-1">
+              <div style={{ minWidth: '140px' }}>
+                <label className="form-label" style={{ marginBottom: '4px' }}>Año periodo</label>
+                <select 
+                  className="form-select" 
+                  value={filterYear}
+                  onChange={e => setFilterYear(e.target.value)}
+                >
+                  {[currentYear - 2, currentYear - 1, currentYear, currentYear + 1, currentYear + 2].map(y => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ minWidth: '160px' }}>
+                <label className="form-label" style={{ marginBottom: '4px' }}>Mes periodo</label>
+                <select 
+                  className="form-select" 
+                  value={filterMonth}
+                  onChange={e => setFilterMonth(e.target.value)}
+                >
+                  {Array.from({ length: 12 }).map((_, i) => (
+                    <option key={i} value={i}>{getMonthName(i)}</option>
+                  ))}
+                </select>
+              </div>
+              
+              {/* Search input for invoices */}
+              <div style={{ flex: 1, minWidth: '200px' }}>
+                <label className="form-label" style={{ marginBottom: '4px' }}>Buscar comunidad o NIF/CIF</label>
+                <div style={{ position: 'relative' }}>
+                  <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>🔍</span>
+                  <input 
+                    type="text"
+                    placeholder="Escribe el nombre o CIF para buscar..."
+                    className="form-input"
+                    style={{ paddingLeft: '32px', width: '100%' }}
+                    value={searchTerm}
+                    onChange={e => setSearchTerm(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+            <div>
+              <button 
+                className="btn btn-primary" 
+                onClick={handleGenerateDrafts}
+                disabled={actionLoading || loading}
+              >
+                ⚡ Generar Borradores del Mes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tabs */}
+      <div className="tabs-container mb-6 flex gap-2 border-b border-slate-200 pb-2 overflow-x-auto">
+        <button 
+          className={`btn btn-sm ${activeTab === 'drafts' ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => setActiveTab('drafts')}
+        >
+          📋 Borradores ({invoices.filter(i => i.status === 'draft').length})
+        </button>
+        <button 
+          className={`btn btn-sm ${activeTab === 'pending' ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => setActiveTab('pending')}
+        >
+          ⏳ Pendientes ({invoices.filter(i => i.status === 'pending').length})
+        </button>
+        <button 
+          className={`btn btn-sm ${activeTab === 'paid' ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => setActiveTab('paid')}
+        >
+          ✅ Cobradas ({invoices.filter(i => i.status === 'paid').length})
+        </button>
+        <button 
+          className={`btn btn-sm ${activeTab === 'settings' ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => setActiveTab('settings')}
+        >
+          ⚙️ Ajustes Factura
+        </button>
+      </div>
+
+      {/* Tab Contents */}
+      {loading ? (
+        <div className="flex justify-center p-8"><div className="spinner"></div></div>
+      ) : activeTab === 'settings' ? (
+        /* Settings Tab */
+        <div className="card">
+          <h3 className="text-md font-bold mb-4 border-b pb-2 flex items-center gap-2" style={{ color: 'var(--color-primary)' }}>
+            ⚙️ Configuración del Documento de Factura
+          </h3>
+          <form onSubmit={handleSaveSettings}>
+            <div className="grid grid-2 gap-4">
+              <div className="form-group">
+                <label className="form-label">Nombre Comercial de la Empresa</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  required
+                  value={settingsForm.companyName}
+                  onChange={e => setSettingsForm({...settingsForm, companyName: e.target.value})}
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">NIF / CIF de la Empresa</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  required
+                  value={settingsForm.nif}
+                  onChange={e => setSettingsForm({...settingsForm, nif: e.target.value})}
+                />
+              </div>
+              <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                <label className="form-label">Dirección Fiscal / Domicilio Social</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  required
+                  value={settingsForm.address}
+                  onChange={e => setSettingsForm({...settingsForm, address: e.target.value})}
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Teléfono de Contacto</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  required
+                  value={settingsForm.phone}
+                  onChange={e => setSettingsForm({...settingsForm, phone: e.target.value})}
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Persona de Contacto (Preguntas Factura)</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  required
+                  value={settingsForm.contactPerson}
+                  onChange={e => setSettingsForm({...settingsForm, contactPerson: e.target.value})}
+                />
+              </div>
+              <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                <label className="form-label">Cuenta Bancaria para Transferencia (IBAN)</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  placeholder="Ej: ES21 0000 0000 0000 0000 0000"
+                  value={settingsForm.bankAccount}
+                  onChange={e => setSettingsForm({...settingsForm, bankAccount: e.target.value})}
+                />
+              </div>
+              
+              {/* Logo Settings */}
+              <div className="form-group" style={{ gridColumn: 'span 2', padding: '16px', background: '#f8fafc', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', marginTop: '10px' }}>
+                <h4 style={{ fontWeight: 'bold', fontSize: '0.875rem', marginBottom: '12px' }}>🖼️ Logotipo Corporativo</h4>
+                <div style={{ display: 'flex', gap: '24px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  {settingsForm.logoBase64 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center' }}>
+                      <img 
+                        src={settingsForm.logoBase64} 
+                        alt="Preview" 
+                        style={{ maxHeight: '80px', maxWidth: '200px', objectFit: 'contain', background: '#fff', padding: '6px', border: '1px solid #e2e8f0', borderRadius: '4px' }}
+                      />
+                      <button 
+                        type="button" 
+                        className="btn btn-ghost btn-sm"
+                        style={{ color: '#dc2626', fontSize: '11px', padding: '2px 8px' }}
+                        onClick={() => setSettingsForm({...settingsForm, logoBase64: ''})}
+                      >
+                        ✕ Eliminar Logo
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ border: '2px dashed #cbd5e1', padding: '20px', borderRadius: '8px', textAlign: 'center', flex: 1, color: '#64748b' }}>
+                      <p className="text-xs mb-2">No se ha subido ningún logotipo para el PDF.</p>
+                      <label className="btn btn-outline btn-sm" style={{ cursor: 'pointer', display: 'inline-flex' }}>
+                        📁 Seleccionar Imagen
+                        <input 
+                          type="file" 
+                          accept="image/*" 
+                          style={{ display: 'none' }}
+                          onChange={handleLogoUpload}
+                        />
+                      </label>
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', gap: '12px', flex: 1, minWidth: '200px' }}>
+                    <div style={{ flex: 1 }}>
+                      <label className="form-label" style={{ fontSize: '11px' }}>Ancho en PDF (mm)</label>
+                      <input 
+                        type="number" 
+                        className="form-input"
+                        min="10"
+                        max="100"
+                        value={settingsForm.logoWidth}
+                        onChange={e => setSettingsForm({...settingsForm, logoWidth: parseInt(e.target.value) || 45})}
+                      />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label className="form-label" style={{ fontSize: '11px' }}>Alto en PDF (mm)</label>
+                      <input 
+                        type="number" 
+                        className="form-input"
+                        min="5"
+                        max="50"
+                        value={settingsForm.logoHeight}
+                        onChange={e => setSettingsForm({...settingsForm, logoHeight: parseInt(e.target.value) || 20})}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Invoice Numbering Settings */}
+              <div className="form-group" style={{ gridColumn: 'span 2', padding: '16px', background: '#f0fdf4', borderRadius: 'var(--radius-md)', border: '1px solid #bbf7d0', marginTop: '10px' }}>
+                <h4 style={{ fontWeight: 'bold', fontSize: '0.875rem', marginBottom: '12px' }}>🔢 Numeración de Facturas</h4>
+                <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                  <div style={{ flex: 1, minWidth: '180px' }}>
+                    <label className="form-label" style={{ fontSize: '11px' }}>Próximo nº de factura</label>
+                    <input 
+                      type="number" 
+                      className="form-input"
+                      min="1"
+                      value={settingsForm.nextInvoiceSeq}
+                      onChange={e => setSettingsForm({...settingsForm, nextInvoiceSeq: parseInt(e.target.value) || 1})}
+                    />
+                    <p style={{ fontSize: '10px', color: '#64748b', marginTop: '4px' }}>
+                      Este será el número de la próxima factura que se emita. Puedes cambiarlo para empezar desde cualquier número.
+                    </p>
+                  </div>
+                  <div style={{ flex: 1, minWidth: '180px' }}>
+                    <label className="form-label" style={{ fontSize: '11px' }}>Formato de numeración</label>
+                    <select 
+                      className="form-select"
+                      value={settingsForm.invoiceNumberFormat}
+                      onChange={e => setSettingsForm({...settingsForm, invoiceNumberFormat: e.target.value})}
+                    >
+                      <option value="numeric">Numérico simple (59, 60, 61...)</option>
+                      <option value="formatted">Con prefijo (F-2026-0059, F-2026-0060...)</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={{ marginTop: '8px', padding: '8px 12px', background: '#fff', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                  <span style={{ fontSize: '11px', color: '#64748b' }}>Vista previa del próximo número: </span>
+                  <strong style={{ fontSize: '13px', color: 'var(--color-primary)' }}>
+                    {settingsForm.invoiceNumberFormat === 'formatted' 
+                      ? `F-${new Date().getFullYear()}-${String(settingsForm.nextInvoiceSeq || 1).padStart(4, '0')}`
+                      : String(settingsForm.nextInvoiceSeq || 1)
+                    }
+                  </strong>
+                </div>
+              </div>
+
+              {/* PDF Save Configuration */}
+              <div className="form-group" style={{ gridColumn: 'span 2', padding: '16px', background: '#eff6ff', borderRadius: 'var(--radius-md)', border: '1px solid #bfdbfe', marginTop: '10px' }}>
+                <h4 style={{ fontWeight: 'bold', fontSize: '0.875rem', marginBottom: '12px' }}>💾 Configuración de Guardado de PDF</h4>
+                <div style={{ marginBottom: '12px' }}>
+                  <label className="form-label" style={{ fontSize: '11px' }}>Patrón de nombre del archivo</label>
+                  <input 
+                    type="text" 
+                    className="form-input"
+                    value={settingsForm.fileNamePattern}
+                    onChange={e => setSettingsForm({...settingsForm, fileNamePattern: e.target.value})}
+                    placeholder="Factura_{numero}_{comunidad}"
+                  />
+                  <p style={{ fontSize: '10px', color: '#64748b', marginTop: '4px' }}>
+                    Variables disponibles: <code>{'{numero}'}</code> <code>{'{comunidad}'}</code> <code>{'{fecha}'}</code> <code>{'{mes}'}</code> <code>{'{año}'}</code>
+                  </p>
+                  <div style={{ marginTop: '4px', padding: '6px 10px', background: '#fff', borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '11px' }}>
+                    Ejemplo: <strong>{(settingsForm.fileNamePattern || 'Factura_{numero}_{comunidad}')
+                      .replace('{numero}', '59')
+                      .replace('{comunidad}', 'Edif_Los_Olivos')
+                      .replace('{fecha}', format(new Date(), 'dd-MM-yyyy'))
+                      .replace('{mes}', 'Junio')
+                      .replace('{año}', String(new Date().getFullYear()))
+                    }.pdf</strong>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <input 
+                    type="checkbox"
+                    id="useSaveAsDialog"
+                    checked={settingsForm.useSaveAsDialog || false}
+                    onChange={e => setSettingsForm({...settingsForm, useSaveAsDialog: e.target.checked})}
+                    style={{ width: '18px', height: '18px', accentColor: 'var(--color-primary)' }}
+                  />
+                  <label htmlFor="useSaveAsDialog" style={{ fontSize: '0.8125rem', cursor: 'pointer' }}>
+                    Usar diálogo "Guardar Como" para elegir carpeta al descargar
+                    {!window.showSaveFilePicker && (
+                      <span style={{ color: '#d97706', fontSize: '11px', display: 'block' }}>
+                        ⚠️ Tu navegador no soporta esta función. Usa Chrome o Edge para habilitarla.
+                      </span>
+                    )}
+                  </label>
+                </div>
+              </div>
+
+              <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                <label className="form-label">Texto de Inscripción Mercantil (Pie de Página)</label>
+                <textarea 
+                  className="form-textarea" 
+                  rows="3"
+                  value={settingsForm.inscriptionText}
+                  onChange={e => setSettingsForm({...settingsForm, inscriptionText: e.target.value})}
+                />
+              </div>
+            </div>
+            <div className="modal-footer" style={{ borderTop: 'none', padding: '16px 0 0 0' }}>
+              <button type="submit" className="btn btn-primary" disabled={actionLoading}>
+                {actionLoading ? 'Guardando...' : 'Guardar Ajustes'}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : (
+        /* Invoices Table View */
+        <div className="card overflow-x-auto">
+          <table className="w-full text-left border-collapse min-w-[700px]">
+            <thead>
+              <tr className="bg-slate-50 text-xs uppercase font-bold text-muted border-b">
+                <th className="p-3">{activeTab === 'drafts' ? 'Borrador' : 'Factura Nº'}</th>
+                <th className="p-3">Comunidad</th>
+                <th className="p-3 text-center">CIF/NIF</th>
+                <th className="p-3 text-center">Base Imponible</th>
+                <th className="p-3 text-center">IVA</th>
+                <th className="p-3 text-center">Importe Total</th>
+                <th className="p-3 text-right">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredInvoices.length === 0 ? (
+                <tr>
+                  <td colSpan="7" className="p-6 text-center text-muted italic">
+                    No hay facturas registradas en este estado para el periodo seleccionado.
+                  </td>
+                </tr>
+              ) : (
+                filteredInvoices.map(inv => (
+                  <tr key={inv.id} className="border-b last:border-0 hover:bg-slate-50 transition-colors">
+                    <td className="p-3 font-semibold">
+                      {activeTab === 'drafts' ? '📝 Borrador' : `📄 ${inv.invoiceNumber}`}
+                    </td>
+                    <td className="p-3">
+                      <div className="font-semibold text-slate-800">{inv.client.name}</div>
+                      {activeTab !== 'drafts' && inv.issueDate && (
+                        <div className="text-[10px] text-muted">
+                          Emitida: {format(inv.issueDate.toDate ? inv.issueDate.toDate() : new Date(inv.issueDate), 'dd/MM/yyyy')}
+                        </div>
+                      )}
+                    </td>
+                    <td className="p-3 text-center text-sm font-medium text-slate-600">
+                      {inv.client.cif || '—'}
+                    </td>
+                    <td className="p-3 text-center text-sm">
+                      {inv.subtotal.toLocaleString('es-ES', { minimumFractionDigits: 2 })} €
+                    </td>
+                    <td className="p-3 text-center text-xs text-muted">
+                      {inv.taxAmount.toLocaleString('es-ES', { minimumFractionDigits: 2 })} € ({inv.taxRate}%)
+                    </td>
+                    <td className="p-3 text-center font-bold text-slate-800">
+                      {inv.totalAmount.toLocaleString('es-ES', { minimumFractionDigits: 2 })} €
+                    </td>
+                    <td className="p-3 text-right">
+                      <div className="flex justify-end gap-1.5 flex-wrap">
+                        {inv.status === 'draft' && (
+                          <>
+                            <button 
+                              className="btn btn-xs btn-success"
+                              onClick={() => handleEmitInvoice(inv.id)}
+                              disabled={actionLoading}
+                              title="Emitir Factura Oficial"
+                            >
+                              🚀 Emitir
+                            </button>
+                            <button 
+                              className="btn btn-xs btn-secondary"
+                              onClick={() => handleOpenEdit(inv)}
+                              disabled={actionLoading}
+                              title="Editar conceptos o datos fiscales"
+                            >
+                              ✏️ Editar
+                            </button>
+                          </>
+                        )}
+                        {inv.status === 'pending' && (
+                          <>
+                            <button 
+                              className="btn btn-xs btn-success"
+                              onClick={() => handleMarkAsPaid(inv.id)}
+                              disabled={actionLoading}
+                              title="Marcar como cobrada"
+                            >
+                              💸 Cobrada
+                            </button>
+                            <button 
+                              className="btn btn-xs btn-secondary"
+                              onClick={() => handleOpenEdit(inv)}
+                              disabled={actionLoading}
+                              title="Editar factura emitida"
+                            >
+                              ✏️ Editar
+                            </button>
+                          </>
+                        )}
+                        {inv.status === 'paid' && (
+                          <>
+                            <button 
+                              className="btn btn-xs btn-ghost text-xs"
+                              onClick={() => handleResetToPending(inv.id)}
+                              disabled={actionLoading}
+                              style={{ color: '#d97706' }}
+                              title="Deshacer cobro (volver a pendiente)"
+                            >
+                              🔄 Deshacer
+                            </button>
+                            <button 
+                              className="btn btn-xs btn-secondary"
+                              onClick={() => handleOpenEdit(inv)}
+                              disabled={actionLoading}
+                              title="Editar factura emitida"
+                            >
+                              ✏️ Editar
+                            </button>
+                          </>
+                        )}
+                        <button 
+                          className="btn btn-xs btn-outline"
+                          onClick={() => generatePDF(inv, 'preview')}
+                          title="Vista previa de la factura"
+                        >
+                          👁️ Ver
+                        </button>
+                        <button 
+                          className="btn btn-xs btn-outline"
+                          onClick={() => generatePDF(inv)}
+                          title="Descargar Factura PDF"
+                        >
+                          📥 PDF
+                        </button>
+                        <button 
+                          className="btn btn-xs"
+                          style={{ backgroundColor: '#25d366', color: 'white', border: 'none' }}
+                          onClick={() => handleSendWhatsApp(inv)}
+                          title="Enviar detalles por WhatsApp"
+                        >
+                          💬 WA
+                        </button>
+                        <button 
+                          className="btn btn-ghost btn-xs text-danger ml-1"
+                          onClick={() => handleDeleteInvoice(inv.id)}
+                          disabled={actionLoading}
+                          title="Eliminar factura"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Modal: Edit Invoice */}
+      {editModal.open && editModal.invoice && (
+        <div className="modal-overlay" onClick={() => setEditModal({ open: false, invoice: null })}>
+          <div className="modal" style={{ maxWidth: '650px', width: '95vw' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">
+                {editModal.invoice.status === 'draft' ? 'Editar Factura Borrador' : `✏️ Editar Factura Emitida (${editModal.invoice.invoiceNumber})`}
+              </h3>
+              <button className="btn btn-ghost btn-sm" onClick={() => setEditModal({ open: false, invoice: null })}>✕</button>
+            </div>
+            <form onSubmit={handleSaveInvoiceEdit}>
+              <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+                
+                {editModal.invoice.status !== 'draft' && (
+                  <div style={{ background: '#fef3c7', border: '1px solid #fbbf24', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <span style={{ fontSize: '1.2rem' }}>⚠️</span>
+                    <div style={{ fontSize: '0.8125rem', color: '#92400e' }}>
+                      <strong>Factura ya emitida</strong>. Los cambios en los datos y conceptos se guardarán, pero el número de factura no se modificará.
+                    </div>
+                  </div>
+                )}
+
+                {/* Client fiscal details section */}
+                <h4 style={{ fontWeight: 'bold', fontSize: '0.875rem', marginBottom: '10px', color: 'var(--color-primary)' }}>👤 Datos Fiscales del Cliente</h4>
+                <div className="grid grid-2 gap-3 mb-4">
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontSize: '12px' }}>Nombre / Razón Social</label>
+                    <input 
+                      type="text" 
+                      className="form-input" 
+                      required
+                      value={editForm.clientName}
+                      onChange={e => setEditForm({...editForm, clientName: e.target.value})}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontSize: '12px' }}>CIF / NIF</label>
+                    <input 
+                      type="text" 
+                      className="form-input" 
+                      value={editForm.clientCif}
+                      onChange={e => setEditForm({...editForm, clientCif: e.target.value})}
+                    />
+                  </div>
+                  <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                    <label className="form-label" style={{ fontSize: '12px' }}>Dirección de Facturación</label>
+                    <input 
+                      type="text" 
+                      className="form-input" 
+                      value={editForm.clientAddress}
+                      onChange={e => setEditForm({...editForm, clientAddress: e.target.value})}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontSize: '12px' }}>Email / Teléfono de Envío</label>
+                    <input 
+                      type="text" 
+                      className="form-input" 
+                      placeholder="Ej: admin@comunidad.com"
+                      value={editForm.clientEmail}
+                      onChange={e => setEditForm({...editForm, clientEmail: e.target.value})}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontSize: '12px' }}>Método de Pago</label>
+                    <select 
+                      className="form-select"
+                      value={editForm.paymentMethod}
+                      onChange={e => setEditForm({...editForm, paymentMethod: e.target.value})}
+                    >
+                      <option value="transferencia">Transferencia Bancaria</option>
+                      <option value="recibo">Recibo Domiciliado</option>
+                      <option value="efectivo">Efectivo</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Concept rows list */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', borderTop: '1px solid #e2e8f0', paddingTop: '12px' }}>
+                  <h4 style={{ fontWeight: 'bold', fontSize: '0.875rem', color: 'var(--color-primary)', margin: 0 }}>📋 Conceptos Facturados</h4>
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={handleAddItemRow}>
+                    ➕ Añadir Concepto
+                  </button>
+                </div>
+
+                <div className="flex flex-col gap-3 mb-4">
+                  {editForm.items.map((item, idx) => (
+                    <div key={idx} style={{ display: 'flex', gap: '8px', alignItems: 'center', background: '#f8fafc', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                      <div style={{ flex: 1 }}>
+                        <label className="form-label" style={{ fontSize: '11px', marginBottom: '2px' }}>Descripción</label>
+                        <input 
+                          type="text" 
+                          className="form-input"
+                          required
+                          placeholder="Ej: Limpieza mantenimiento"
+                          value={item.description}
+                          onChange={e => handleItemChange(idx, 'description', e.target.value)}
+                        />
+                      </div>
+                      <div style={{ width: '60px' }}>
+                        <label className="form-label" style={{ fontSize: '11px', marginBottom: '2px' }}>Cant.</label>
+                        <input 
+                          type="number" 
+                          className="form-input text-center"
+                          style={{ padding: '8px 4px' }}
+                          required
+                          min="0.1"
+                          step="0.1"
+                          value={item.quantity}
+                          onChange={e => handleItemChange(idx, 'quantity', e.target.value)}
+                        />
+                      </div>
+                      <div style={{ width: '90px' }}>
+                        <label className="form-label" style={{ fontSize: '11px', marginBottom: '2px' }}>Precio (€)</label>
+                        <input 
+                          type="number" 
+                          className="form-input text-right"
+                          style={{ padding: '8px' }}
+                          required
+                          min="0"
+                          step="0.01"
+                          value={item.price}
+                          onChange={e => handleItemChange(idx, 'price', e.target.value)}
+                        />
+                      </div>
+                      <div style={{ width: '90px' }}>
+                        <label className="form-label" style={{ fontSize: '11px', marginBottom: '2px' }}>Total (€)</label>
+                        <input 
+                          type="text" 
+                          className="form-input text-right"
+                          style={{ padding: '8px', background: '#f1f5f9', fontWeight: 'bold' }}
+                          readOnly
+                          value={(item.total || 0).toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+                        />
+                      </div>
+                      <button 
+                        type="button" 
+                        className="btn btn-ghost btn-icon text-danger"
+                        style={{ alignSelf: 'flex-end', minWidth: '36px' }}
+                        onClick={() => handleRemoveItemRow(idx)}
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Invoice calculations summary */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '20px', borderTop: '1px solid #e2e8f0', paddingTop: '12px' }}>
+                  <div style={{ width: '100px' }}>
+                    <label className="form-label" style={{ fontSize: '11px' }}>Tipo IVA (%)</label>
+                    <input 
+                      type="number" 
+                      className="form-input text-center"
+                      min="0"
+                      max="100"
+                      value={editForm.taxRate}
+                      onChange={e => setEditForm({...editForm, taxRate: parseFloat(e.target.value) || 0})}
+                    />
+                  </div>
+                  <div style={{ textAlign: 'right', fontSize: '0.875rem', display: 'flex', flexDirection: 'column', gap: '4px', alignSelf: 'flex-end' }}>
+                    <div>
+                      Subtotal: <strong className="text-slate-800">
+                        {editForm.items.reduce((sum, item) => sum + (parseFloat(item.total) || 0), 0).toLocaleString('es-ES', { minimumFractionDigits: 2 })} €
+                      </strong>
+                    </div>
+                    <div>
+                      IVA ({editForm.taxRate}%): <strong className="text-slate-800">
+                        {(editForm.items.reduce((sum, item) => sum + (parseFloat(item.total) || 0), 0) * (editForm.taxRate / 100)).toLocaleString('es-ES', { minimumFractionDigits: 2 })} €
+                      </strong>
+                    </div>
+                    <div style={{ fontSize: '1.05rem', marginTop: '4px' }}>
+                      Importe Total: <strong className="text-primary" style={{ fontSize: '1.2rem' }}>
+                        {(editForm.items.reduce((sum, item) => sum + (parseFloat(item.total) || 0), 0) * (1 + editForm.taxRate / 100)).toLocaleString('es-ES', { minimumFractionDigits: 2 })} €
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setEditModal({ open: false, invoice: null })} disabled={actionLoading}>
+                  Cancelar
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={actionLoading}>
+                  {actionLoading ? 'Guardando...' : 'Guardar Factura'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Preview PDF */}
+      {previewModal.open && (
+        <div className="modal-overlay" onClick={() => {
+          if (previewModal.pdfUrl) URL.revokeObjectURL(previewModal.pdfUrl);
+          setPreviewModal({ open: false, pdfUrl: '' });
+        }}>
+          <div 
+            className="modal" 
+            style={{ maxWidth: '900px', width: '95vw', height: '90vh', display: 'flex', flexDirection: 'column' }} 
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h3 className="modal-title">👁️ Vista Previa de Factura</h3>
+              <div className="flex gap-2">
+                <button 
+                  className="btn btn-primary btn-sm" 
+                  onClick={() => {
+                    const a = document.createElement('a');
+                    a.href = previewModal.pdfUrl;
+                    a.download = 'Factura_preview.pdf';
+                    a.click();
+                  }}
+                >
+                  📥 Descargar PDF
+                </button>
+                <button 
+                  className="btn btn-ghost btn-sm" 
+                  onClick={() => {
+                    if (previewModal.pdfUrl) URL.revokeObjectURL(previewModal.pdfUrl);
+                    setPreviewModal({ open: false, pdfUrl: '' });
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            <div style={{ flex: 1, overflow: 'hidden', background: '#f1f5f9' }}>
+              <iframe 
+                src={previewModal.pdfUrl} 
+                style={{ width: '100%', height: '100%', border: 'none' }}
+                title="Vista previa de factura"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -322,7 +322,7 @@ export default function ReportsPage() {
                 </div>
                 <span style={{ minWidth: '100px', textAlign: 'center' }} title={hasCompanions ? `Con: ${companions.join(', ')}` : 'Solo'}>
                   {hasCompanions ? (
-                    <span className="badge" style={{ background: 'var(--color-primary-light, #e0e7ff)', color: 'var(--color-primary)', transform: 'scale(0.85)', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                    <span className="badge" style={{ background: 'var(--color-bg, #f3f4f6)', color: 'var(--text-muted)', transform: 'scale(0.85)', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
                       👥 {companions.map(n => n.split(' ')[0]).join(', ')}
                     </span>
                   ) : (
@@ -783,7 +783,7 @@ export default function ReportsPage() {
                         <td className="text-sm">{getOperarioName(s.assignedUserId)}</td>
                         <td className="text-sm">
                           {(s.companionIds && s.companionIds.length > 0) ? (
-                            <span className="badge" style={{ background: 'var(--color-primary-light, #e0e7ff)', color: 'var(--color-primary)', display: 'inline-flex', alignItems: 'center', gap: '3px' }} title={s.companionIds.map(id => getOperarioName(id)).join(', ')}>
+                            <span className="badge" style={{ background: 'var(--color-bg, #f3f4f6)', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: '3px' }} title={s.companionIds.map(id => getOperarioName(id)).join(', ')}>
                               👥 {s.companionIds.map(id => getOperarioName(id).split(' ')[0]).join(', ')}
                             </span>
                           ) : (

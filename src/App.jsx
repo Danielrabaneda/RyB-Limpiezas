@@ -50,6 +50,7 @@ const DashboardPage = lazy(() => import('./pages/admin/DashboardPage'));
 const CommunitiesPage = lazy(() => import('./pages/admin/CommunitiesPage'));
 const OperariosPage = lazy(() => import('./pages/admin/OperariosPage'));
 const ReportsPage = lazy(() => import('./pages/admin/ReportsPage'));
+const InvoicesPage = lazy(() => import('./pages/admin/InvoicesPage'));
 const KilometrajePage = lazy(() => import('./pages/admin/KilometrajePage'));
 const InventoryPage = lazy(() => import('./pages/admin/InventoryPage'));
 const ControlHorarioPage = lazy(() => import('./pages/admin/ControlHorarioPage'));
@@ -123,7 +124,12 @@ function ProtectedRoute({ children, requiredRole }) {
   }
 
   if (requiredRole && userProfile?.role !== requiredRole) {
-    return <Navigate to={userProfile?.role === 'admin' ? '/admin' : '/operario'} />;
+    // Admins can access operario pages too
+    if (requiredRole === 'operario' && userProfile?.role === 'admin') {
+      // Allow admin to access operario pages
+    } else {
+      return <Navigate to={userProfile?.role === 'admin' ? '/admin' : '/operario'} />;
+    }
   }
 
   return children;
@@ -185,6 +191,7 @@ function AdminLayout() {
     { path: '/admin/operarios', icon: '👷', label: 'Operarios' },
     { path: '/admin/control-horario', icon: '⏱️', label: 'Control Horario' },
     { path: '/admin/informes', icon: '📈', label: 'Informes' },
+    { path: '/admin/facturas', icon: '📄', label: 'Facturas' },
     { path: '/admin/evidencias', icon: '📸', label: 'Evidencias' },
     { path: '/admin/kilometraje', icon: '🚗', label: 'Kilometraje' },
     { path: '/admin/inventory', icon: '📦', label: 'Materiales' },
@@ -248,6 +255,19 @@ function AdminLayout() {
               )}
             </NavLink>
           ))}
+          
+          <div style={{ margin: '15px 12px 5px', borderTop: '1px solid rgba(255, 255, 255, 0.1)' }} />
+          <NavLink
+            to="/operario"
+            className="sidebar-link flex items-center justify-between"
+            style={{ color: '#3b82f6', fontWeight: 'bold' }}
+            onClick={() => setSidebarOpen(false)}
+          >
+            <div className="flex items-center gap-3">
+              <span className="sidebar-link-icon">👷</span>
+              Vista de Operario
+            </div>
+          </NavLink>
         </nav>
 
         <div className="sidebar-footer">
@@ -422,7 +442,11 @@ function RootRedirect() {
     return hasAdmins ? <LandingPage /> : <Navigate to="/setup" />;
   }
   
-  if (userProfile?.role === 'admin') return <Navigate to="/admin" />;
+  if (userProfile?.role === 'admin') {
+    // If the admin logs in on a mobile screen (width < 768px), redirect them to operario view by default
+    const isMobile = window.innerWidth < 768;
+    return <Navigate to={isMobile ? '/operario' : '/admin'} />;
+  }
   return <Navigate to="/operario" />;
 }
 
@@ -464,6 +488,7 @@ export default function App() {
                   <Route path="operarios" element={<OperariosPage />} />
                   <Route path="control-horario" element={<ControlHorarioPage />} />
                   <Route path="informes" element={<ReportsPage />} />
+                  <Route path="facturas" element={<InvoicesPage />} />
                   <Route path="evidencias" element={<EvidenceReportsPage />} />
                   <Route path="kilometraje" element={<KilometrajePage />} />
                   <Route path="inventory" element={<InventoryPage />} />

@@ -25,9 +25,10 @@ export async function createAdminUser(email, password, name) {
 }
 
 export async function getOperarios() {
-  const q = query(collection(db, 'users'), where('role', '==', 'operario'));
-  const snap = await getDocs(q);
-  return snap.docs.map(d => ({ uid: d.id, ...d.data() }));
+  const snap = await getDocs(collection(db, 'users'));
+  return snap.docs
+    .map(d => ({ uid: d.id, ...d.data() }))
+    .filter(u => u.role === 'operario' || u.isOperario === true);
 }
 
 export async function getAllUsers() {

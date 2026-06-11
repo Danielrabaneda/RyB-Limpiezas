@@ -191,6 +191,11 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    match /invoices/{invoiceId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
     match /products/{productId} {
       allow read: if isAuthenticated();
       allow write: if isAdmin();

@@ -125,6 +125,9 @@ export default function OperariosPage() {
                         {op.name?.charAt(0) || '?'}
                       </div>
                       <span className="font-semibold">{op.name}</span>
+                      {op.role === 'admin' && (
+                        <span className="badge bg-blue-100 text-blue-800 border-0 text-[10px] px-1.5 py-0.5 ml-2" style={{ textTransform: 'uppercase' }}>Admin</span>
+                      )}
                     </div>
                   </td>
                   <td className="text-muted text-sm">{op.email}</td>
@@ -136,27 +139,33 @@ export default function OperariosPage() {
                   </td>
                   <td>
                     <div className="flex flex-wrap gap-1">
-                      <button className="btn btn-secondary btn-sm" onClick={() => handleToggleActive(op)}>
-                        {op.active ? '⏸️' : '▶️'} {op.active ? 'Desactivar' : 'Activar'}
-                      </button>
-                      <button className="btn btn-ghost btn-sm" onClick={() => handleResetPassword(op.email)}
-                        title="Resetear contraseña"
-                      >
-                        🔑 Reset
-                      </button>
-                      <button 
-                        className="btn btn-ghost btn-sm" 
-                        onClick={() => setDeleteConfirm({ 
-                          open: true, 
-                          operario: op, 
-                          inputName: '',
-                          options: { deleteHistory: false, deleteMaterials: false, deleteReports: false }
-                        })}
-                        style={{ color: 'var(--color-danger)' }}
-                        title="Eliminar operario"
-                      >
-                        🗑️
-                      </button>
+                      {op.role !== 'admin' ? (
+                        <>
+                          <button className="btn btn-secondary btn-sm" onClick={() => handleToggleActive(op)}>
+                            {op.active ? '⏸️' : '▶️'} {op.active ? 'Desactivar' : 'Activar'}
+                          </button>
+                          <button className="btn btn-ghost btn-sm" onClick={() => handleResetPassword(op.email)}
+                            title="Resetear contraseña"
+                          >
+                            🔑 Reset
+                          </button>
+                          <button 
+                            className="btn btn-ghost btn-sm" 
+                            onClick={() => setDeleteConfirm({ 
+                              open: true, 
+                              operario: op, 
+                              inputName: '',
+                              options: { deleteHistory: false, deleteMaterials: false, deleteReports: false }
+                            })}
+                            style={{ color: 'var(--color-danger)' }}
+                            title="Eliminar operario"
+                          >
+                            🗑️
+                          </button>
+                        </>
+                      ) : (
+                        <span className="text-xs text-muted italic" style={{ padding: '4px 8px' }}>Gestionar desde Ajustes</span>
+                      )}
                     </div>
                   </td>
                 </tr>

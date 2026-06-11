@@ -114,7 +114,7 @@ export function AuthProvider({ children }) {
     signup,
     createOperario,
     isAdmin: userProfile?.role === 'admin',
-    isOperario: userProfile?.role === 'operario',
+    isOperario: userProfile?.role === 'operario' || userProfile?.isOperario === true,
   };
 
   return (

@@ -97,13 +97,45 @@ export default function ServiceDetailPage() {
     const sIn = localStorage.getItem(`detected_entry_${serviceId}`);
     const sOut = localStorage.getItem(`detected_exit_${serviceId}`);
     if (sIn) setSuggestedIn(new Date(sIn));
-    if (sOut) setSuggestedOut(new Date(sOut));
+    if (sOut) {
+      setSuggestedOut(new Date(sOut));
+    } else {
+      // Comprobar si hay un pending exit que debería promoverse a confirmed
+      // (por ejemplo, la app estaba suspendida y no se pudo confirmar en su momento)
+      const pendingRaw = localStorage.getItem(`detected_exit_pending_${serviceId}`);
+      if (pendingRaw) {
+        try {
+          const pending = JSON.parse(pendingRaw);
+          const elapsed = Date.now() - pending.firstDetectedAt;
+          if (elapsed >= 5 * 60 * 1000) {
+            // Han pasado más de 5 min → promover a confirmed
+            localStorage.setItem(`detected_exit_${serviceId}`, pending.exitTime);
+            localStorage.removeItem(`detected_exit_pending_${serviceId}`);
+            setSuggestedOut(new Date(pending.exitTime));
+          }
+        } catch (e) { /* ignore */ }
+      }
+    }
 
-    // Polling para detectar cuando el GeolocationTracker confirma una salida (tras 5 min)
+    // Polling para detectar salida confirmada o promover pending exits
     const exitPollInterval = setInterval(() => {
       const confirmedExit = localStorage.getItem(`detected_exit_${serviceId}`);
       if (confirmedExit && !suggestedOut) {
         setSuggestedOut(new Date(confirmedExit));
+      } else if (!confirmedExit && !suggestedOut) {
+        // Comprobar si hay un pending que debería promoverse
+        const pendingRaw = localStorage.getItem(`detected_exit_pending_${serviceId}`);
+        if (pendingRaw) {
+          try {
+            const pending = JSON.parse(pendingRaw);
+            const elapsed = Date.now() - pending.firstDetectedAt;
+            if (elapsed >= 5 * 60 * 1000) {
+              localStorage.setItem(`detected_exit_${serviceId}`, pending.exitTime);
+              localStorage.removeItem(`detected_exit_pending_${serviceId}`);
+              setSuggestedOut(new Date(pending.exitTime));
+            }
+          } catch (e) { /* ignore */ }
+        }
       }
     }, 10_000); // cada 10 segundos
 
@@ -297,6 +329,50 @@ export default function ServiceDetailPage() {
     setActionLoading(true);
     try {
       const pos = await getCurrentPosition();
+      
+      // Si no se proporcionó hora manual, verificar si el usuario está lejos
+      // y hay una hora de salida detectada que debería ofrecerse
+      if (!manualTime && community?.location) {
+        const commLat = community.location._lat || community.location.latitude || 0;
+        const commLng = community.location._long || community.location.longitude || 0;
+        const check = isWithinRange(pos.lat, pos.lng, commLat, commLng, 500);
+        setDistanceInfo(check);
+        
+        if (!check.withinRange) {
+          // Buscar hora de salida detectada (confirmed o pending)
+          let detectedExitTime = null;
+          const confirmedRaw = localStorage.getItem(`detected_exit_${serviceId}`);
+          const pendingRaw = localStorage.getItem(`detected_exit_pending_${serviceId}`);
+          
+          if (confirmedRaw) {
+            detectedExitTime = new Date(confirmedRaw);
+          } else if (pendingRaw) {
+            try {
+              const pending = JSON.parse(pendingRaw);
+              detectedExitTime = new Date(pending.exitTime);
+            } catch (e) { /* ignore */ }
+          }
+          
+          if (detectedExitTime) {
+            const diffMs = Date.now() - detectedExitTime.getTime();
+            const diffMinutes = Math.round(diffMs / 60000);
+            
+            if (diffMinutes >= 5) {
+              const useDetected = window.confirm(
+                `Estás a ${check.distance}m de la comunidad.\n\n` +
+                `Se detectó tu salida a las ${format(detectedExitTime, 'HH:mm')} (hace ${diffMinutes} min).\n\n` +
+                `¿Usar las ${format(detectedExitTime, 'HH:mm')} como hora de finalización?\n\n` +
+                `Aceptar = Usar hora detectada (${format(detectedExitTime, 'HH:mm')})\n` +
+                `Cancelar = Usar hora actual`
+              );
+              if (useDetected) {
+                manualTime = detectedExitTime;
+              }
+            }
+          }
+        }
+      }
+      
       const result = await completeCheckOut(activeCheckIn.id, pos.lat, pos.lng, manualTime);
 
       // Update status
@@ -433,6 +509,11 @@ export default function ServiceDetailPage() {
             <p className="text-sm text-muted">{community?.address}</p>
             {isCompanion && (
               <span className="badge badge-info mt-2" style={{ display: 'inline-block' }}>🤝 Modo Acompañante</span>
+            )}
+            {community?.preferredTime && (
+              <span className="badge mt-2" style={{ display: 'inline-block', background: '#fee2e2', color: '#dc2626', border: '1px solid currentColor', marginLeft: isCompanion ? '6px' : '0px' }}>
+                🕐 Hora preferida: {community.preferredTime}
+              </span>
             )}
           </div>
           <div className="flex flex-col items-end gap-2">

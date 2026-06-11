@@ -79,8 +79,15 @@ export default function GeolocationTracker() {
 
     const processPosition = async (position) => {
       try {
+        // Trackear última ejecución del GPS para detectar suspensiones de la app (iOS/Android)
+        const lastProcessedAtStr = localStorage.getItem('tracker_last_processed_at');
+        const lastProcessedAt = lastProcessedAtStr ? parseInt(lastProcessedAtStr) : 0;
+        const timeSinceLastProcess = lastProcessedAt > 0 ? (Date.now() - lastProcessedAt) : 0;
+        const wasAppSuspended = timeSinceLastProcess >= EXIT_CONFIRM_DELAY_MS;
+        localStorage.setItem('tracker_last_processed_at', Date.now().toString());
+
         const { latitude, longitude, accuracy } = position.coords;
-        console.log(`[GPS] Precisión: ${Math.round(accuracy)}m. Lat: ${latitude}, Lng: ${longitude}`);
+        console.log(`[GPS] Precisión: ${Math.round(accuracy)}m. Lat: ${latitude}, Lng: ${longitude}${wasAppSuspended ? ` [APP SUSPENDIDA ${Math.round(timeSinceLastProcess/1000)}s]` : ''}`);
 
         // 1. Verificar si hay jornada activa
         const workday = await getActiveWorkday(userProfile.uid);
@@ -139,15 +146,66 @@ export default function GeolocationTracker() {
 
             if (!isInside) {
               if (previousState === 'INSIDE') {
-                // Primera detección de salida → guardar como PENDING
-                console.log("[Tracker] SALIDA DETECTADA - Iniciando espera de 5 minutos para confirmar");
+                // Transición INSIDE → OUTSIDE
+                // Puede ser una salida real O la app acaba de despertar tras suspensión de iOS/Android
                 lastStateRef.current[activeSvc.id] = 'OUTSIDE';
-                const now = new Date().toISOString();
                 
-                localStorage.setItem(pendingKey, JSON.stringify({
-                  exitTime: now,
-                  firstDetectedAt: Date.now()
-                }));
+                const existingPendingRaw = localStorage.getItem(pendingKey);
+                const alreadyConfirmed = localStorage.getItem(confirmedKey);
+                
+                if (alreadyConfirmed) {
+                  // Ya hay una salida confirmada previamente, no sobreescribir
+                  console.log("[Tracker] Ya hay salida confirmada, no se sobreescribe");
+                } else if (existingPendingRaw) {
+                  // Hay un pending previo (de antes de que la app se suspendiera)
+                  // → NO sobreescribir. Verificar si ya pasaron los 5 minutos.
+                  try {
+                    const pending = JSON.parse(existingPendingRaw);
+                    const elapsed = Date.now() - pending.firstDetectedAt;
+                    
+                    if (elapsed >= EXIT_CONFIRM_DELAY_MS) {
+                      console.log(`[Tracker] SALIDA CONFIRMADA (pending recuperado tras suspensión, ${Math.round(elapsed/1000)}s transcurridos)`);
+                      localStorage.setItem(confirmedKey, pending.exitTime);
+                      localStorage.removeItem(pendingKey);
+                      
+                      createSystemNotification(
+                        userProfile.uid,
+                        `🏃 Salida confirmada de ${activeSvc.communityName}`,
+                        `Se detectó tu salida y llevas tiempo fuera. Puedes finalizar con la hora detectada.`,
+                        'warning',
+                        activeSvc.id
+                      );
+                    } else {
+                      console.log(`[Tracker] Pending existente recuperado, faltan ${Math.ceil((EXIT_CONFIRM_DELAY_MS - elapsed)/1000)}s para confirmar`);
+                    }
+                  } catch (e) {
+                    console.error("[Tracker] Error parsing pending exit:", e);
+                    localStorage.removeItem(pendingKey);
+                  }
+                } else if (wasAppSuspended) {
+                  // No hay pending previo pero la app estuvo suspendida >= 5 min
+                  // El usuario probablemente se marchó mientras la app dormía
+                  // Usar la última hora activa del tracker como hora estimada de salida
+                  const estimatedExitTime = new Date(lastProcessedAt).toISOString();
+                  console.log(`[Tracker] SALIDA CONFIRMADA INMEDIATA (app suspendida ${Math.round(timeSinceLastProcess/60000)} min, usuario fuera)`);
+                  localStorage.setItem(confirmedKey, estimatedExitTime);
+                  
+                  createSystemNotification(
+                    userProfile.uid,
+                    `🏃 Salida detectada de ${activeSvc.communityName}`,
+                    `Se detectó que ya no estás en la comunidad. Puedes finalizar con la hora estimada de salida.`,
+                    'warning',
+                    activeSvc.id
+                  );
+                } else {
+                  // Caso normal: primera detección de salida real, iniciar espera de 5 minutos
+                  console.log("[Tracker] SALIDA DETECTADA - Iniciando espera de 5 minutos para confirmar");
+                  const now = new Date().toISOString();
+                  localStorage.setItem(pendingKey, JSON.stringify({
+                    exitTime: now,
+                    firstDetectedAt: Date.now()
+                  }));
+                }
               } else {
                 // Ya estaba fuera (OUTSIDE) → comprobar si han pasado 5 min
                 const pendingRaw = localStorage.getItem(pendingKey);
@@ -157,18 +215,14 @@ export default function GeolocationTracker() {
                     const elapsed = Date.now() - pending.firstDetectedAt;
                     
                     if (elapsed >= EXIT_CONFIRM_DELAY_MS) {
-                      // ¡Confirmado! Han pasado 5 min fuera → promover a confirmed
                       console.log("[Tracker] SALIDA CONFIRMADA tras 5 minutos fuera");
                       localStorage.setItem(confirmedKey, pending.exitTime);
                       localStorage.removeItem(pendingKey);
                       
-                      const title = `🏃 Salida confirmada de ${activeSvc.communityName}`;
-                      const body = `Llevas 5 min fuera. Puedes finalizar el servicio con la hora de salida detectada.`;
-
                       createSystemNotification(
                         userProfile.uid,
-                        title,
-                        body,
+                        `🏃 Salida confirmada de ${activeSvc.communityName}`,
+                        `Llevas 5 min fuera. Puedes finalizar el servicio con la hora de salida detectada.`,
                         'warning',
                         activeSvc.id
                       );

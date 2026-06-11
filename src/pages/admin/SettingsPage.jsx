@@ -15,6 +15,7 @@ export default function SettingsPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileMsg, setProfileMsg] = useState('');
+  const [isOperario, setIsOperario] = useState(false);
 
   // Company state
   const [companyName, setCompanyName] = useState('RyB Limpiezas');
@@ -28,6 +29,7 @@ export default function SettingsPage() {
     if (userProfile) {
       setName(userProfile.name || '');
       setEmail(currentUser.email || '');
+      setIsOperario(userProfile.isOperario || false);
     }
   }, [userProfile, currentUser]);
 
@@ -53,8 +55,12 @@ export default function SettingsPage() {
     setProfileLoading(true);
     setProfileMsg('');
     try {
-      if (name !== userProfile.name) {
-        await updateDoc(doc(db, 'users', currentUser.uid), { name });
+      const updates = {};
+      if (name !== userProfile.name) updates.name = name;
+      if (isOperario !== (userProfile.isOperario || false)) updates.isOperario = isOperario;
+      
+      if (Object.keys(updates).length > 0) {
+        await updateDoc(doc(db, 'users', currentUser.uid), updates);
       }
       if (email !== currentUser.email) {
         await updateEmail(currentUser, email);
@@ -235,6 +241,20 @@ export default function SettingsPage() {
                   )}
                 </button>
               </div>
+            </div>
+
+            <div className="form-group flex items-center gap-2 mt-2">
+              <input 
+                type="checkbox" 
+                id="is-operario" 
+                checked={isOperario} 
+                onChange={e => setIsOperario(e.target.checked)} 
+                style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+              />
+              <label htmlFor="is-operario" className="form-label mb-0 cursor-pointer" style={{ userSelect: 'none' }}>
+                <strong>Actuar también como operario</strong>
+                <span className="block text-xs text-muted">Permite asignarte servicios y aparecer en la lista de operarios</span>
+              </label>
             </div>
 
             {profileMsg && (

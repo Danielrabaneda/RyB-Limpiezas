@@ -38,7 +38,9 @@ export default function CommunitiesPage() {
   // Form state
   const [form, setForm] = useState({
     name: '', address: '', lat: '', lng: '', type: 'comunidad',
-    contactPerson: '', contactPhone: '', individualTimeTracking: false
+    contactPerson: '', contactPhone: '', individualTimeTracking: false,
+    preferredTime: '',
+    billingCif: '', billingAddress: '', basePrice: '0', paymentMethod: 'transferencia', billingEmail: ''
   });
 
   const [taskForm, setTaskForm] = useState({
@@ -112,7 +114,10 @@ export default function CommunitiesPage() {
 
   function openCreateModal() {
     setEditingCommunity(null);
-    setForm({ name: '', address: '', lat: '', lng: '', type: 'comunidad', contactPerson: '', contactPhone: '', individualTimeTracking: false });
+    setForm({ 
+      name: '', address: '', lat: '', lng: '', type: 'comunidad', contactPerson: '', contactPhone: '', individualTimeTracking: false, preferredTime: '',
+      billingCif: '', billingAddress: '', basePrice: '0', paymentMethod: 'transferencia', billingEmail: ''
+    });
     setShowModal(true);
   }
 
@@ -127,6 +132,12 @@ export default function CommunitiesPage() {
       contactPerson: comm.contactPerson || '',
       contactPhone: comm.contactPhone || '',
       individualTimeTracking: comm.individualTimeTracking || false,
+      preferredTime: comm.preferredTime || '',
+      billingCif: comm.billingCif || '',
+      billingAddress: comm.billingAddress || '',
+      basePrice: String(comm.basePrice || 0),
+      paymentMethod: comm.paymentMethod || 'transferencia',
+      billingEmail: comm.billingEmail || '',
     });
     setShowModal(true);
     loadGPSSuggestions(comm.id);
@@ -225,6 +236,12 @@ export default function CommunitiesPage() {
         contactPerson: form.contactPerson,
         contactPhone: form.contactPhone,
         individualTimeTracking: !!form.individualTimeTracking,
+        preferredTime: form.preferredTime || null,
+        billingCif: form.billingCif || '',
+        billingAddress: form.billingAddress || '',
+        basePrice: parseFloat(form.basePrice) || 0,
+        paymentMethod: form.paymentMethod || 'transferencia',
+        billingEmail: form.billingEmail || '',
       };
 
       if (editingCommunity) {
@@ -703,6 +720,16 @@ export default function CommunitiesPage() {
                 <div><span className="text-xs text-muted">Tipo</span><p className="font-medium text-sm">{selectedCommunity.type}</p></div>
                 <div><span className="text-xs text-muted">Contacto</span><p className="font-medium text-sm">{selectedCommunity.contactPerson || '—'}</p></div>
                 <div><span className="text-xs text-muted">Teléfono</span><p className="font-medium text-sm">{selectedCommunity.contactPhone || '—'}</p></div>
+                {selectedCommunity.preferredTime && (
+                  <div><span className="text-xs text-muted">Hora preferida</span><p className="font-medium text-sm">🕐 {selectedCommunity.preferredTime}</p></div>
+                )}
+                <div><span className="text-xs text-muted">CIF/NIF Comunidad</span><p className="font-medium text-sm">{selectedCommunity.billingCif || '—'}</p></div>
+                <div><span className="text-xs text-muted">Mensualidad Base</span><p className="font-medium text-sm font-bold text-slate-800">{selectedCommunity.basePrice || 0} €</p></div>
+                <div><span className="text-xs text-muted">Email Facturación</span><p className="font-medium text-sm">{selectedCommunity.billingEmail || '—'}</p></div>
+                <div><span className="text-xs text-muted">Método Pago</span><p className="font-medium text-sm text-capitalize">{selectedCommunity.paymentMethod || 'transferencia'}</p></div>
+                {selectedCommunity.billingAddress && (
+                  <div style={{ gridColumn: 'span 2' }}><span className="text-xs text-muted">Dirección Facturación</span><p className="font-medium text-sm">{selectedCommunity.billingAddress}</p></div>
+                )}
               </div>
             </div>
 
@@ -959,6 +986,97 @@ export default function CommunitiesPage() {
                   <p className="text-xs text-muted" style={{ marginLeft: '26px' }}>
                     Si se marca, el operario no requerirá iniciar la jornada general para trabajar en servicios de esta comunidad. El tiempo general se desactivará si todos sus servicios de hoy son individuales.
                   </p>
+                </div>
+                <div className="form-group" style={{ padding: 'var(--space-3)', background: 'var(--color-bg)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', marginTop: '12px' }}>
+                  <label className="form-label flex items-center gap-2 mb-1" style={{ display: 'flex', alignItems: 'center' }}>
+                    <span style={{ fontWeight: 'bold' }}>🕐 Hora preferida de visita</span>
+                  </label>
+                  <div className="flex items-center gap-3" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <input 
+                      type="time" 
+                      className="form-input"
+                      style={{ width: '140px' }}
+                      value={form.preferredTime || ''}
+                      onChange={e => setForm(f => ({...f, preferredTime: e.target.value}))}
+                    />
+                    {form.preferredTime && (
+                      <button 
+                        type="button" 
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => setForm(f => ({...f, preferredTime: ''}))}
+                        style={{ color: '#dc2626', fontSize: '0.75rem' }}
+                      >
+                        ✕ Quitar hora
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted" style={{ marginTop: '6px' }}>
+                    Opcional. Si se indica, el optimizador de recorrido priorizará esta comunidad a la hora indicada.
+                  </p>
+                </div>
+
+                <div className="form-group" style={{ padding: 'var(--space-4)', background: '#f8fafc', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', marginTop: '12px' }}>
+                  <h4 style={{ fontWeight: 'bold', fontSize: '0.9rem', marginBottom: '10px', color: 'var(--color-primary)' }}>📄 Datos de Facturación</h4>
+                  <div className="form-row mb-3" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                    <div>
+                      <label className="form-label">CIF/NIF Comunidad</label>
+                      <input 
+                        type="text" 
+                        className="form-input" 
+                        placeholder="Ej: H73706319"
+                        value={form.billingCif || ''}
+                        onChange={e => setForm(f => ({...f, billingCif: e.target.value}))}
+                      />
+                    </div>
+                    <div>
+                      <label className="form-label">Mensualidad Base (€)</label>
+                      <input 
+                        type="number" 
+                        className="form-input" 
+                        min="0"
+                        step="0.01"
+                        placeholder="Ej: 350"
+                        value={form.basePrice || ''}
+                        onChange={e => setForm(f => ({...f, basePrice: e.target.value}))}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="form-row mb-3" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                    <div>
+                      <label className="form-label">Email de Facturación</label>
+                      <input 
+                        type="email" 
+                        className="form-input" 
+                        placeholder="Ej: admin@comunidad.com"
+                        value={form.billingEmail || ''}
+                        onChange={e => setForm(f => ({...f, billingEmail: e.target.value}))}
+                      />
+                    </div>
+                    <div>
+                      <label className="form-label">Método de Pago</label>
+                      <select 
+                        className="form-select"
+                        value={form.paymentMethod || 'transferencia'}
+                        onChange={e => setForm(f => ({...f, paymentMethod: e.target.value}))}
+                      >
+                        <option value="transferencia">Transferencia Bancaria</option>
+                        <option value="recibo">Recibo Domiciliado</option>
+                        <option value="efectivo">Efectivo</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="form-label">Dirección Fiscal / Facturación</label>
+                    <input 
+                      type="text" 
+                      className="form-input" 
+                      placeholder="Dirección fiscal si difiere de la dirección física"
+                      value={form.billingAddress || ''}
+                      onChange={e => setForm(f => ({...f, billingAddress: e.target.value}))}
+                    />
+                  </div>
                 </div>
               </div>
               <div className="modal-footer">

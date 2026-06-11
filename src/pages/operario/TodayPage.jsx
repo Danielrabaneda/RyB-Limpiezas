@@ -3,6 +3,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useNotifications } from '../../contexts/NotificationContext';
 import { getScheduledServicesForDate } from '../../services/scheduleService';
 import { getCommunitiesForOperario, getCommunity } from '../../services/communityService';
+import { optimizeRoute } from '../../services/routeOptimizerService';
 import { getCommunityTasks } from '../../services/taskService';
 import { getActiveCheckIn } from '../../services/checkInService';
 import { getActiveWorkday, startWorkday, endWorkday, activateCar, deactivateCar, getWorkdaysSummaryForDate, findLastActivityForUser, closeStaleWorkday } from '../../services/workdayService';
@@ -18,12 +19,32 @@ import { es } from 'date-fns/locale';
 import { collection, query, where, onSnapshot, Timestamp } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 
+const getCurrentLocation = () => {
+  return new Promise((resolve) => {
+    if (!("geolocation" in navigator)) {
+      resolve(null);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+      },
+      (err) => {
+        console.warn("[GPS] Error obteniendo ubicación para recorrido:", err);
+        resolve(null);
+      },
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 60000 }
+    );
+  });
+};
+
 export default function TodayPage() {
   const { userProfile } = useAuth();
   const { notifications, unreadCount, dismissAll } = useNotifications();
   const navigate = useNavigate();
   const [services, setServices] = useState([]);
   const [enrichedServices, setEnrichedServices] = useState([]);
+  const [routeOptimized, setRouteOptimized] = useState(false);
   const [activeCheckIn, setActiveCheckIn] = useState(null);
   const [activeWorkday, setActiveWorkday] = useState(null);
   const [firstStartTime, setFirstStartTime] = useState(null);
@@ -313,7 +334,84 @@ export default function TodayPage() {
         }
       }
 
-      setEnrichedServices(enriched);
+      // Route optimization based on current location or started services
+      let optimized = [...enriched];
+      let isRouteOptimized = false;
+
+      let startLat = null;
+      let startLng = null;
+
+      // 1. Check active check-in community location
+      if (checkIn && checkIn.communityId) {
+        const comm = communityCache[checkIn.communityId];
+        if (comm && comm.location) {
+          startLat = comm.location._lat || comm.location.latitude || null;
+          startLng = comm.location._long || comm.location.longitude || null;
+        }
+      }
+
+      // 2. Check in_progress or started service community location
+      if (!startLat || !startLng) {
+        const activeSvc = enriched.find(s => s.status === 'in_progress' || s.status === 'started');
+        if (activeSvc && activeSvc.community?.location) {
+          const loc = activeSvc.community.location;
+          startLat = loc._lat || loc.latitude || null;
+          startLng = loc._long || loc.longitude || null;
+        }
+      }
+
+      // 3. Check latest completed service today
+      if (!startLat || !startLng) {
+        const completedSvcs = enriched.filter(s => s.status === 'completed');
+        if (completedSvcs.length > 0) {
+          completedSvcs.sort((a, b) => {
+            const tA = a.updatedAt?.toDate ? a.updatedAt.toDate().getTime() : (a.updatedAt ? new Date(a.updatedAt).getTime() : 0);
+            const tB = b.updatedAt?.toDate ? b.updatedAt.toDate().getTime() : (b.updatedAt ? new Date(b.updatedAt).getTime() : 0);
+            return tA - tB;
+          });
+          const lastCompleted = completedSvcs[completedSvcs.length - 1];
+          if (lastCompleted.community?.location) {
+            const loc = lastCompleted.community.location;
+            startLat = loc._lat || loc.latitude || null;
+            startLng = loc._long || loc.longitude || null;
+          }
+        }
+      }
+
+      // 4. Fallback to current GPS location of the user (to optimize the route before starting)
+      if (!startLat || !startLng) {
+        try {
+          const currentPos = await getCurrentLocation();
+          if (currentPos) {
+            startLat = currentPos.lat;
+            startLng = currentPos.lng;
+          }
+        } catch (gpsErr) {
+          console.warn('[GPS] Error getting current position for route:', gpsErr);
+        }
+      }
+
+      // 5. Fallback to first community with a location if we still don't have a starting point
+      if (!startLat || !startLng) {
+        const firstWithLocation = enriched.find(s => s.community?.location);
+        if (firstWithLocation) {
+          const loc = firstWithLocation.community.location;
+          startLat = loc._lat || loc.latitude || null;
+          startLng = loc._long || loc.longitude || null;
+        }
+      }
+
+      if (startLat && startLng) {
+        try {
+          optimized = optimizeRoute(enriched, startLat, startLng);
+          isRouteOptimized = true;
+        } catch (optimizeErr) {
+          console.error('Error optimizing route:', optimizeErr);
+        }
+      }
+
+      setRouteOptimized(isRouteOptimized);
+      setEnrichedServices(optimized);
       setServices(svcs);
     } catch (err) {
       console.error('Error loading today:', err);
@@ -954,16 +1052,23 @@ export default function TodayPage() {
       )}
 
       {/* LISTADO DE SERVICIOS */}
-      <div className="flex justify-between items-center mb-4">
-        <h3 style={{ fontSize: 'var(--font-lg)', fontWeight: 700 }}>Servicios de hoy</h3>
-        <button 
-          className="btn btn-ghost btn-xs flex items-center gap-1"
-          onClick={() => loadToday(true)}
-          disabled={loading}
-          style={{ color: 'var(--color-primary)', fontWeight: 600 }}
-        >
-          {loading ? 'Sincronizando...' : '🔄 Sincronizar'}
-        </button>
+      <div className="flex flex-col gap-1 mb-4">
+        <div className="flex justify-between items-center">
+          <h3 style={{ fontSize: 'var(--font-lg)', fontWeight: 700 }}>Servicios de hoy</h3>
+          <button 
+            className="btn btn-ghost btn-xs flex items-center gap-1"
+            onClick={() => loadToday(true)}
+            disabled={loading}
+            style={{ color: 'var(--color-primary)', fontWeight: 600 }}
+          >
+            {loading ? 'Sincronizando...' : '🔄 Sincronizar'}
+          </button>
+        </div>
+        {routeOptimized && (
+          <div className="text-xs" style={{ color: 'var(--color-success)', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}>
+            <span>⚡ Recorrido optimizado por distancia y horario</span>
+          </div>
+        )}
       </div>
 
       {enrichedServices.length === 0 ? (
@@ -974,7 +1079,7 @@ export default function TodayPage() {
         </div>
       ) : (
         <div className="flex flex-col gap-5">
-          {enrichedServices.map(svc => {
+          {enrichedServices.map((svc, index) => {
             const hasIndividualTime = svc.community?.individualTimeTracking;
             const canAccess = activeWorkday || hasIndividualTime;
             const statusClass = svc.status === 'completed' ? 'completed' : (svc.status === 'in_progress' || svc.status === 'started') ? 'in-progress' : '';
@@ -997,7 +1102,17 @@ export default function TodayPage() {
               <div className="service-card-header">
                 <div>
                   <div className="service-community" style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                    {routeOptimized && (
+                      <span style={{ fontSize: '10px', background: 'var(--color-primary)', color: '#ffffff', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
+                        #{index + 1}
+                      </span>
+                    )}
                     {svc.community?.name || 'Comunidad'}
+                    {svc.community?.preferredTime && (
+                      <span style={{ fontSize: '10px', background: '#fee2e2', color: '#dc2626', padding: '2px 6px', borderRadius: '12px', border: '1px solid currentColor', fontWeight: 'bold' }}>
+                        🕐 Hora pref: {svc.community.preferredTime}
+                      </span>
+                    )}
                     {hasIndividualTime && (
                       <span style={{ fontSize: '10px', background: 'var(--color-info-light)', color: 'var(--color-info)', padding: '2px 6px', borderRadius: '12px', border: '1px solid currentColor', fontWeight: 'bold' }}>
                         ⏱️ Indep.
