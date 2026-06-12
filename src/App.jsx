@@ -362,29 +362,31 @@ function OperarioLayout() {
   }
 
   return (
-    <div className="operario-layout">
-      <PermissionsCheck />
-      <Suspense fallback={null}>
-        <GeolocationTracker />
-      </Suspense>
-      <header className="operario-header">
-        <div className="flex items-center gap-2" style={{ minWidth: 0, flex: 1 }}>
-          {globalSettings?.logoUrl && (
-            <img src={globalSettings.logoUrl} alt="Logo" style={{ width: '28px', height: '28px', objectFit: 'contain', borderRadius: '4px', background: '#fff' }} />
-          )}
-          <div className="operario-header-title truncate">{globalSettings?.companyName || 'RyB Limpiezas'}</div>
-        </div>
-        <div className="flex items-center gap-3">
-          <span style={{ fontSize: 'var(--font-xs)', opacity: 0.8 }}>{userProfile?.name}</span>
-          <button className="btn btn-ghost btn-sm" onClick={handleLogout} style={{ color: 'white', padding: '4px 8px' }}>
-            🚪
-          </button>
-        </div>
-      </header>
+    <>
+      <div className="operario-layout">
+        <PermissionsCheck />
+        <Suspense fallback={null}>
+          <GeolocationTracker />
+        </Suspense>
+        <header className="operario-header">
+          <div className="flex items-center gap-2" style={{ minWidth: 0, flex: 1 }}>
+            {globalSettings?.logoUrl && (
+              <img src={globalSettings.logoUrl} alt="Logo" style={{ width: '28px', height: '28px', objectFit: 'contain', borderRadius: '4px', background: '#fff' }} />
+            )}
+            <div className="operario-header-title truncate">{globalSettings?.companyName || 'RyB Limpiezas'}</div>
+          </div>
+          <div className="flex items-center gap-3">
+            <span style={{ fontSize: 'var(--font-xs)', opacity: 0.8 }}>{userProfile?.name}</span>
+            <button className="btn btn-ghost btn-sm" onClick={handleLogout} style={{ color: 'white', padding: '4px 8px' }}>
+              🚪
+            </button>
+          </div>
+        </header>
 
-      <main className="operario-content">
-        <Outlet />
-      </main>
+        <main className="operario-content">
+          <Outlet />
+        </main>
+      </div>
 
       <nav className="operario-bottom-nav">
         <NavLink
@@ -417,7 +419,7 @@ function OperarioLayout() {
           Historial
         </NavLink>
       </nav>
-    </div>
+    </>
   );
 }
 
