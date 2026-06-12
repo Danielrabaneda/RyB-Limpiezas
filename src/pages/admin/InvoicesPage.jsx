@@ -1422,8 +1422,8 @@ export default function InvoicesPage() {
                     <td className="p-3 text-center font-bold text-slate-800">
                       {inv.totalAmount.toLocaleString('es-ES', { minimumFractionDigits: 2 })} €
                     </td>
-                    <td className="p-3 text-right">
-                      <div className="flex justify-end gap-1.5 flex-wrap">
+                    <td className="p-3 text-right" style={{ minWidth: '370px' }}>
+                      <div className="flex justify-end gap-1.5">
                         {inv.status === 'draft' && (
                           <>
                             <button 
