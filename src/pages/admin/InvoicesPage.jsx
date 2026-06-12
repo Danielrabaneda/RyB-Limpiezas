@@ -18,6 +18,7 @@ import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { useAuth } from '../../contexts/AuthContext';
 import jsPDF from 'jspdf';
+import JSZip from 'jszip';
 
 export default function InvoicesPage() {
   const { currentUser, userProfile } = useAuth();
@@ -39,6 +40,7 @@ export default function InvoicesPage() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [previewModal, setPreviewModal] = useState({ open: false, pdfUrl: '' });
+  const [downloadModal, setDownloadModal] = useState({ open: false, invoices: [] });
   
   // Templates and Add Modal states
   const [templates, setTemplates] = useState([]);
@@ -833,6 +835,12 @@ export default function InvoicesPage() {
       const pdfBlob = doc.output('blob');
       const pdfUrl = URL.createObjectURL(pdfBlob);
       setPreviewModal({ open: true, pdfUrl });
+    } else if (mode === 'return') {
+      // Return mode: return the blob and filename directly
+      return {
+        blob: doc.output('blob'),
+        filename
+      };
     } else {
       // Download mode
       if (billingSettings?.useSaveAsDialog && window.showSaveFilePicker) {
@@ -857,6 +865,96 @@ export default function InvoicesPage() {
       } else {
         doc.save(filename);
       }
+    }
+  };
+
+  const handleOpenDownloadAll = () => {
+    if (filteredInvoices.length === 0) return;
+    setDownloadModal({ open: true, invoices: filteredInvoices });
+  };
+
+  const handleSaveToFolder = async () => {
+    if (!window.showDirectoryPicker) {
+      alert("Tu navegador no soporta la selección directa de carpetas. Por favor, usa la opción de archivo ZIP o abre esta página en Google Chrome o Microsoft Edge.");
+      return;
+    }
+    
+    setDownloadModal(prev => ({ ...prev, open: false }));
+    setActionLoading(true);
+    
+    try {
+      const directoryHandle = await window.showDirectoryPicker({
+        mode: 'readwrite'
+      });
+      
+      let successCount = 0;
+      
+      for (const inv of downloadModal.invoices) {
+        const result = await generatePDF(inv, 'return');
+        if (!result) continue;
+        
+        const { blob, filename } = result;
+        
+        const fileHandle = await directoryHandle.getFileHandle(filename, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        
+        successCount++;
+      }
+      
+      alert(`¡Completado! Se han guardado ${successCount} facturas correctamente en la carpeta seleccionada.`);
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        console.error("Error saving PDFs to folder:", err);
+        alert(`Ocurrió un error al guardar los PDFs: ${err.message}`);
+      }
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleDownloadAsZIP = async () => {
+    setDownloadModal(prev => ({ ...prev, open: false }));
+    setActionLoading(true);
+    
+    try {
+      const zip = new JSZip();
+      let successCount = 0;
+      
+      for (const inv of downloadModal.invoices) {
+        const result = await generatePDF(inv, 'return');
+        if (!result) continue;
+        
+        const { blob, filename } = result;
+        zip.file(filename, blob);
+        successCount++;
+      }
+      
+      if (successCount === 0) {
+        alert("No se pudo generar ningún PDF.");
+        setActionLoading(false);
+        return;
+      }
+      
+      const content = await zip.generateAsync({ type: 'blob' });
+      
+      const dateStr = format(new Date(), 'yyyy-MM-dd');
+      const zipFilename = `Facturas_${getMonthName(parseInt(filterMonth))}_${filterYear}_${dateStr}.zip`;
+      
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(content);
+      link.download = zipFilename;
+      link.click();
+      
+      setTimeout(() => URL.revokeObjectURL(link.href), 100);
+      
+      alert(`¡Completado! Se ha descargado el archivo ZIP con ${successCount} facturas.`);
+    } catch (err) {
+      console.error("Error creating ZIP archive:", err);
+      alert(`Ocurrió un error al generar el archivo ZIP: ${err.message}`);
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -1261,8 +1359,25 @@ export default function InvoicesPage() {
         </div>
       ) : (
         /* Invoices Table View */
-        <div className="card overflow-x-auto">
-          <table className="w-full text-left border-collapse min-w-[700px]">
+        <div className="card">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #e2e8f0', background: '#f8fafc', flexWrap: 'wrap', gap: '12px' }}>
+            <h4 style={{ margin: 0, fontWeight: 'bold', fontSize: '0.875rem', color: '#334155' }}>
+              {activeTab === 'drafts' ? 'Borradores' : activeTab === 'pending' ? 'Pendientes de Cobro' : 'Facturas Cobradas'} ({filteredInvoices.length})
+            </h4>
+            {filteredInvoices.length > 0 && (
+              <button 
+                type="button"
+                className="btn btn-sm btn-outline"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                onClick={handleOpenDownloadAll}
+                disabled={actionLoading}
+              >
+                📥 Descargar todos los PDFs ({filteredInvoices.length})
+              </button>
+            )}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse min-w-[700px]">
             <thead>
               <tr className="bg-slate-50 text-xs uppercase font-bold text-muted border-b">
                 <th className="p-3">{activeTab === 'drafts' ? 'Borrador' : 'Factura Nº'}</th>
@@ -1408,6 +1523,7 @@ export default function InvoicesPage() {
             </tbody>
           </table>
         </div>
+      </div>
       )}
 
       {/* Modal: Add Manual Invoice */}
@@ -1974,6 +2090,125 @@ export default function InvoicesPage() {
                 style={{ width: '100%', height: '100%', border: 'none' }}
                 title="Vista previa de factura"
               />
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Modal: Batch Download Selection */}
+      {downloadModal.open && (
+        <div className="modal-overlay" onClick={() => setDownloadModal({ open: false, invoices: [] })}>
+          <div 
+            className="modal animate-fadeIn" 
+            style={{ maxWidth: '500px', width: '95vw' }} 
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h3 className="modal-title">📥 Descargar lote de PDFs</h3>
+              <button 
+                type="button" 
+                className="btn btn-ghost btn-sm" 
+                onClick={() => setDownloadModal({ open: false, invoices: [] })}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="modal-body" style={{ padding: '20px' }}>
+              <p style={{ fontSize: '0.875rem', color: '#64748b', marginBottom: '16px' }}>
+                Vas a descargar <strong>{downloadModal.invoices.length}</strong> documentos PDF en lote correspondientes a la vista de <strong>{activeTab === 'drafts' ? 'Borradores' : activeTab === 'pending' ? 'Facturas Pendientes' : 'Facturas Cobradas'}</strong>.
+              </p>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {/* Option 1: Direct Folder Select */}
+                <button
+                  type="button"
+                  onClick={handleSaveToFolder}
+                  disabled={!window.showDirectoryPicker}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'flex-start',
+                    width: '100%',
+                    padding: '16px',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '8px',
+                    background: window.showDirectoryPicker ? '#fff' : '#f8fafc',
+                    cursor: window.showDirectoryPicker ? 'pointer' : 'not-allowed',
+                    textAlign: 'left',
+                    transition: 'all 0.2s',
+                    boxShadow: 'var(--shadow-sm)'
+                  }}
+                  onMouseEnter={e => {
+                    if (window.showDirectoryPicker) {
+                      e.currentTarget.style.borderColor = 'var(--color-primary)';
+                      e.currentTarget.style.backgroundColor = '#f8fafc';
+                    }
+                  }}
+                  onMouseLeave={e => {
+                    if (window.showDirectoryPicker) {
+                      e.currentTarget.style.borderColor = '#cbd5e1';
+                      e.currentTarget.style.backgroundColor = '#fff';
+                    }
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                    <span style={{ fontSize: '1.25rem' }}>📁</span>
+                    <strong style={{ fontSize: '0.9rem', color: '#1e293b' }}>Guardar en una carpeta elegida</strong>
+                  </div>
+                  <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                    Selecciona una carpeta local de tu dispositivo. Los PDFs se guardarán directamente en ella uno por uno.
+                  </span>
+                  {!window.showDirectoryPicker && (
+                    <span style={{ fontSize: '11px', color: '#d97706', marginTop: '6px', fontWeight: '500' }}>
+                      ⚠️ No soportado en tu navegador actual (usa Chrome o Edge).
+                    </span>
+                  )}
+                </button>
+
+                {/* Option 2: ZIP File */}
+                <button
+                  type="button"
+                  onClick={handleDownloadAsZIP}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'flex-start',
+                    width: '100%',
+                    padding: '16px',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '8px',
+                    background: '#fff',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    transition: 'all 0.2s',
+                    boxShadow: 'var(--shadow-sm)'
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.borderColor = 'var(--color-primary)';
+                    e.currentTarget.style.backgroundColor = '#f8fafc';
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.borderColor = '#cbd5e1';
+                    e.currentTarget.style.backgroundColor = '#fff';
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                    <span style={{ fontSize: '1.25rem' }}>📦</span>
+                    <strong style={{ fontSize: '0.9rem', color: '#1e293b' }}>Descargar todo en un archivo ZIP</strong>
+                  </div>
+                  <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                    Genera y descarga un único archivo comprimido .zip que contiene todos los archivos PDF.
+                  </span>
+                </button>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button 
+                type="button" 
+                className="btn btn-secondary" 
+                onClick={() => setDownloadModal({ open: false, invoices: [] })}
+              >
+                Cancelar
+              </button>
             </div>
           </div>
         </div>
