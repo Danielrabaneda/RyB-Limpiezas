@@ -194,7 +194,7 @@ export default function ClientPortalPage() {
             }}
             onClick={() => setActiveTab('evidence')}
           >
-            📸 Evidencias ({evidence.length})
+            📸 Evidencias (30 días)
           </button>
           <button 
             style={{ 
@@ -276,7 +276,7 @@ export default function ClientPortalPage() {
               <div style={{ background: 'white', padding: '32px 16px', borderRadius: '16px', textAlign: 'center', border: '1px solid #e2e8f0' }}>
                 <div style={{ fontSize: '2rem', marginBottom: '8px' }}>📸</div>
                 <h4 style={{ margin: '0 0 4px 0', fontWeight: 'bold', color: '#0f172a' }}>Sin evidencias</h4>
-                <p style={{ margin: '0', fontSize: '13px', color: '#64748b' }}>No se han subido fotos de evidencias recientemente.</p>
+                <p style={{ margin: '0', fontSize: '13px', color: '#64748b' }}>No se han subido fotos de evidencias en los últimos 30 días.</p>
               </div>
             ) : (
               evidence.map(ev => (

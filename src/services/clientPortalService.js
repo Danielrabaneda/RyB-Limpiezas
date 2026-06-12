@@ -176,5 +176,15 @@ export async function getClientEvidence(communityIds) {
     snap.docs.forEach(d => evidences.push({ id: d.id, ...d.data() }));
   }
 
-  return evidences;
+  // Filtrar en memoria a los últimos 30 días
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const limitTime = thirtyDaysAgo.getTime();
+
+  const filteredEvidences = evidences.filter(e => {
+    const time = e.createdAt?.toDate ? e.createdAt.toDate().getTime() : new Date(e.createdAt).getTime();
+    return time >= limitTime;
+  });
+
+  return filteredEvidences;
 }
