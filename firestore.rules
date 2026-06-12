@@ -139,7 +139,10 @@ service cloud.firestore {
     }
 
     match /reports/{reportId} {
-      allow read: if isAdmin() || isOwner(resource.data.userId);
+      allow list: if request.auth != null || 
+        (request.query.limit <= 50 && 
+         get(/databases/$(database)/documents/communities/$(request.query.communityId)).data.portalToken != null);
+      allow get: if isAdmin() || isOwner(resource.data.userId);
       allow create: if isOwner(request.resource.data.userId);
       allow update: if isAdmin() || isOwner(resource.data.userId);
       allow delete: if isAdmin();
@@ -222,9 +225,17 @@ service cloud.firestore {
     }
 
     match /evidenceReports/{reportId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow list: if request.auth != null || 
+        (request.query.limit <= 50 && 
+         get(/databases/$(database)/documents/communities/$(request.query.communityId)).data.portalToken != null);
+      allow get: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
       allow create: if isAuthenticated();
       allow update, delete: if isAdmin();
+    }
+
+    match /publicPortals/{token} {
+      allow get: if true;
+      allow write, list: if isAdmin();
     }
 
     // -------------------------------------------------------------------------

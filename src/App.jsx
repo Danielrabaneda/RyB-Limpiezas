@@ -62,6 +62,7 @@ const SettingsPage = lazy(() => import('./pages/admin/SettingsPage'));
 const EvidenceReportsPage = lazy(() => import('./pages/admin/EvidenceReportsPage'));
 const AbsencesPage = lazy(() => import('./pages/operario/AbsencesPage'));
 const AbsencesAdminPage = lazy(() => import('./pages/admin/AbsencesAdminPage'));
+const ClientPortalPage = lazy(() => import('./pages/cliente/ClientPortalPage'));
 
 // Components
 const GeolocationTracker = lazy(() => import('./components/operario/GeolocationTracker'));
@@ -482,6 +483,7 @@ export default function App() {
                 <Route path="/login" element={<LoginPage />} />
                 <Route path="/register" element={<RegisterPage />} />
                 <Route path="/setup" element={<SetupPage />} />
+                <Route path="/portal/:token" element={<ClientPortalPage />} />
 
                 {/* Root */}
                 <Route path="/" element={<RootRedirect />} />

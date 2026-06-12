@@ -1,7 +1,94 @@
 import { 
-  collection, doc, getDoc, getDocs, query, where, orderBy 
+  collection, doc, getDoc, getDocs, query, where, orderBy,
+  writeBatch, serverTimestamp, deleteDoc, setDoc, updateDoc, Timestamp
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
+
+/**
+ * Genera un token aleatorio seguro de 32 caracteres alfanuméricos.
+ */
+function generatePortalToken() {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let token = '';
+  const array = new Uint8Array(32);
+  window.crypto.getRandomValues(array);
+  for (let i = 0; i < 32; i++) {
+    token += chars[array[i] % chars.length];
+  }
+  return token;
+}
+
+/**
+ * Activa el portal de cliente para una comunidad, generando un token único.
+ */
+export async function enableClientPortal(communityId) {
+  const token = generatePortalToken();
+  const batch = writeBatch(db);
+
+  // 1. Actualizar comunidad con el token
+  const communityRef = doc(db, 'communities', communityId);
+  batch.update(communityRef, {
+    portalToken: token,
+    portalTokenCreatedAt: serverTimestamp()
+  });
+
+  // 2. Crear documento validador en publicPortals
+  const portalRef = doc(db, 'publicPortals', token);
+  batch.set(portalRef, {
+    communityId,
+    isActive: true,
+    createdAt: serverTimestamp()
+  });
+
+  await batch.commit();
+  return token;
+}
+
+/**
+ * Desactiva el portal de cliente de una comunidad, revocando el acceso.
+ */
+export async function disableClientPortal(communityId, currentToken) {
+  const batch = writeBatch(db);
+
+  // 1. Limpiar token en la comunidad
+  const communityRef = doc(db, 'communities', communityId);
+  batch.update(communityRef, {
+    portalToken: null,
+    portalTokenCreatedAt: null
+  });
+
+  // 2. Eliminar el documento validador
+  if (currentToken) {
+    const portalRef = doc(db, 'publicPortals', currentToken);
+    batch.delete(portalRef);
+  }
+
+  await batch.commit();
+}
+
+/**
+ * Valida un token de portal público y devuelve la información de la comunidad.
+ */
+export async function getCommunityByPortalToken(token) {
+  if (!token) return null;
+  
+  const portalSnap = await getDoc(doc(db, 'publicPortals', token));
+  if (!portalSnap.exists() || !portalSnap.data().isActive) {
+    return null;
+  }
+
+  const { communityId } = portalSnap.data();
+  const communitySnap = await getDoc(doc(db, 'communities', communityId));
+  
+  if (!communitySnap.exists() || !communitySnap.data().active) {
+    return null;
+  }
+
+  return {
+    id: communitySnap.id,
+    ...communitySnap.data()
+  };
+}
 
 /**
  * Obtiene la lista de IDs de comunidades asignadas a una cuenta de cliente.
@@ -19,16 +106,14 @@ export async function getClientAssignedCommunities(clientId) {
 }
 
 /**
- * Obtiene el histórico de servicios completados y reportados de las comunidades del cliente.
+ * Obtiene el histórico de servicios completados y reportados de las comunidades del cliente (limitado a los últimos 30 días).
  * 
  * @param {Array<string>} communityIds - Lista de comunidades a consultar.
- * @returns {Promise<Array>} Listado de servicios reportados.
+ * @returns {Promise<Array>} Listado de servicios reportados filtrados.
  */
 export async function getClientReports(communityIds) {
   if (!communityIds || communityIds.length === 0) return [];
 
-  // Firestore limita los operadores 'in' a 10/30 elementos.
-  // Si hay más de 10 comunidades, realizamos consultas en lotes o individuales.
   const CHUNK_LIMIT = 10;
   const reports = [];
 
@@ -43,8 +128,18 @@ export async function getClientReports(communityIds) {
     snap.docs.forEach(d => reports.push({ id: d.id, ...d.data() }));
   }
 
+  // Filtrar en memoria a los últimos 30 días
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const limitTime = thirtyDaysAgo.getTime();
+
+  const filteredReports = reports.filter(r => {
+    const time = r.createdAt?.toDate ? r.createdAt.toDate().getTime() : new Date(r.createdAt).getTime();
+    return time >= limitTime;
+  });
+
   // Enriquecer reportes con los nombres de las comunidades
-  for (const rep of reports) {
+  for (const rep of filteredReports) {
     try {
       const commSnap = await getDoc(doc(db, 'communities', rep.communityId));
       if (commSnap.exists()) {
@@ -55,7 +150,7 @@ export async function getClientReports(communityIds) {
     }
   }
 
-  return reports;
+  return filteredReports;
 }
 
 /**

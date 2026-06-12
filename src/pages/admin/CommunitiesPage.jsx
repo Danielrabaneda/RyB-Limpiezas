@@ -14,6 +14,7 @@ import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { uploadDocument, getCommunityGuides, deleteDocument } from '../../services/documentVaultService';
 import { uploadPhoto } from '../../services/storageService';
+import { enableClientPortal, disableClientPortal } from '../../services/clientPortalService';
 
 export default function CommunitiesPage() {
   const { userProfile } = useAuth();
@@ -158,6 +159,51 @@ export default function CommunitiesPage() {
     } catch (err) {
       console.error(err);
       alert('Error al eliminar documento: ' + err.message);
+    }
+  }
+
+  async function handleTogglePortal() {
+    if (!selectedCommunity) return;
+    setActionLoading(true);
+    try {
+      if (selectedCommunity.portalToken) {
+        if (!window.confirm('¿Estás seguro de que quieres desactivar el portal público de esta comunidad? El enlace actual dejará de funcionar inmediatamente.')) return;
+        await disableClientPortal(selectedCommunity.id, selectedCommunity.portalToken);
+        const updated = { ...selectedCommunity, portalToken: null, portalTokenCreatedAt: null };
+        setSelectedCommunity(updated);
+        setCommunities(prev => prev.map(c => c.id === selectedCommunity.id ? updated : c));
+        alert('Portal público desactivado correctamente.');
+      } else {
+        const token = await enableClientPortal(selectedCommunity.id);
+        const updated = { ...selectedCommunity, portalToken: token, portalTokenCreatedAt: new Date() };
+        setSelectedCommunity(updated);
+        setCommunities(prev => prev.map(c => c.id === selectedCommunity.id ? updated : c));
+        alert('Portal público activado correctamente.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error al cambiar el estado del portal: ' + err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function handleRegenerateToken() {
+    if (!selectedCommunity || !selectedCommunity.portalToken) return;
+    if (!window.confirm('¿Estás seguro de que quieres cambiar el enlace? El enlace actual y el código QR anterior dejarán de funcionar de inmediato.')) return;
+    setActionLoading(true);
+    try {
+      await disableClientPortal(selectedCommunity.id, selectedCommunity.portalToken);
+      const token = await enableClientPortal(selectedCommunity.id);
+      const updated = { ...selectedCommunity, portalToken: token, portalTokenCreatedAt: new Date() };
+      setSelectedCommunity(updated);
+      setCommunities(prev => prev.map(c => c.id === selectedCommunity.id ? updated : c));
+      alert('Enlace mágico regenerado correctamente.');
+    } catch (err) {
+      console.error(err);
+      alert('Error al regenerar el enlace: ' + err.message);
+    } finally {
+      setActionLoading(false);
     }
   }
 
@@ -922,6 +968,153 @@ export default function CommunitiesPage() {
                     </div>
                   ))}
                 </div>
+              )}
+            </div>
+
+            {/* Portal de Clientes (Acceso Externo) */}
+            <div className="card animate-fadeIn">
+              <div className="card-header" style={{ borderBottom: '1px solid var(--color-border)', paddingBottom: '12px', marginBottom: '12px' }}>
+                <h3 className="card-title">🏢 Portal de Clientes (Enlace Mágico & QR)</h3>
+                <span className={`status-badge ${selectedCommunity.portalToken ? 'status-completed' : 'status-pending'}`} style={{ textTransform: 'none' }}>
+                  {selectedCommunity.portalToken ? 'Activo' : 'Inactivo'}
+                </span>
+              </div>
+              
+              <p className="text-xs text-muted mb-4">
+                Permite que los presidentes de comunidad o administradores de fincas comprueben los últimos 30 días de asistencia, tareas completadas y fotos de evidencias sin necesidad de registrarse.
+              </p>
+
+              {selectedCommunity.portalToken ? (
+                <div className="flex flex-col gap-4">
+                  {/* URL Input */}
+                  <div>
+                    <label className="text-xs font-semibold text-muted block mb-1">Enlace de acceso rápido (Magic Link)</label>
+                    <div className="flex gap-2">
+                      <input 
+                        type="text" 
+                        readOnly 
+                        className="form-input text-xs" 
+                        value={`${window.location.origin}/portal/${selectedCommunity.portalToken}`}
+                        style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)' }}
+                      />
+                      <button 
+                        className="btn btn-primary btn-xs"
+                        style={{ padding: '0 12px', fontSize: '11px', whiteSpace: 'nowrap' }}
+                        onClick={() => {
+                          navigator.clipboard.writeText(`${window.location.origin}/portal/${selectedCommunity.portalToken}`);
+                          alert('¡Enlace copiado al portapapeles!');
+                        }}
+                      >
+                        📋 Copiar
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* QR Code Printable Section */}
+                  <div style={{ background: 'var(--color-bg)', padding: 'var(--space-4)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)' }}>
+                    <label className="text-xs font-semibold text-muted block mb-3 text-center">Código QR y Cartel Imprimible</label>
+                    
+                    {/* The Printable Poster Container */}
+                    <div 
+                      id="printable-qr-poster"
+                      style={{ 
+                        background: '#ffffff', 
+                        color: '#0f172a',
+                        padding: '24px', 
+                        borderRadius: 'var(--radius-md)', 
+                        border: '2px dashed #cbd5e1',
+                        display: 'flex', 
+                        flexDirection: 'column', 
+                        alignItems: 'center', 
+                        textAlign: 'center',
+                        boxShadow: 'var(--shadow-sm)',
+                        fontFamily: 'system-ui, sans-serif'
+                      }}
+                    >
+                      <h4 style={{ margin: '0 0 4px 0', fontSize: '16px', fontWeight: 'bold', color: '#1e3a8a' }}>RyB Limpiezas</h4>
+                      <p style={{ margin: '0 0 16px 0', fontSize: '10px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Control de Calidad Digital</p>
+                      
+                      <img 
+                        src={`https://chart.googleapis.com/chart?chs=160x160&cht=qr&chl=${encodeURIComponent(`${window.location.origin}/portal/${selectedCommunity.portalToken}`)}`}
+                        alt="Código QR de Acceso" 
+                        style={{ width: '160px', height: '160px', border: '1px solid #e2e8f0', padding: '4px', background: 'white' }}
+                      />
+                      
+                      <div style={{ marginTop: '16px' }}>
+                        <p style={{ margin: '0 0 4px 0', fontSize: '12px', fontWeight: 'bold', color: '#1e293b' }}>{selectedCommunity.name}</p>
+                        <p style={{ margin: '0', fontSize: '9px', color: '#475569', maxWidth: '240px', lineHeight: '1.4' }}>
+                          Escanee este código con su móvil para consultar el histórico de visitas, tareas y fotos de evidencias de los últimos 30 días de este edificio.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Print Button */}
+                    <button 
+                      className="btn btn-secondary btn-sm w-full mt-3" 
+                      onClick={() => {
+                        const printContent = document.getElementById('printable-qr-poster').innerHTML;
+                        const windowUrl = 'about:blank';
+                        const uniqueName = new Date().getTime();
+                        const printWindow = window.open(windowUrl, uniqueName, 'left=5000,top=5000,width=0,height=0');
+                        printWindow.document.write(`
+                          <html>
+                            <head>
+                              <title>Cartel QR - ${selectedCommunity.name}</title>
+                              <style>
+                                body { display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: system-ui, sans-serif; background: white; }
+                                .poster { width: 340px; border: 4px solid #1e3a8a; border-radius: 16px; padding: 32px; display: flex; flex-direction: column; align-items: center; text-align: center; box-sizing: border-box; }
+                                .title { font-size: 24px; font-weight: 800; color: #1e3a8a; margin: 0 0 4px 0; }
+                                .subtitle { font-size: 11px; color: #64748b; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 24px 0; }
+                                .qr-img { width: 200px; height: 200px; border: 1px solid #cbd5e1; padding: 8px; background: white; }
+                                .comm-name { font-size: 16px; font-weight: bold; color: #0f172a; margin: 24px 0 8px 0; }
+                                .instructions { font-size: 11px; color: #475569; line-height: 1.5; margin: 0; max-width: 280px; }
+                                .footer { font-size: 8px; color: #94a3b8; margin-top: 32px; text-transform: uppercase; }
+                              </style>
+                            </head>
+                            <body onload="window.print(); window.close();">
+                              <div class="poster">
+                                <div class="title">RyB Limpiezas</div>
+                                <div class="subtitle">Control de Calidad Digital</div>
+                                <img src="https://chart.googleapis.com/chart?chs=200x200&cht=qr&chl=${encodeURIComponent(`${window.location.origin}/portal/${selectedCommunity.portalToken}`)}" class="qr-img" />
+                                <div class="comm-name">${selectedCommunity.name}</div>
+                                <p class="instructions">Escanee este código con su móvil para consultar el histórico de visitas, tareas y fotos de evidencias de los últimos 30 días de este edificio.</p>
+                                <div class="footer">Sistema LimpiaGest - RyB Limpiezas</div>
+                              </div>
+                            </body>
+                          </html>
+                        `);
+                        printWindow.document.close();
+                        printWindow.focus();
+                      }}
+                    >
+                      🖨️ Imprimir Cartel QR
+                    </button>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button 
+                      className="btn btn-ghost btn-xs text-danger flex-1"
+                      onClick={handleTogglePortal}
+                      style={{ fontSize: '11px', border: '1px solid #fecaca' }}
+                    >
+                      🔴 Desactivar Portal
+                    </button>
+                    <button 
+                      className="btn btn-ghost btn-xs text-warning flex-1"
+                      onClick={handleRegenerateToken}
+                      style={{ fontSize: '11px', border: '1px solid #fde68a' }}
+                    >
+                      🔄 Cambiar Enlace
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button 
+                  className="btn btn-primary w-full"
+                  onClick={handleTogglePortal}
+                >
+                  🟢 Activar Portal de Clientes
+                </button>
               )}
             </div>
           </div>
