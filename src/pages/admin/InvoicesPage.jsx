@@ -12,7 +12,8 @@ import {
   getInvoiceTemplates,
   saveInvoiceTemplate,
   deleteInvoiceTemplate,
-  getLastEmittedInvoice
+  getLastEmittedInvoice,
+  emitAllInvoices
 } from '../../services/invoiceService';
 import { getCommunities } from '../../services/communityService';
 import { format } from 'date-fns';
@@ -183,6 +184,32 @@ export default function InvoicesPage() {
     } catch (err) {
       console.error(err);
       alert('Error al emitir la factura: ' + err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleEmitAllDrafts = async () => {
+    const draftCount = filteredInvoices.length;
+    if (draftCount === 0) return;
+    
+    if (!confirm(`¿Estás seguro de que deseas emitir oficialmente los ${draftCount} borradores visibles? Se les asignarán números oficiales correlativos y pasarán a estar pendientes de cobro.`)) {
+      return;
+    }
+    
+    setActionLoading(true);
+    try {
+      const ids = filteredInvoices.map(inv => inv.id);
+      await emitAllInvoices(ids);
+      alert(`Se han emitido ${draftCount} facturas oficiales con éxito.`);
+      
+      const lastInv = await getLastEmittedInvoice();
+      setLastInvoice(lastInv);
+      await loadInvoices();
+      setActiveTab('pending');
+    } catch (err) {
+      console.error(err);
+      alert('Error al emitir los borradores en lote: ' + err.message);
     } finally {
       setActionLoading(false);
     }
@@ -1446,17 +1473,30 @@ export default function InvoicesPage() {
             <h4 style={{ margin: 0, fontWeight: 'bold', fontSize: '0.875rem', color: '#334155' }}>
               {activeTab === 'drafts' ? 'Borradores' : activeTab === 'pending' ? 'Pendientes de Cobro' : 'Facturas Cobradas'} ({filteredInvoices.length})
             </h4>
-            {filteredInvoices.length > 0 && (
-              <button 
-                type="button"
-                className="btn btn-sm btn-outline"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-                onClick={handleOpenDownloadAll}
-                disabled={actionLoading}
-              >
-                📥 Descargar todos los PDFs ({filteredInvoices.length})
-              </button>
-            )}
+            <div style={{ display: 'flex', gap: '8px' }}>
+              {activeTab === 'drafts' && filteredInvoices.length > 0 && (
+                <button 
+                  type="button"
+                  className="btn btn-sm btn-success"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  onClick={handleEmitAllDrafts}
+                  disabled={actionLoading}
+                >
+                  🚀 Emitir todos los borradores ({filteredInvoices.length})
+                </button>
+              )}
+              {filteredInvoices.length > 0 && (
+                <button 
+                  type="button"
+                  className="btn btn-sm btn-outline"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  onClick={handleOpenDownloadAll}
+                  disabled={actionLoading}
+                >
+                  📥 Descargar todos los PDFs ({filteredInvoices.length})
+                </button>
+              )}
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse min-w-[700px]">

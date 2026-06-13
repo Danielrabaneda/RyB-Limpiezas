@@ -250,3 +250,53 @@ export async function getLastEmittedInvoice() {
   return { id: snap.docs[0].id, ...snap.docs[0].data() };
 }
 
+// Emit multiple invoices at once atomically using a single transaction
+export async function emitAllInvoices(ids) {
+  if (!ids || ids.length === 0) return;
+  const settingsRef = doc(db, 'settings', 'billing');
+  
+  await runTransaction(db, async (transaction) => {
+    const settingsSnap = await transaction.get(settingsRef);
+    const settings = settingsSnap.exists() ? settingsSnap.data() : {};
+    let nextSeq = parseInt(settings.nextInvoiceSeq) || 1;
+    const fmt = settings.invoiceNumberFormat || 'numeric';
+    
+    const invoiceSnaps = [];
+    for (const id of ids) {
+      const ref = doc(db, COLLECTION, id);
+      const snap = await transaction.get(ref);
+      invoiceSnaps.push({ ref, snap });
+    }
+    
+    const now = new Date();
+    const dueDate = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    
+    for (const { ref, snap } of invoiceSnaps) {
+      if (!snap.exists()) throw new Error("Una de las facturas no existe");
+      const data = snap.data();
+      if (data.status !== 'draft') throw new Error("Solo se pueden emitir facturas en borrador");
+      
+      let invoiceNumber;
+      if (fmt === 'formatted') {
+        invoiceNumber = `F-${data.year}-${String(nextSeq).padStart(4, '0')}`;
+      } else {
+        invoiceNumber = String(nextSeq);
+      }
+      
+      transaction.update(ref, {
+        status: 'pending',
+        invoiceNumber: invoiceNumber,
+        invoiceSeq: nextSeq,
+        issueDate: serverTimestamp(),
+        dueDate: dueDate
+      });
+      
+      nextSeq++;
+    }
+    
+    transaction.update(settingsRef, {
+      nextInvoiceSeq: nextSeq
+    });
+  });
+}
+
