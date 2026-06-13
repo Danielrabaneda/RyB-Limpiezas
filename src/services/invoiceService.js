@@ -22,7 +22,8 @@ const DEFAULT_SETTINGS = {
   nextInvoiceSeq: 1,
   invoiceNumberFormat: 'numeric', // 'numeric' (59, 60...) or 'formatted' (F-2026-0059...)
   fileNamePattern: 'Factura_{numero}_{comunidad}',
-  useSaveAsDialog: false
+  useSaveAsDialog: false,
+  seqMode: 'manual'
 };
 
 export async function getBillingSettings() {
@@ -235,5 +236,17 @@ export async function saveInvoiceTemplate(data) {
 
 export async function deleteInvoiceTemplate(id) {
   await deleteDoc(doc(db, 'invoice_templates', id));
+}
+
+// Get the last emitted invoice ordered by invoiceSeq descending
+export async function getLastEmittedInvoice() {
+  const q = query(
+    collection(db, COLLECTION),
+    orderBy('invoiceSeq', 'desc'),
+    limit(1)
+  );
+  const snap = await getDocs(q);
+  if (snap.empty) return null;
+  return { id: snap.docs[0].id, ...snap.docs[0].data() };
 }
 

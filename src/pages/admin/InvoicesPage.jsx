@@ -11,7 +11,8 @@ import {
   generateMonthlyDrafts,
   getInvoiceTemplates,
   saveInvoiceTemplate,
-  deleteInvoiceTemplate
+  deleteInvoiceTemplate,
+  getLastEmittedInvoice
 } from '../../services/invoiceService';
 import { getCommunities } from '../../services/communityService';
 import { format } from 'date-fns';
@@ -41,6 +42,7 @@ export default function InvoicesPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [previewModal, setPreviewModal] = useState({ open: false, pdfUrl: '' });
   const [downloadModal, setDownloadModal] = useState({ open: false, invoices: [] });
+  const [lastInvoice, setLastInvoice] = useState(null);
   
   // Templates and Add Modal states
   const [templates, setTemplates] = useState([]);
@@ -88,7 +90,8 @@ export default function InvoicesPage() {
     nextInvoiceSeq: 1,
     invoiceNumberFormat: 'numeric',
     fileNamePattern: 'Factura_{numero}_{comunidad}',
-    useSaveAsDialog: false
+    useSaveAsDialog: false,
+    seqMode: 'manual'
   });
 
   useEffect(() => {
@@ -102,15 +105,25 @@ export default function InvoicesPage() {
   const loadInitialData = async () => {
     setLoading(true);
     try {
-      const [settings, comms, tmpls] = await Promise.all([
+      const [settings, comms, tmpls, lastInv] = await Promise.all([
         getBillingSettings(),
         getCommunities(),
-        getInvoiceTemplates()
+        getInvoiceTemplates(),
+        getLastEmittedInvoice()
       ]);
-      setBillingSettings(settings);
-      setSettingsForm(settings);
+      
+      const lastSeq = lastInv ? parseInt(lastInv.invoiceSeq) || 0 : 0;
+      const finalSettings = {
+        ...settings,
+        seqMode: settings.seqMode || 'manual',
+        nextInvoiceSeq: settings.seqMode === 'auto' ? lastSeq + 1 : settings.nextInvoiceSeq
+      };
+      
+      setBillingSettings(finalSettings);
+      setSettingsForm(finalSettings);
       setCommunities(comms);
       setTemplates(tmpls);
+      setLastInvoice(lastInv);
       await loadInvoices();
     } catch (err) {
       console.error("Error loading initial billing data:", err);
@@ -163,6 +176,8 @@ export default function InvoicesPage() {
     try {
       await emitInvoice(id);
       alert('Factura emitida con éxito.');
+      const lastInv = await getLastEmittedInvoice();
+      setLastInvoice(lastInv);
       await loadInvoices();
       setActiveTab('pending');
     } catch (err) {
@@ -206,6 +221,8 @@ export default function InvoicesPage() {
     setActionLoading(true);
     try {
       await deleteInvoice(id);
+      const lastInv = await getLastEmittedInvoice();
+      setLastInvoice(lastInv);
       await loadInvoices();
     } catch (err) {
       console.error(err);
@@ -1259,6 +1276,48 @@ export default function InvoicesPage() {
               {/* Invoice Numbering Settings */}
               <div className="form-group" style={{ gridColumn: 'span 2', padding: '16px', background: '#f0fdf4', borderRadius: 'var(--radius-md)', border: '1px solid #bbf7d0', marginTop: '10px' }}>
                 <h4 style={{ fontWeight: 'bold', fontSize: '0.875rem', marginBottom: '12px' }}>🔢 Numeración de Facturas</h4>
+                
+                {/* Numbering Mode Selector */}
+                <div style={{ marginBottom: '14px', borderBottom: '1px solid #bbf7d0', paddingBottom: '12px' }}>
+                  <label className="form-label" style={{ fontSize: '12px', fontWeight: 'bold' }}>Modo de Numeración</label>
+                  <div style={{ display: 'flex', gap: '20px', marginTop: '6px', flexWrap: 'wrap' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer' }}>
+                      <input 
+                        type="radio" 
+                        name="seqMode"
+                        value="manual"
+                        checked={settingsForm.seqMode === 'manual'}
+                        onChange={() => {
+                          setSettingsForm(prev => ({
+                            ...prev,
+                            seqMode: 'manual'
+                          }));
+                        }}
+                        style={{ width: '16px', height: '16px', accentColor: 'var(--color-primary)' }}
+                      />
+                      Manual (Iniciar en una numeración específica)
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer' }}>
+                      <input 
+                        type="radio" 
+                        name="seqMode"
+                        value="auto"
+                        checked={settingsForm.seqMode === 'auto'}
+                        onChange={() => {
+                          const lastSeq = lastInvoice ? parseInt(lastInvoice.invoiceSeq) || 0 : 0;
+                          setSettingsForm(prev => ({
+                            ...prev,
+                            seqMode: 'auto',
+                            nextInvoiceSeq: lastSeq + 1
+                          }));
+                        }}
+                        style={{ width: '16px', height: '16px', accentColor: 'var(--color-primary)' }}
+                      />
+                      Automático (Seguir por la última numeración registrada)
+                    </label>
+                  </div>
+                </div>
+
                 <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
                   <div style={{ flex: 1, minWidth: '180px' }}>
                     <label className="form-label" style={{ fontSize: '11px' }}>Próximo nº de factura</label>
@@ -1266,11 +1325,16 @@ export default function InvoicesPage() {
                       type="number" 
                       className="form-input"
                       min="1"
+                      disabled={settingsForm.seqMode === 'auto'}
+                      style={settingsForm.seqMode === 'auto' ? { background: '#e2e8f0', cursor: 'not-allowed', color: '#475569' } : {}}
                       value={settingsForm.nextInvoiceSeq}
                       onChange={e => setSettingsForm({...settingsForm, nextInvoiceSeq: parseInt(e.target.value) || 1})}
                     />
                     <p style={{ fontSize: '10px', color: '#64748b', marginTop: '4px' }}>
-                      Este será el número de la próxima factura que se emita. Puedes cambiarlo para empezar desde cualquier número.
+                      {settingsForm.seqMode === 'auto' 
+                        ? 'Establecido automáticamente en base a la última factura emitida.' 
+                        : 'Este será el número de la próxima factura que se emita. Puedes cambiarlo para empezar desde cualquier número.'
+                      }
                     </p>
                   </div>
                   <div style={{ flex: 1, minWidth: '180px' }}>
@@ -1285,7 +1349,25 @@ export default function InvoicesPage() {
                     </select>
                   </div>
                 </div>
-                <div style={{ marginTop: '8px', padding: '8px 12px', background: '#fff', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+
+                {/* Database info panel if in auto mode */}
+                {settingsForm.seqMode === 'auto' && (
+                  <div style={{ marginTop: '12px', padding: '10px 14px', background: '#eff6ff', borderRadius: '6px', border: '1px solid #bfdbfe', fontSize: '12px', color: '#1e3a8a' }}>
+                    ℹ️ <strong>Último registro en base de datos:</strong>
+                    <div style={{ marginTop: '4px' }}>
+                      • Última factura emitida: {lastInvoice ? (
+                        <strong>{lastInvoice.invoiceNumber} (Secuencia: {lastInvoice.invoiceSeq})</strong>
+                      ) : (
+                        <strong>Ninguna (se iniciará desde la secuencia 1)</strong>
+                      )}
+                    </div>
+                    <div>
+                      • Siguiente número a generar: <strong>{lastInvoice ? (parseInt(lastInvoice.invoiceSeq) || 0) + 1 : 1}</strong>
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ marginTop: '12px', padding: '8px 12px', background: '#fff', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
                   <span style={{ fontSize: '11px', color: '#64748b' }}>Vista previa del próximo número: </span>
                   <strong style={{ fontSize: '13px', color: 'var(--color-primary)' }}>
                     {settingsForm.invoiceNumberFormat === 'formatted' 
