@@ -292,6 +292,12 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   font-size: var(--font-xs);
 }
 
+.btn-xs {
+  padding: 4px 8px;
+  font-size: 11px;
+  gap: 4px;
+}
+
 .btn-lg {
   padding: var(--space-4) var(--space-8);
   font-size: var(--font-base);
