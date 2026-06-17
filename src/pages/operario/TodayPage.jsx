@@ -420,8 +420,50 @@ export default function TodayPage() {
         }
       }
 
+      // Group optimized services by communityId
+      const grouped = [];
+      const seenCommunities = new Set();
+      
+      for (const svc of optimized) {
+        if (!svc.communityId) {
+          grouped.push(svc);
+          continue;
+        }
+        
+        if (seenCommunities.has(svc.communityId)) {
+          const existingGroup = grouped.find(g => g.communityId === svc.communityId);
+          if (existingGroup) {
+            existingGroup.groupedServices.push(svc);
+            if (svc.tasks && svc.tasks.length > 0) {
+              existingGroup.tasks.push(...svc.tasks);
+            }
+            if (svc.flexibleWeek) existingGroup.flexibleWeek = true;
+            if (svc.isCompanion) existingGroup.isCompanion = true;
+            if (svc.isTransferred) existingGroup.isTransferred = true;
+            if (svc.isRescheduled) existingGroup.isRescheduled = true;
+            if (svc.isGarage) existingGroup.isGarage = true;
+            
+            // Consolidate status
+            const allSvcs = existingGroup.groupedServices;
+            if (allSvcs.every(s => s.status === 'completed')) {
+              existingGroup.status = 'completed';
+            } else if (allSvcs.some(s => s.status === 'in_progress' || s.status === 'started' || s.status === 'completed')) {
+              existingGroup.status = 'in_progress';
+            } else {
+              existingGroup.status = 'pending';
+            }
+          }
+        } else {
+          seenCommunities.add(svc.communityId);
+          grouped.push({
+            ...svc,
+            groupedServices: [svc]
+          });
+        }
+      }
+
       setRouteOptimized(isRouteOptimized);
-      setEnrichedServices(optimized);
+      setEnrichedServices(grouped);
       setServices(svcs);
     } catch (err) {
       console.error('Error loading today:', err);
@@ -540,12 +582,15 @@ export default function TodayPage() {
     setActionLoading(true);
     try {
       if (transferModal.type === 'single') {
-        await transferService({
-          serviceId: transferModal.service.id,
-          fromUserId: userProfile.uid,
-          toUserId,
-          requesterRole: 'operario'
-        });
+        const servicesToTransfer = transferModal.service.groupedServices || [transferModal.service];
+        for (const s of servicesToTransfer) {
+          await transferService({
+            serviceId: s.id,
+            fromUserId: userProfile.uid,
+            toUserId,
+            requesterRole: 'operario'
+          });
+        }
       } else if (transferModal.type === 'day') {
         const today = new Date();
         await transferDay({

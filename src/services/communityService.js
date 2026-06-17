@@ -16,6 +16,12 @@ export async function createCommunity(data) {
     contactPerson: data.contactPerson || '',
     contactPhone: data.contactPhone || '',
     preferredTime: data.preferredTime || null,
+    individualTimeTracking: !!data.individualTimeTracking,
+    billingCif: data.billingCif || '',
+    billingAddress: data.billingAddress || '',
+    basePrice: parseFloat(data.basePrice) || 0,
+    paymentMethod: data.paymentMethod || 'transferencia',
+    billingEmail: data.billingEmail || '',
     active: true,
     createdAt: serverTimestamp(),
   };

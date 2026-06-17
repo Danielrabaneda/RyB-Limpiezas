@@ -4,9 +4,9 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useGeolocation } from '../../hooks/useGeolocation';
 import { getCommunity } from '../../services/communityService';
 import { getCommunityTasks } from '../../services/taskService';
-import { updateScheduledServiceStatus, addCompanionToService, removeCompanionFromService, shouldScheduleOnDay } from '../../services/scheduleService';
+import { getScheduledServicesForDate, updateScheduledServiceStatus, addCompanionToService, removeCompanionFromService, shouldScheduleOnDay } from '../../services/scheduleService';
 import { 
-  createCheckIn, completeCheckOut, getActiveCheckIn,
+  createCheckIn, completeCheckOut, getActiveCheckIn, getCheckInsForDate,
   createTaskExecution, updateTaskExecution, getTaskExecutionsForService,
   isWithinRange
 } from '../../services/checkInService';
@@ -19,7 +19,9 @@ import TransferModal from '../../components/TransferModal';
 import SignatureCanvas from '../../components/SignatureCanvas';
 import { getCommunityGuides } from '../../services/documentVaultService';
 import { getActiveWorkday } from '../../services/workdayService';
-import { doc, onSnapshot, collection, query, where, updateDoc, arrayUnion, getDocs, Timestamp } from 'firebase/firestore';
+import { getEntryDetection, getExitDetection } from '../../services/geoDetectionService';
+import { getDistance } from '../../utils/geolocation';
+import { doc, getDoc, onSnapshot, collection, query, where, updateDoc, arrayUnion, getDocs, Timestamp } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { format, startOfWeek, endOfWeek } from 'date-fns';
 
@@ -55,6 +57,16 @@ export default function ServiceDetailPage() {
   const [showSignatureModal, setShowSignatureModal] = useState(false);
   const [clientSignature, setClientSignature] = useState(null);
   const [communityDocs, setCommunityDocs] = useState([]);
+  const [groupedServices, setGroupedServices] = useState([]);
+  
+  // Estados para fichaje manual y estimaciones
+  const [estimatedIn, setEstimatedIn] = useState(null);
+  const [estimatedOut, setEstimatedOut] = useState(null);
+  const [showManualEntryForm, setShowManualEntryForm] = useState(false);
+  const [showManualExitForm, setShowManualExitForm] = useState(false);
+  const [showFullManualForm, setShowFullManualForm] = useState(false);
+  const [manualEntryTime, setManualEntryTime] = useState('');
+  const [manualExitTime, setManualExitTime] = useState('');
 
   useEffect(() => {
     if (!serviceId) return;
@@ -90,6 +102,20 @@ export default function ServiceDetailPage() {
         const docs = await getCommunityGuides(svcData.communityId);
         setCommunityDocs(docs || []);
       }
+
+      // Load grouped services on the same day for this community
+      try {
+        const svcDate = svcData.scheduledDate?.toDate ? svcData.scheduledDate.toDate() : new Date(svcData.scheduledDate);
+        const allSvcsToday = await getScheduledServicesForDate(userProfile.uid, svcDate);
+        const filtered = allSvcsToday.filter(s => s.communityId === svcData.communityId);
+        if (!filtered.some(s => s.id === svcData.id)) {
+          filtered.push(svcData);
+        }
+        setGroupedServices(filtered);
+      } catch (err) {
+        console.warn('Error loading grouped services:', err);
+        setGroupedServices([svcData]);
+      }
     });
 
     // 2. Listen to task executions
@@ -104,29 +130,47 @@ export default function ServiceDetailPage() {
     // 3. One-time fetches
     loadStaticData();
     
-    // Cargar sugerencias de geolocalización
-    const sIn = localStorage.getItem(`detected_entry_${serviceId}`);
-    const sOut = localStorage.getItem(`detected_exit_${serviceId}`);
-    if (sIn) setSuggestedIn(new Date(sIn));
-    if (sOut) {
-      setSuggestedOut(new Date(sOut));
-    } else {
-      // Comprobar si hay un pending exit que debería promoverse a confirmed
-      // (por ejemplo, la app estaba suspendida y no se pudo confirmar en su momento)
-      const pendingRaw = localStorage.getItem(`detected_exit_pending_${serviceId}`);
-      if (pendingRaw) {
-        try {
-          const pending = JSON.parse(pendingRaw);
-          const elapsed = Date.now() - pending.firstDetectedAt;
-          if (elapsed >= 5 * 60 * 1000) {
-            // Han pasado más de 5 min → promover a confirmed
-            localStorage.setItem(`detected_exit_${serviceId}`, pending.exitTime);
-            localStorage.removeItem(`detected_exit_pending_${serviceId}`);
-            setSuggestedOut(new Date(pending.exitTime));
+    // Cargar sugerencias de geolocalización (local y Firestore)
+    const loadGeoSuggestions = async () => {
+      try {
+        const sIn = localStorage.getItem(`detected_entry_${serviceId}`);
+        const sOut = localStorage.getItem(`detected_exit_${serviceId}`);
+        
+        if (sIn) {
+          setSuggestedIn(new Date(sIn));
+        } else {
+          const dbEntry = await getEntryDetection(userProfile.uid, serviceId);
+          if (dbEntry && dbEntry.detectedAt) {
+            setSuggestedIn(dbEntry.detectedAt.toDate ? dbEntry.detectedAt.toDate() : new Date(dbEntry.detectedAt));
           }
-        } catch (e) { /* ignore */ }
+        }
+
+        if (sOut) {
+          setSuggestedOut(new Date(sOut));
+        } else {
+          const dbExit = await getExitDetection(userProfile.uid, serviceId);
+          if (dbExit && dbExit.detectedAt) {
+            setSuggestedOut(dbExit.detectedAt.toDate ? dbExit.detectedAt.toDate() : new Date(dbExit.detectedAt));
+          } else {
+            const pendingRaw = localStorage.getItem(`detected_exit_pending_${serviceId}`);
+            if (pendingRaw) {
+              try {
+                const pending = JSON.parse(pendingRaw);
+                const elapsed = Date.now() - pending.firstDetectedAt;
+                if (elapsed >= 5 * 60 * 1000) {
+                  localStorage.setItem(`detected_exit_${serviceId}`, pending.exitTime);
+                  localStorage.removeItem(`detected_exit_pending_${serviceId}`);
+                  setSuggestedOut(new Date(pending.exitTime));
+                }
+              } catch (e) { /* ignore */ }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[ServiceDetail] Error loading suggestions:', err);
       }
-    }
+    };
+    loadGeoSuggestions();
 
     // Polling para detectar salida confirmada o promover pending exits
     const exitPollInterval = setInterval(() => {
@@ -155,7 +199,89 @@ export default function ServiceDetailPage() {
       unsubExecs();
       clearInterval(exitPollInterval);
     };
-  }, [serviceId]);
+  }, [serviceId, userProfile]);
+
+  // Función inteligente para estimar hora de llegada y salida basadas en la jornada
+  const calculateEstimates = async (userId, currentSvc, workday) => {
+    try {
+      const today = new Date();
+      const checkIns = await getCheckInsForDate(userId, today);
+      const completedCheckIns = checkIns
+        .filter(c => c.checkOutTime !== null)
+        .sort((a, b) => {
+          const aTime = a.checkOutTime?.toDate ? a.checkOutTime.toDate().getTime() : new Date(a.checkOutTime).getTime();
+          const bTime = b.checkOutTime?.toDate ? b.checkOutTime.toDate().getTime() : new Date(b.checkOutTime).getTime();
+          return bTime - aTime;
+        });
+
+      let estIn = null;
+      let estOut = null;
+
+      if (completedCheckIns.length > 0) {
+        const lastCheckIn = completedCheckIns[0];
+        const lastExitTime = lastCheckIn.checkOutTime?.toDate ? lastCheckIn.checkOutTime.toDate() : new Date(lastCheckIn.checkOutTime);
+        
+        let travelMinutes = 15; // default fallback
+        
+        // Intenta calcular la distancia si tenemos las ubicaciones
+        try {
+          const lastComm = await getCommunity(lastCheckIn.communityId);
+          if (lastComm?.location && currentSvc?.communityId) {
+            const currentComm = await getCommunity(currentSvc.communityId);
+            if (currentComm?.location) {
+              const lat1 = lastComm.location._lat || lastComm.location.latitude || 0;
+              const lng1 = lastComm.location._long || lastComm.location.longitude || 0;
+              const lat2 = currentComm.location._lat || currentComm.location.latitude || 0;
+              const lng2 = currentComm.location._long || currentComm.location.longitude || 0;
+              
+              if (lat1 && lng1 && lat2 && lng2) {
+                const dist = getDistance(lat1, lng1, lat2, lng2);
+                // 666 m/min = 40 km/h
+                travelMinutes = Math.round(dist / 666) + 2; 
+                if (travelMinutes < 2) travelMinutes = 2;
+                if (travelMinutes > 120) travelMinutes = 15;
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('[Estimator] Error calculating distance:', e);
+        }
+
+        estIn = new Date(lastExitTime.getTime() + travelMinutes * 60 * 1000);
+      } else if (workday?.startTime) {
+        const workdayStart = workday.startTime.toDate ? workday.startTime.toDate() : new Date(workday.startTime);
+        estIn = new Date(workdayStart.getTime() + 10 * 60 * 1000); // 10 min de viaje inicial
+      } else {
+        estIn = new Date();
+      }
+
+      // Evitar que la hora estimada de entrada sea en el futuro
+      if (estIn.getTime() > Date.now()) {
+        estIn = new Date();
+      }
+
+      // Estimar salida: entrada + 30 min
+      estOut = new Date(estIn.getTime() + 30 * 60 * 1000);
+      if (estOut.getTime() > Date.now()) {
+        estOut = new Date();
+      }
+
+      setEstimatedIn(estIn);
+      setEstimatedOut(estOut);
+
+      // Inicializar campos del formulario manual con formato "HH:mm"
+      const formatTime = (date) => {
+        const h = String(date.getHours()).padStart(2, '0');
+        const m = String(date.getMinutes()).padStart(2, '0');
+        return `${h}:${m}`;
+      };
+      setManualEntryTime(formatTime(estIn));
+      setManualExitTime(formatTime(estOut));
+
+    } catch (err) {
+      console.error('[Estimator] Error calculating estimates:', err);
+    }
+  };
 
   async function loadStaticData() {
     try {
@@ -183,6 +309,13 @@ export default function ServiceDetailPage() {
       // Workday
       const workday = await getActiveWorkday(userProfile.uid);
       setActiveWorkday(workday);
+
+      // Calcular estimaciones de tiempo
+      const docSnap = await getDoc(doc(db, 'scheduledServices', serviceId));
+      if (docSnap.exists()) {
+        const svcData = { id: docSnap.id, ...docSnap.data() };
+        await calculateEstimates(userProfile.uid, svcData, workday);
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -262,13 +395,17 @@ export default function ServiceDetailPage() {
         checkOutTime: null
       });
 
-      await updateScheduledServiceStatus(serviceId, 'in_progress');
+      const currentGroup = groupedServices.length > 0 ? groupedServices : [service];
+      for (const s of currentGroup) {
+        await updateScheduledServiceStatus(s.id, 'in_progress');
+      }
 
       // AUTO-ASSIGN GLOBAL COMPANION
       if (activeWorkday?.currentCompanionId) {
-        // If not already a companion
-        if (!service?.companionIds?.includes(activeWorkday.currentCompanionId)) {
-          await addCompanionToService(serviceId, activeWorkday.currentCompanionId);
+        for (const s of currentGroup) {
+          if (!s.companionIds?.includes(activeWorkday.currentCompanionId)) {
+            await addCompanionToService(s.id, activeWorkday.currentCompanionId);
+          }
         }
       }
 
@@ -306,8 +443,11 @@ export default function ServiceDetailPage() {
         console.warn('Error fetching weekly task executions:', err);
       }
 
+      const groupedTaskIds = new Set(currentGroup.map(s => s.communityTaskId).filter(Boolean));
+
       const relevantTasks = allTasks.filter(task => {
         if (completedTaskIdsThisWeek.has(task.id)) return false;
+        if (groupedTaskIds.has(task.id)) return true; // Explicitly in today's group (handles rescheduling/manual dates)
         if (shouldScheduleOnDay(task, svcDate)) return true;
         if (task.flexibleWeek) {
           const monday = startOfWeek(svcDate, { weekStartsOn: 1 });
@@ -387,7 +527,10 @@ export default function ServiceDetailPage() {
       const result = await completeCheckOut(activeCheckIn.id, pos.lat, pos.lng, manualTime, clientSignature);
 
       // Update status
-      await updateScheduledServiceStatus(serviceId, 'completed');
+      const currentGroup = groupedServices.length > 0 ? groupedServices : [service];
+      for (const s of currentGroup) {
+        await updateScheduledServiceStatus(s.id, 'completed');
+      }
 
       // Limpiar sugerencia utilizada (confirmed + pending)
       localStorage.removeItem(`detected_exit_${serviceId}`);
@@ -659,23 +802,59 @@ export default function ServiceDetailPage() {
       )}
 
       {((!isCompleted) || (isCheckedIn)) && isTitular && !otherActiveCheckIn && (
-        <div className="mb-4 flex flex-col gap-2">
-          {/* Sugerencias de geolocalización */}
-          {!isCheckedIn && suggestedIn && (
-            <div className="card" style={{ border: '2px dashed var(--color-accent)', background: 'var(--color-accent-light)' }}>
-              <p className="text-xs font-bold mb-2">📍 Se detectó tu llegada a las {format(suggestedIn, 'HH:mm')}</p>
-              <button 
-                className="btn btn-primary btn-sm w-full" 
-                onClick={() => handleCheckIn(suggestedIn)}
-                disabled={actionLoading}
-              >
-                Usar hora sugerida
-              </button>
+        <div className="mb-4 flex flex-col gap-3">
+          
+          {/* ================= SUGERENCIAS DE FICHAJE ================= */}
+          {!isCheckedIn && (suggestedIn || estimatedIn || activeWorkday?.startTime) && (
+            <div className="card animate-fadeIn" style={{ border: '1px solid var(--color-border)', background: 'var(--color-bg-light)', padding: 'var(--space-4)' }}>
+              <h4 className="text-xs font-bold text-slate-700 mb-2">💡 Sugerencias de Llegada:</h4>
+              <div className="flex flex-col gap-2">
+                {suggestedIn && (
+                  <button 
+                    className="btn btn-secondary btn-sm flex items-center justify-between font-bold w-full"
+                    style={{ textAlign: 'left', background: 'var(--color-accent-light)', borderColor: 'var(--color-accent)', color: '#0f172a' }}
+                    onClick={() => {
+                      handleCheckIn(suggestedIn);
+                    }}
+                    disabled={actionLoading}
+                  >
+                    <span>📍 GPS detectado: <strong>{format(suggestedIn, 'HH:mm')}</strong></span>
+                    <span>Usar →</span>
+                  </button>
+                )}
+                {estimatedIn && (!suggestedIn || Math.abs(estimatedIn.getTime() - suggestedIn.getTime()) > 60000) && (
+                  <button 
+                    className="btn btn-secondary btn-sm flex items-center justify-between font-bold w-full"
+                    style={{ textAlign: 'left', background: '#f0f9ff', borderColor: '#bae6fd', color: '#0369a1' }}
+                    onClick={() => {
+                      handleCheckIn(estimatedIn);
+                    }}
+                    disabled={actionLoading}
+                  >
+                    <span>🚗 Llegada estimada (viaje): <strong>{format(estimatedIn, 'HH:mm')}</strong></span>
+                    <span>Usar →</span>
+                  </button>
+                )}
+                {activeWorkday?.startTime && !suggestedIn && !estimatedIn && (
+                  <button 
+                    className="btn btn-secondary btn-sm flex items-center justify-between font-bold w-full"
+                    style={{ textAlign: 'left', background: '#faf5ff', borderColor: '#e9d5ff', color: '#7c3aed' }}
+                    onClick={() => {
+                      const wdStart = activeWorkday.startTime.toDate ? activeWorkday.startTime.toDate() : new Date(activeWorkday.startTime);
+                      handleCheckIn(wdStart);
+                    }}
+                    disabled={actionLoading}
+                  >
+                    <span>👷 Inicio de jornada: <strong>{format(activeWorkday.startTime.toDate ? activeWorkday.startTime.toDate() : new Date(activeWorkday.startTime), 'HH:mm')}</strong></span>
+                    <span>Usar →</span>
+                  </button>
+                )}
+              </div>
             </div>
           )}
 
           {isCheckedIn && suggestedOut && (
-            <div className="exit-suggestion-card">
+            <div className="exit-suggestion-card animate-fadeIn">
               <div className="exit-suggestion-icon">🏃</div>
               <div className="exit-suggestion-content">
                 <p className="exit-suggestion-title">Salida confirmada</p>
@@ -693,17 +872,224 @@ export default function ServiceDetailPage() {
             </div>
           )}
 
+          {/* ================= FORMULARIO ENTRADA MANUAL ================= */}
+          {showManualEntryForm && !isCheckedIn && (
+            <div className="card animate-fadeIn" style={{ border: '1px solid var(--color-border)', background: 'var(--color-bg-light)', padding: 'var(--space-4)' }}>
+              <h4 className="text-xs font-bold mb-3">⏱️ Iniciar con Hora Manual</h4>
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <span className="text-xs font-semibold text-slate-600">Hora de llegada:</span>
+                <input 
+                  type="time" 
+                  value={manualEntryTime} 
+                  onChange={(e) => setManualEntryTime(e.target.value)}
+                  className="form-input"
+                  style={{ width: '130px', padding: '6px 12px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}
+                />
+              </div>
+              <div className="flex gap-2">
+                <button 
+                  className="btn btn-primary btn-sm flex-1 font-bold"
+                  onClick={() => {
+                    if (!manualEntryTime) return;
+                    const [h, m] = manualEntryTime.split(':').map(Number);
+                    const entryDate = new Date();
+                    entryDate.setHours(h, m, 0, 0);
+                    handleCheckIn(entryDate);
+                    setShowManualEntryForm(false);
+                  }}
+                  disabled={actionLoading}
+                >
+                  Confirmar Entrada
+                </button>
+                <button 
+                  className="btn btn-secondary btn-sm font-bold"
+                  onClick={() => setShowManualEntryForm(false)}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ================= FORMULARIO COMPLETO RETROACTIVO ================= */}
+          {showFullManualForm && !isCheckedIn && (
+            <div className="card animate-fadeIn" style={{ border: '1px solid var(--color-border)', background: 'var(--color-bg-light)', padding: 'var(--space-4)' }}>
+              <h4 className="text-xs font-bold mb-1">📝 Registrar Servicio Completo</h4>
+              <p className="text-[10px] text-muted mb-4">Registra entrada y salida de forma retroactiva si no pudiste hacerlo al momento.</p>
+              
+              <div className="flex flex-col gap-3 mb-4">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-semibold text-slate-600">Hora de llegada:</span>
+                  <input 
+                    type="time" 
+                    value={manualEntryTime} 
+                    onChange={(e) => setManualEntryTime(e.target.value)}
+                    className="form-input"
+                    style={{ width: '130px', padding: '6px 12px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-semibold text-slate-600">Hora de salida:</span>
+                  <input 
+                    type="time" 
+                    value={manualExitTime} 
+                    onChange={(e) => setManualExitTime(e.target.value)}
+                    className="form-input"
+                    style={{ width: '130px', padding: '6px 12px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <button 
+                  className="btn btn-success btn-sm flex-1 font-bold"
+                  onClick={async () => {
+                    if (!manualEntryTime || !manualExitTime) return;
+                    setActionLoading(true);
+                    try {
+                      const [inH, inM] = manualEntryTime.split(':').map(Number);
+                      const [outH, outM] = manualExitTime.split(':').map(Number);
+                      
+                      const entryDate = new Date();
+                      entryDate.setHours(inH, inM, 0, 0);
+                      
+                      const exitDate = new Date();
+                      exitDate.setHours(outH, outM, 0, 0);
+
+                      if (exitDate.getTime() <= entryDate.getTime()) {
+                        alert('La hora de salida debe ser posterior a la de entrada.');
+                        setActionLoading(false);
+                        return;
+                      }
+
+                      const pos = await getCurrentPosition();
+
+                      // 1. Crear el check-in con hora manual de entrada
+                      const checkInId = await createCheckIn({
+                        userId: userProfile.uid,
+                        communityId: service.communityId,
+                        scheduledServiceId: serviceId,
+                        lat: pos.lat,
+                        lng: pos.lng,
+                        manualTime: entryDate
+                      });
+
+                      // 2. Completar el check-out con hora manual de salida
+                      await completeCheckOut(checkInId, pos.lat, pos.lng, exitDate, clientSignature);
+
+                      // 3. Actualizar estado a completado
+                      await updateScheduledServiceStatus(serviceId, 'completed');
+
+                      // 4. Limpiar sugerencias locales
+                      localStorage.removeItem(`detected_entry_${serviceId}`);
+                      localStorage.removeItem(`detected_exit_${serviceId}`);
+                      localStorage.removeItem(`detected_exit_pending_${serviceId}`);
+                      setSuggestedIn(null);
+                      setSuggestedOut(null);
+
+                      alert('Servicio registrado correctamente de forma retroactiva.');
+                      setShowFullManualForm(false);
+                      await loadStaticData();
+                    } catch (err) {
+                      alert('Error al registrar servicio: ' + err.message);
+                    } finally {
+                      setActionLoading(false);
+                    }
+                  }}
+                  disabled={actionLoading}
+                >
+                  Guardar Registro
+                </button>
+                <button 
+                  className="btn btn-secondary btn-sm font-bold"
+                  onClick={() => setShowFullManualForm(false)}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ================= FORMULARIO SALIDA MANUAL ================= */}
+          {showManualExitForm && isCheckedIn && (
+            <div className="card animate-fadeIn" style={{ border: '1px solid var(--color-border)', background: 'var(--color-bg-light)', padding: 'var(--space-4)' }}>
+              <h4 className="text-xs font-bold mb-3">🛑 Finalizar con Hora Manual</h4>
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <span className="text-xs font-semibold text-slate-600">Hora de salida:</span>
+                <input 
+                  type="time" 
+                  value={manualExitTime} 
+                  onChange={(e) => setManualExitTime(e.target.value)}
+                  className="form-input"
+                  style={{ width: '130px', padding: '6px 12px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}
+                />
+              </div>
+              <div className="flex gap-2">
+                <button 
+                  className="btn btn-primary btn-sm flex-1 font-bold"
+                  onClick={() => {
+                    if (!manualExitTime) return;
+                    const [h, m] = manualExitTime.split(':').map(Number);
+                    const exitDate = new Date();
+                    exitDate.setHours(h, m, 0, 0);
+                    
+                    const checkInTime = activeCheckIn.checkInTime?.toDate 
+                      ? activeCheckIn.checkInTime.toDate() 
+                      : new Date(activeCheckIn.checkInTime);
+                    
+                    if (exitDate.getTime() <= checkInTime.getTime()) {
+                      alert('La hora de salida debe ser posterior a la de entrada.');
+                      return;
+                    }
+
+                    handleCheckOut(exitDate);
+                    setShowManualExitForm(false);
+                  }}
+                  disabled={actionLoading}
+                >
+                  Confirmar Salida
+                </button>
+                <button 
+                  className="btn btn-secondary btn-sm font-bold"
+                  onClick={() => setShowManualExitForm(false)}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ================= BOTONES DE ACCIÓN PRINCIPALES ================= */}
           {!isCheckedIn ? (
             <div className="flex flex-col gap-2 w-full">
-              <button
-                className="checkin-btn start"
-                onClick={() => handleCheckIn()}
-                disabled={actionLoading || geoLoading}
-              >
-                {actionLoading ? '📍 Obteniendo ubicación...' : '📍 Iniciar servicio'}
-              </button>
+              {!showManualEntryForm && !showFullManualForm && (
+                <>
+                  <button
+                    className="checkin-btn start"
+                    onClick={() => handleCheckIn()}
+                    disabled={actionLoading || geoLoading}
+                  >
+                    {actionLoading ? '📍 Obteniendo ubicación...' : '📍 Iniciar servicio'}
+                  </button>
+                  
+                  <div className="flex gap-2 mt-1">
+                    <button
+                      className="btn btn-secondary btn-sm flex-1 font-bold"
+                      onClick={() => setShowManualEntryForm(true)}
+                    >
+                      ⏱️ Entrada Manual
+                    </button>
+                    <button
+                      className="btn btn-secondary btn-sm flex-1 font-bold"
+                      onClick={() => setShowFullManualForm(true)}
+                    >
+                      📝 Todo Retroactivo
+                    </button>
+                  </div>
+                </>
+              )}
               
-              {isInProgress && (
+              {isInProgress && !showManualEntryForm && !showFullManualForm && (
                 <button
                   className="btn btn-warning w-full flex items-center justify-center gap-2 mt-2"
                   onClick={async () => {
@@ -761,13 +1147,23 @@ export default function ServiceDetailPage() {
                 )}
               </div>
 
-              <button
-                className="checkin-btn stop"
-                onClick={() => handleCheckOut()}
-                disabled={actionLoading || geoLoading}
-              >
-                {actionLoading ? '📍 Finalizando...' : '🛑 Finalizar servicio'}
-              </button>
+              {!showManualExitForm && (
+                <>
+                  <button
+                    className="checkin-btn stop"
+                    onClick={() => handleCheckOut()}
+                    disabled={actionLoading || geoLoading}
+                  >
+                    {actionLoading ? '📍 Finalizando...' : '🛑 Finalizar servicio'}
+                  </button>
+                  <button
+                    className="btn btn-secondary btn-sm w-full font-bold mt-1"
+                    onClick={() => setShowManualExitForm(true)}
+                  >
+                    ⏱️ Salida Manual
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>

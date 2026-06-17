@@ -30,7 +30,8 @@ export async function updateProduct(id, data) {
   await updateDoc(ref, {
     name: data.name,
     unit: data.unit,
-    minStock: parseFloat(data.minStock) || 0
+    minStock: parseFloat(data.minStock) || 0,
+    category: data.category || 'general'
   });
 }
 

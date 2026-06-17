@@ -46,5 +46,9 @@
     "providers": {
       "emailPassword": true
     }
+  },
+  "functions": {
+    "source": "functions",
+    "runtime": "nodejs20"
   }
 }

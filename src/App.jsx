@@ -357,37 +357,61 @@ function OperarioLayout() {
     return () => navigator.serviceWorker?.removeEventListener('message', handleSWMessage);
   }, [navigate]);
 
+  // Evitar que la barra de navegación inferior estorbe cuando el teclado está abierto
+  useEffect(() => {
+    const handleVisualViewportResize = () => {
+      if (!window.visualViewport) return;
+      const activeEl = document.activeElement;
+      const isInput = activeEl && 
+        (['INPUT', 'TEXTAREA'].includes(activeEl.tagName) || activeEl.isContentEditable);
+      
+      const isKeyboardVisible = window.innerHeight - window.visualViewport.height > 150;
+      
+      if (isKeyboardVisible && isInput) {
+        document.body.classList.add('keyboard-open');
+      } else {
+        document.body.classList.remove('keyboard-open');
+      }
+    };
+
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', handleVisualViewportResize);
+      return () => {
+        window.visualViewport.removeEventListener('resize', handleVisualViewportResize);
+        document.body.classList.remove('keyboard-open');
+      };
+    }
+  }, []);
+
   async function handleLogout() {
     await logout();
     navigate('/login');
   }
 
   return (
-    <>
-      <div className="operario-layout">
-        <PermissionsCheck />
-        <Suspense fallback={null}>
-          <GeolocationTracker />
-        </Suspense>
-        <header className="operario-header">
-          <div className="flex items-center gap-2" style={{ minWidth: 0, flex: 1 }}>
-            {globalSettings?.logoUrl && (
-              <img src={globalSettings.logoUrl} alt="Logo" style={{ width: '28px', height: '28px', objectFit: 'contain', borderRadius: '4px', background: '#fff' }} />
-            )}
-            <div className="operario-header-title truncate">{globalSettings?.companyName || 'RyB Limpiezas'}</div>
-          </div>
-          <div className="flex items-center gap-3">
-            <span style={{ fontSize: 'var(--font-xs)', opacity: 0.8 }}>{userProfile?.name}</span>
-            <button className="btn btn-ghost btn-sm" onClick={handleLogout} style={{ color: 'white', padding: '4px 8px' }}>
-              🚪
-            </button>
-          </div>
-        </header>
+    <div className="operario-layout">
+      <PermissionsCheck />
+      <Suspense fallback={null}>
+        <GeolocationTracker />
+      </Suspense>
+      <header className="operario-header">
+        <div className="flex items-center gap-2" style={{ minWidth: 0, flex: 1 }}>
+          {globalSettings?.logoUrl && (
+            <img src={globalSettings.logoUrl} alt="Logo" style={{ width: '28px', height: '28px', objectFit: 'contain', borderRadius: '4px', background: '#fff' }} />
+          )}
+          <div className="operario-header-title truncate">{globalSettings?.companyName || 'RyB Limpiezas'}</div>
+        </div>
+        <div className="flex items-center gap-3">
+          <span style={{ fontSize: 'var(--font-xs)', opacity: 0.8 }}>{userProfile?.name}</span>
+          <button className="btn btn-ghost btn-sm" onClick={handleLogout} style={{ color: 'white', padding: '4px 8px' }}>
+            🚪
+          </button>
+        </div>
+      </header>
 
-        <main className="operario-content">
-          <Outlet />
-        </main>
-      </div>
+      <main className="operario-content">
+        <Outlet />
+      </main>
 
       <nav className="operario-bottom-nav">
         <NavLink
@@ -420,7 +444,7 @@ function OperarioLayout() {
           Historial
         </NavLink>
       </nav>
-    </>
+    </div>
   );
 }
 

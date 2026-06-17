@@ -322,22 +322,51 @@ export default function HistoryPage() {
                 
                 {dayServices.length === 0 ? (
                   <p className="text-xs text-muted italic">Sin servicios programados</p>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    {dayServices.map(svc => (
-                      <div key={svc.id} className="flex items-center gap-3">
-                        <div style={{
-                          width: 8, height: 8, borderRadius: '50%',
-                          background: svc.status === 'completed' ? 'var(--color-success)' : 'var(--color-warning)',
-                          flexShrink: 0,
-                        }} />
-                        <div style={{ flex: 1 }}>
-                          <div className="font-semibold text-sm">{svc.community?.name}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                ) : (() => {
+                  const communityGroups = {};
+                  dayServices.forEach(svc => {
+                    const commId = svc.communityId || 'unknown';
+                    if (!communityGroups[commId]) {
+                      communityGroups[commId] = {
+                        community: svc.community,
+                        services: [],
+                        tasks: []
+                      };
+                    }
+                    communityGroups[commId].services.push(svc);
+                    if (svc.taskName) {
+                      communityGroups[commId].tasks.push(svc.taskName);
+                    }
+                  });
+
+                  return (
+                    <div className="flex flex-col gap-2">
+                      {Object.entries(communityGroups).map(([commId, group]) => {
+                        const allCompleted = group.services.every(s => s.status === 'completed');
+                        const hasStarted = group.services.some(s => s.status === 'completed' || s.status === 'in_progress');
+                        const statusColor = allCompleted 
+                          ? 'var(--color-success)' 
+                          : (hasStarted ? '#0284c7' : 'var(--color-warning)');
+                        const tasksStr = group.tasks.length > 0 ? ` (${group.tasks.join(', ')})` : '';
+                        return (
+                          <div key={commId} className="flex items-center gap-3">
+                            <div style={{
+                              width: 8, height: 8, borderRadius: '50%',
+                              background: statusColor,
+                              flexShrink: 0,
+                            }} />
+                            <div style={{ flex: 1 }}>
+                              <div className="font-semibold text-sm">
+                                {group.community?.name || 'Comunidad'}
+                                <span className="text-xs text-muted font-normal ml-2">{tasksStr}</span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}
