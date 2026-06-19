@@ -50,6 +50,7 @@ export default function ServiceDetailPage() {
   const [sendingGPS, setSendingGPS] = useState(false);
   const [gpsSent, setGpsSent] = useState(false);
   const [suggestedIn, setSuggestedIn] = useState(null);
+  const [entrySource, setEntrySource] = useState('realtime');
   const [suggestedOut, setSuggestedOut] = useState(null);
   const [activeWorkday, setActiveWorkday] = useState(null);
   const [submittingEvidence, setSubmittingEvidence] = useState({});
@@ -138,10 +139,12 @@ export default function ServiceDetailPage() {
         
         if (sIn) {
           setSuggestedIn(new Date(sIn));
+          setEntrySource(localStorage.getItem(`detected_entry_source_${serviceId}`) || 'realtime');
         } else {
           const dbEntry = await getEntryDetection(userProfile.uid, serviceId);
           if (dbEntry && dbEntry.detectedAt) {
             setSuggestedIn(dbEntry.detectedAt.toDate ? dbEntry.detectedAt.toDate() : new Date(dbEntry.detectedAt));
+            setEntrySource(dbEntry.source || 'realtime');
           }
         }
 
@@ -812,13 +815,16 @@ export default function ServiceDetailPage() {
                 {suggestedIn && (
                   <button 
                     className="btn btn-secondary btn-sm flex items-center justify-between font-bold w-full"
-                    style={{ textAlign: 'left', background: 'var(--color-accent-light)', borderColor: 'var(--color-accent)', color: '#0f172a' }}
+                    style={{ textAlign: 'left', background: entrySource === 'estimated' ? '#fdf4ff' : 'var(--color-accent-light)', borderColor: entrySource === 'estimated' ? '#f0abfc' : 'var(--color-accent)', color: '#0f172a' }}
                     onClick={() => {
                       handleCheckIn(suggestedIn);
                     }}
                     disabled={actionLoading}
                   >
-                    <span>📍 GPS detectado: <strong>{format(suggestedIn, 'HH:mm')}</strong></span>
+                    <span>
+                      {entrySource === 'estimated' ? '⏱️ Llegada estimada (background): ' : '📍 GPS detectado: '} 
+                      <strong>{format(suggestedIn, 'HH:mm')}</strong>
+                    </span>
                     <span>Usar →</span>
                   </button>
                 )}

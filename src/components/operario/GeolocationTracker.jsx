@@ -12,13 +12,16 @@ import { format } from 'date-fns';
 
 // ==================== CONSTANTES ====================
 const CHECK_INTERVAL = 30 * 1000;          // 30s polling de respaldo
-const PROXIMITY_RADIUS_ENTRY = 50;          // 50m para detectar llegada (antes 20m)
+const PROXIMITY_RADIUS_ENTRY = 30;          // 30m para detectar llegada (antes 50m)
 const PROXIMITY_RADIUS_EXIT = 100;          // 100m para detectar salida (antes 40m)
 const RE_NOTIFY_INTERVAL_MS = 3 * 60 * 1000; // Re-notificar cada 3 min
+const ENTRY_CONFIRM_DELAY_MS = 90 * 1000;   // 90s de permanencia mínima para confirmar llegada
 const EXIT_CONFIRM_DELAY_MS = 5 * 60 * 1000; // 5 min para confirmar salida
 const COMMUNITY_CACHE_TTL = 10 * 60 * 1000;  // Caché de comunidades: 10 min
 const MIN_ACCURACY_FOR_ENTRY = 80;          // No detectar entrada si precisión GPS > 80m
 const MAX_ACCURACY_FOR_EXIT = 150;          // No detectar salida si precisión GPS > 150m
+const LAST_POSITION_KEY = 'tracker_last_position'; // Persistir última posición para recovery
+const MAX_SUSPENSION_FOR_ESTIMATE = 60 * 60 * 1000; // No estimar si suspensión > 1 hora
 
 // ==================== UTILIDADES DE CACHE LOCAL ====================
 
@@ -57,6 +60,7 @@ export default function GeolocationTracker() {
   // Refs para mantener estado entre actualizaciones del GPS sin re-renders
   const lastStateRef = useRef({});          // { serviceId: 'INSIDE' | 'OUTSIDE' }
   const lastNotifyTimeRef = useRef({});     // { serviceId: timestamp }
+  const firstSeenInsideRef = useRef({});     // { serviceId: timestamp } para controlar permanencia mínima
   const watchIdRef = useRef(null);
   const communityCacheRef = useRef({});     // { communityId: { data, cachedAt } }
   const servicesRef = useRef([]);           // Caché de servicios del día
@@ -147,6 +151,18 @@ export default function GeolocationTracker() {
         localStorage.setItem('tracker_last_processed_at', Date.now().toString());
 
         const { latitude, longitude, accuracy } = position.coords;
+
+        // Leer posición anterior ANTES de guardar la nueva (para recovery inteligente)
+        let prevPosition = null;
+        try {
+          const prevPosRaw = localStorage.getItem(LAST_POSITION_KEY);
+          if (prevPosRaw) prevPosition = JSON.parse(prevPosRaw);
+        } catch (e) { /* ignore */ }
+
+        // Persistir posición actual para futuros recoveries tras suspensión del SO
+        localStorage.setItem(LAST_POSITION_KEY, JSON.stringify({
+          lat: latitude, lng: longitude, accuracy, timestamp: Date.now()
+        }));
         console.log(`[GPS] Precisión: ${Math.round(accuracy)}m | Lat: ${latitude.toFixed(6)} | Lng: ${longitude.toFixed(6)}${wasAppSuspended ? ` | ⚠️ APP SUSPENDIDA ${Math.round(timeSinceLastProcess/1000)}s` : ''}`);
 
         // 1. Verificar jornada activa
@@ -205,6 +221,8 @@ export default function GeolocationTracker() {
                 ...svc,
                 distance: dist,
                 communityName: community.name,
+                communityLat: commLat,
+                communityLng: commLng,
                 effectiveEntryRadius,
                 effectiveExitRadius,
                 gpsAccuracy: accuracy
@@ -348,6 +366,17 @@ export default function GeolocationTracker() {
             })
             .sort((a, b) => a.distance - b.distance);
 
+          // Limpiar temporizadores de entrada de servicios que no son el candidato más cercano en rango
+          const closestId = nearby.length > 0 ? nearby[0].id : null;
+          services.forEach(s => {
+            if (s.id !== closestId) {
+              if (firstSeenInsideRef.current[s.id]) {
+                console.log(`[Tracker] Limpiando temporizador de entrada para ${s.communityName || s.id} (ya no es el más cercano)`);
+                delete firstSeenInsideRef.current[s.id];
+              }
+            }
+          });
+
           if (nearby.length > 0) {
             const closest = nearby[0];
             const previousState = lastStateRef.current[closest.id] || 'OUTSIDE';
@@ -355,6 +384,31 @@ export default function GeolocationTracker() {
             const timeSinceLastNotify = now - lastNotifyTime;
 
             const isFirstEntry = previousState === 'OUTSIDE';
+
+            // Solución A: Filtro de permanencia mínima de 90 segundos
+            if (isFirstEntry) {
+              if (!firstSeenInsideRef.current[closest.id]) {
+                firstSeenInsideRef.current[closest.id] = now;
+                console.log(`[Tracker] ${closest.communityName} en rango (${Math.round(closest.distance)}m). Iniciando temporizador de permanencia de 90s...`);
+                return; // Esperar al siguiente ping GPS para verificar si permanece
+              }
+
+              const elapsed = now - firstSeenInsideRef.current[closest.id];
+              if (elapsed < ENTRY_CONFIRM_DELAY_MS) {
+                console.log(`[Tracker] ${closest.communityName} en rango. Tiempo restante para confirmar entrada: ${Math.round((ENTRY_CONFIRM_DELAY_MS - elapsed) / 1000)}s`);
+                return; // Todavía no cumple los 90 segundos
+              }
+
+              console.log(`[Tracker] Temporizador de permanencia completado para ${closest.communityName} (${Math.round(elapsed / 1000)}s)`);
+            }
+
+            // Solución E: Priorización y exclusión mutua de notificaciones para comunidades adyacentes
+            const activeInsideService = services.find(s => lastStateRef.current[s.id] === 'INSIDE');
+            if (activeInsideService && activeInsideService.id !== closest.id) {
+              console.log(`[Tracker] Silenciando entrada de ${closest.communityName} porque el usuario ya está marcado dentro de ${activeInsideService.communityName}`);
+              return;
+            }
+
             const shouldReNotify = previousState === 'INSIDE' && timeSinceLastNotify >= RE_NOTIFY_INTERVAL_MS;
 
             if (isFirstEntry || shouldReNotify) {
@@ -364,20 +418,41 @@ export default function GeolocationTracker() {
               lastStateRef.current[closest.id] = 'INSIDE';
               lastNotifyTimeRef.current[closest.id] = now;
 
+              let detectedEntryTime = new Date();
+              let entrySource = 'realtime';
+
               if (isFirstEntry) {
-                const detectedTime = new Date();
-                localStorage.setItem(`detected_entry_${closest.id}`, detectedTime.toISOString());
-                
-                // Persistir en Firestore como backup
-                persistEntryDetection(userProfile.uid, closest.id, closest.communityName, detectedTime, closest.distance);
+                // Si la app estuvo suspendida, estimar la hora real de llegada
+                if (wasAppSuspended && prevPosition && lastProcessedAt > 0 && timeSinceLastProcess < MAX_SUSPENSION_FOR_ESTIMATE) {
+                  const prevDist = getDistance(prevPosition.lat, prevPosition.lng, closest.communityLat, closest.communityLng);
+                  if (prevDist <= closest.effectiveEntryRadius) {
+                    // Ya estaba cerca antes de la suspensión → usar timestamp de la posición anterior
+                    detectedEntryTime = new Date(prevPosition.timestamp);
+                    entrySource = 'estimated';
+                    console.log(`[Tracker] ⏱️ Llegada estimada (ya estaba cerca): ${detectedEntryTime.toLocaleTimeString()}`);
+                  } else {
+                    // No estaba cerca → llegó durante la suspensión → usar hora de última actividad
+                    detectedEntryTime = new Date(lastProcessedAt);
+                    entrySource = 'estimated';
+                    console.log(`[Tracker] ⏱️ Llegada estimada (durante suspensión): ${detectedEntryTime.toLocaleTimeString()}`);
+                  }
+                }
               }
+
+              localStorage.setItem(`detected_entry_${closest.id}`, detectedEntryTime.toISOString());
+              localStorage.setItem(`detected_entry_source_${closest.id}`, entrySource);
+              
+              // Persistir en Firestore como backup
+              persistEntryDetection(userProfile.uid, closest.id, closest.communityName, detectedEntryTime, closest.distance, entrySource);
 
               const title = isRepeat
                 ? `🔔 Recuerdo: Estás en ${closest.communityName}`
                 : `📍 Has llegado a ${closest.communityName}`;
               const body = isRepeat
                 ? `Llevas un rato aquí. ¿Inicias el servicio?`
-                : `¿Quieres iniciar el servicio? Estás a ${Math.round(closest.distance)}m.`;
+                : entrySource === 'estimated'
+                  ? `Llegada estimada: ${detectedEntryTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}. ¿Inicias el servicio?`
+                  : `¿Quieres iniciar el servicio? Estás a ${Math.round(closest.distance)}m.`;
 
               createSystemNotification(
                 userProfile.uid,
@@ -400,6 +475,7 @@ export default function GeolocationTracker() {
               }
               lastStateRef.current[s.id] = 'OUTSIDE';
               delete lastNotifyTimeRef.current[s.id];
+              delete firstSeenInsideRef.current[s.id]; // Limpiar temporizador de permanencia
             }
           });
 
@@ -418,17 +494,25 @@ export default function GeolocationTracker() {
     // ==================== MANEJAR VISIBILIDAD (RECOVERY) ====================
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        console.log('[Tracker] App volvió a primer plano — solicitando GPS inmediato');
+        console.log('[Tracker] App volvió a primer plano — doble disparo GPS (rápido + fresco)');
         // Re-adquirir Wake Lock (se pierde al ir a background)
         requestWakeLock();
-        // Forzar una comprobación GPS inmediata al volver
-        navigator.geolocation.getCurrentPosition(
-          processPosition,
-          (err) => console.warn('[Tracker] GPS recovery error:', err),
-          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-        );
         // Invalidar caché de servicios para obtener datos frescos
         servicesCachedAtRef.current = 0;
+        // 1. Disparo RÁPIDO con posición cacheada (resultado casi instantáneo en iOS/Android)
+        navigator.geolocation.getCurrentPosition(
+          processPosition,
+          () => {},
+          { enableHighAccuracy: true, timeout: 5000, maximumAge: 60000 }
+        );
+        // 2. Disparo FRESCO para confirmar posición actual (puede tardar 5-15s en interiores)
+        setTimeout(() => {
+          navigator.geolocation.getCurrentPosition(
+            processPosition,
+            (err) => console.warn('[Tracker] GPS fresh recovery error:', err),
+            { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+          );
+        }, 1000);
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);

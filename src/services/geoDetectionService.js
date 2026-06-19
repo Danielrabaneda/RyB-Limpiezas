@@ -21,7 +21,7 @@ const COLLECTION = 'geoDetections';
  * @param {Date} detectedAt - Hora de detección
  * @param {number} distance - Distancia en metros al punto de la comunidad
  */
-export async function persistEntryDetection(userId, serviceId, communityName, detectedAt, distance) {
+export async function persistEntryDetection(userId, serviceId, communityName, detectedAt, distance, source = 'realtime') {
   try {
     const docId = `entry_${userId}_${serviceId}_${detectedAt.toISOString().slice(0, 10)}`;
     await setDoc(doc(db, COLLECTION, docId), {
@@ -31,9 +31,10 @@ export async function persistEntryDetection(userId, serviceId, communityName, de
       communityName,
       detectedAt: Timestamp.fromDate(detectedAt),
       distance: Math.round(distance),
+      source,
       createdAt: serverTimestamp(),
     }, { merge: true }); // merge para no sobreescribir si ya existe
-    console.log(`[GeoDetection] Entrada persistida: ${communityName} a ${Math.round(distance)}m`);
+    console.log(`[GeoDetection] Entrada persistida: ${communityName} a ${Math.round(distance)}m (${source})`);
   } catch (err) {
     console.error('[GeoDetection] Error persistiendo entrada:', err);
   }

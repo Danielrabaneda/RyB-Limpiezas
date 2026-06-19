@@ -423,6 +423,76 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   border-bottom: none;
 }
 
+/* Custom Table Grid & Zebra Striping */
+.table-grid {
+  border-collapse: collapse;
+}
+
+.table-grid th,
+.table-grid td {
+  border-right: 1px solid var(--color-border);
+}
+
+.table-grid th:last-child,
+.table-grid td:last-child {
+  border-right: none;
+}
+
+.table-striped tbody tr:nth-child(even) {
+  background-color: rgba(148, 163, 184, 0.03);
+}
+
+.table-striped tbody tr:nth-child(odd) {
+  background-color: var(--color-bg-card);
+}
+
+.table-striped tbody tr:hover {
+  background-color: var(--color-primary-50) !important;
+}
+
+/* Product column styling */
+.product-cell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-1) 0;
+}
+
+.product-name {
+  font-size: var(--font-sm);
+  font-weight: 700;
+  color: var(--color-text);
+  line-height: 1.4;
+}
+
+/* Material Inventory Category Badges */
+.badge-cat-quimicos {
+  background-color: rgba(99, 102, 241, 0.08) !important;
+  color: #4f46e5 !important;
+  border: 1px solid rgba(99, 102, 241, 0.15) !important;
+}
+.badge-cat-bolsas {
+  background-color: rgba(6, 182, 212, 0.08) !important;
+  color: #0891b2 !important;
+  border: 1px solid rgba(6, 182, 212, 0.15) !important;
+}
+.badge-cat-epis {
+  background-color: rgba(239, 68, 68, 0.08) !important;
+  color: #dc2626 !important;
+  border: 1px solid rgba(239, 68, 68, 0.15) !important;
+}
+.badge-cat-utensilios {
+  background-color: rgba(16, 185, 129, 0.08) !important;
+  color: #059669 !important;
+  border: 1px solid rgba(16, 185, 129, 0.15) !important;
+}
+.badge-cat-general {
+  background-color: rgba(100, 116, 139, 0.08) !important;
+  color: #475569 !important;
+  border: 1px solid rgba(100, 116, 139, 0.15) !important;
+}
+
+
 /* Modal / Dialog */
 .modal-overlay {
   position: fixed;

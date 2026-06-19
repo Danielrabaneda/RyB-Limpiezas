@@ -857,12 +857,14 @@ export function shouldScheduleOnDay(task, date, options = {}) {
   // 1. Boundary Checks (Start and End dates)
   const explicitStart = task.startDate?.toDate ? task.startDate.toDate() : (task.startDate ? new Date(task.startDate + (task.startDate.includes('T') ? '' : 'T00:00:00')) : null);
   const punctualStart = task.punctualDate?.toDate ? task.punctualDate.toDate() : (task.punctualDate ? new Date(task.punctualDate + (task.punctualDate.includes('T') ? '' : 'T00:00:00')) : null);
-  const taskStart = explicitStart || punctualStart;
   
-  const taskEnd = task.endDate?.toDate ? task.endDate.toDate() : (task.endDate ? new Date(task.endDate + (task.endDate.includes('T') ? '' : 'T23:59:59')) : null);
-
   const taskCreationDateRaw = task.createdAt?.toDate ? task.createdAt.toDate() : (task.createdAt ? new Date(task.createdAt) : new Date(2020, 0, 1));
   const taskCreationDate = startOfDay(taskCreationDateRaw);
+
+  // Fecha de inicio efectiva: usar explícita/puntual o, por defecto, la de creación (alta)
+  const taskStart = explicitStart || punctualStart || taskCreationDate;
+  
+  const taskEnd = task.endDate?.toDate ? task.endDate.toDate() : (task.endDate ? new Date(task.endDate + (task.endDate.includes('T') ? '' : 'T23:59:59')) : null);
   
   // If forecasting, we are less strict about when the task was created, 
   // but we still respect the explicit start date if provided.

@@ -17,11 +17,11 @@ import { useAuth } from '../../contexts/AuthContext';
 import { getAllUsers } from '../../services/authService';
 
 export const CATEGORIES = [
-  { id: 'quimicos', name: 'Químicos / Limpieza' },
-  { id: 'bolsas', name: 'Bolsas y Plásticos' },
-  { id: 'epis', name: 'EPIS y Guantes' },
-  { id: 'utensilios', name: 'Utensilios y Bayetas' },
-  { id: 'general', name: 'Otros / General' }
+  { id: 'quimicos', name: 'Químicos / Limpieza', emoji: '🧪', badgeClass: 'badge-cat-quimicos' },
+  { id: 'bolsas', name: 'Bolsas y Plásticos', emoji: '🛍️', badgeClass: 'badge-cat-bolsas' },
+  { id: 'epis', name: 'EPIS y Guantes', emoji: '🧤', badgeClass: 'badge-cat-epis' },
+  { id: 'utensilios', name: 'Utensilios y Bayetas', emoji: '🧽', badgeClass: 'badge-cat-utensilios' },
+  { id: 'general', name: 'Otros / General', emoji: '📦', badgeClass: 'badge-cat-general' }
 ];
 
 export const autoCategorize = (name) => {
@@ -758,84 +758,91 @@ export default function InventoryPage() {
             <button className="btn btn-primary btn-sm" onClick={() => setShowAddProduct(true)}>+ Añadir Producto</button>
           </div>
 
-          <div className="card overflow-x-auto">
-            <table className="w-full text-left border-collapse min-w-[600px]">
-              <thead>
-                <tr className="bg-slate-50 text-xs uppercase font-bold text-muted border-b">
-                  <th className="p-3">Producto</th>
-                  <th className="p-3 text-center">Unidad</th>
-                  <th className="p-3 text-center">Stock</th>
-                  <th className="p-3 text-center">Mínimo (Aviso)</th>
-                  <th className="p-3 text-right">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {products.map(p => {
-                  const stock = p.currentStock || 0;
-                  const minStock = p.minStock || 0;
-                  const isLow = stock <= 0;
-                  const isWarning = stock > 0 && stock <= minStock;
-                  
-                  return (
-                    <tr key={p.id} className="border-b last:border-0 hover:bg-slate-50 transition-colors">
-                      <td className="p-3 font-medium">
-                        <div>{p.name}</div>
-                        <div className="text-[10px] text-slate-400 font-normal mt-0.5 uppercase tracking-wider">
-                          📁 {CATEGORIES.find(c => c.id === (p.category || autoCategorize(p.name)))?.name || 'General'}
-                        </div>
-                      </td>
-                      <td className="p-3 text-center text-sm">{p.unit}</td>
-                      <td className="p-3 text-center">
-                        <span className={`inline-block px-2 py-1 rounded font-bold text-sm ${isLow ? 'bg-red-100 text-red-700' : isWarning ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'}`}>
-                          {stock}
-                        </span>
-                      </td>
-                      <td className="p-3 text-center text-sm text-slate-500 font-semibold">{minStock}</td>
-                      <td className="p-3 text-right">
-                        <div className="flex justify-end gap-2">
-                          <button 
-                            className="btn btn-sm btn-outline text-xs" 
-                            onClick={() => setStockModal({ open: true, type: 'in', product: p, quantity: '', notes: '' })}
-                          >
-                            ➕ Entrada
-                          </button>
-                          <button 
-                            className="btn btn-sm btn-ghost text-xs" 
-                            onClick={() => setStockModal({ open: true, type: 'adjust', product: p, quantity: stock, notes: '' })}
-                          >
-                            ⚙️ Ajustar
-                          </button>
-                          <button 
-                            className="btn btn-sm btn-ghost text-xs" 
-                            style={{ color: 'var(--color-primary)' }}
-                            title="Estadísticas de consumo"
-                            onClick={() => setStatsModal({ open: true, product: p })}
-                          >
-                            📊 Stats
-                          </button>
-                          <button 
-                            className="btn btn-sm btn-ghost text-xs" 
-                            style={{ color: 'var(--color-text-secondary)' }}
-                            title="Editar Producto"
-                            onClick={() => setEditProductModal({ 
-                              open: true, 
-                              product: p, 
-                              name: p.name, 
-                              unit: p.unit, 
-                              minStock: String(p.minStock || 0),
-                              category: p.category || autoCategorize(p.name)
-                            })}
-                          >
-                            ✏️ Editar
-                          </button>
-                          <button className="btn btn-ghost btn-xs text-danger ml-2" onClick={() => handleDeleteProduct(p.id)}>🗑️</button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            <div className="overflow-x-auto">
+              <table className="table table-grid table-striped min-w-[600px]">
+                <thead>
+                  <tr>
+                    <th>Producto</th>
+                    <th className="text-center">Unidad</th>
+                    <th className="text-center">Stock</th>
+                    <th className="text-center">Mínimo (Aviso)</th>
+                    <th className="text-right">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {products.map(p => {
+                    const stock = p.currentStock || 0;
+                    const minStock = p.minStock || 0;
+                    const isLow = stock <= 0;
+                    const isWarning = stock > 0 && stock <= minStock;
+                    const catObj = CATEGORIES.find(c => c.id === (p.category || autoCategorize(p.name))) || CATEGORIES[4];
+                    
+                    return (
+                      <tr key={p.id}>
+                        <td>
+                          <div className="product-cell">
+                            <span className="product-name">{p.name}</span>
+                            <div className="flex">
+                              <span className={`badge ${catObj.badgeClass}`}>
+                                {catObj.emoji} {catObj.name}
+                              </span>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="text-center">{p.unit}</td>
+                        <td className="text-center">
+                          <span className={`inline-block px-2 py-1 rounded font-bold text-sm ${isLow ? 'bg-red-100 text-red-700' : isWarning ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'}`}>
+                            {stock}
+                          </span>
+                        </td>
+                        <td className="text-center font-semibold text-slate-500">{minStock}</td>
+                        <td className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <button 
+                              className="btn btn-sm btn-outline text-xs" 
+                              onClick={() => setStockModal({ open: true, type: 'in', product: p, quantity: '', notes: '' })}
+                            >
+                              ➕ Entrada
+                            </button>
+                            <button 
+                              className="btn btn-sm btn-ghost text-xs" 
+                              onClick={() => setStockModal({ open: true, type: 'adjust', product: p, quantity: stock, notes: '' })}
+                            >
+                              ⚙️ Ajustar
+                            </button>
+                            <button 
+                              className="btn btn-sm btn-ghost text-xs" 
+                              style={{ color: 'var(--color-primary)' }}
+                              title="Estadísticas de consumo"
+                              onClick={() => setStatsModal({ open: true, product: p })}
+                            >
+                              📊 Stats
+                            </button>
+                            <button 
+                              className="btn btn-sm btn-ghost text-xs" 
+                              style={{ color: 'var(--color-text-secondary)' }}
+                              title="Editar Producto"
+                              onClick={() => setEditProductModal({ 
+                                open: true, 
+                                product: p, 
+                                name: p.name, 
+                                unit: p.unit, 
+                                minStock: String(p.minStock || 0),
+                                category: p.category || autoCategorize(p.name)
+                              })}
+                            >
+                              ✏️ Editar
+                            </button>
+                            <button className="btn btn-ghost btn-xs text-danger ml-2" onClick={() => handleDeleteProduct(p.id)}>🗑️</button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       ) : activeTab === 'shopping' ? (
@@ -855,100 +862,114 @@ export default function InventoryPage() {
             </div>
           </div>
 
-          <div className="card overflow-x-auto mb-6">
-            <table className="w-full text-left border-collapse min-w-[600px]">
-              <thead>
-                <tr className="bg-slate-50 text-xs uppercase font-bold text-muted border-b">
-                  <th className="p-3 w-10 text-center">
-                    <input 
-                      type="checkbox" 
-                      className="cursor-pointer"
-                      checked={shoppingItems.length > 0 && shoppingItems.every(item => item.checked)}
-                      onChange={e => {
-                        const chk = e.target.checked;
-                        setShoppingItems(shoppingItems.map(item => ({ ...item, checked: chk })));
-                      }}
-                    />
-                  </th>
-                  <th className="p-3">Producto</th>
-                  <th className="p-3 text-center">Stock Actual</th>
-                  <th className="p-3 text-center">Mínimo</th>
-                  <th className="p-3 text-center">Cant. a Comprar</th>
-                  <th className="p-3 text-right">Origen</th>
-                </tr>
-              </thead>
-              <tbody>
-                {shoppingItems.length === 0 ? (
+          <div className="card mb-6" style={{ padding: 0, overflow: 'hidden' }}>
+            <div className="overflow-x-auto">
+              <table className="table table-grid table-striped min-w-[600px]">
+                <thead>
                   <tr>
-                    <td colSpan="6" className="p-6 text-center text-muted">
-                      No hay productos que requieran compra en este momento.
-                    </td>
+                    <th className="w-10 text-center">
+                      <input 
+                        type="checkbox" 
+                        className="cursor-pointer"
+                        checked={shoppingItems.length > 0 && shoppingItems.every(item => item.checked)}
+                        onChange={e => {
+                          const chk = e.target.checked;
+                          setShoppingItems(shoppingItems.map(item => ({ ...item, checked: chk })));
+                        }}
+                      />
+                    </th>
+                    <th>Producto</th>
+                    <th className="text-center">Stock Actual</th>
+                    <th className="text-center">Mínimo</th>
+                    <th className="text-center">Cant. a Comprar</th>
+                    <th className="text-right">Origen</th>
                   </tr>
-                ) : (
-                  shoppingItems.map(item => (
-                    <tr key={item.id} className="border-b last:border-0 hover:bg-slate-50 transition-colors">
-                      <td className="p-3 text-center">
-                        <input 
-                          type="checkbox"
-                          className="cursor-pointer"
-                          checked={item.checked}
-                          onChange={e => {
-                            setShoppingItems(shoppingItems.map(i => i.id === item.id ? { ...i, checked: e.target.checked } : i));
-                          }}
-                        />
-                      </td>
-                      <td className="p-3 font-medium">
-                        {item.name}
-                        {item.currentStock <= item.minStock && !item.isManual && (
-                          <span className="badge badge-danger ml-2" style={{ textTransform: 'none', fontSize: '10px', padding: '1px 6px' }}>Stock Bajo</span>
-                        )}
-                      </td>
-                      <td className="p-3 text-center">
-                        <span className={`px-2 py-0.5 rounded font-bold text-xs ${item.currentStock <= 0 ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'}`}>
-                          {item.currentStock} {item.unit}
-                        </span>
-                      </td>
-                      <td className="p-3 text-center text-sm font-medium text-slate-500">
-                        {item.minStock} {item.unit}
-                      </td>
-                      <td className="p-3 text-center">
-                        <div className="flex justify-center items-center gap-1">
-                          <input 
-                            type="number"
-                            className="form-input py-1 px-2 text-center text-sm"
-                            style={{ width: '80px' }}
-                            min="0.1"
-                            step="0.1"
-                            value={item.quantityToBuy}
-                            onChange={e => {
-                              const val = parseFloat(e.target.value) || 0;
-                              setShoppingItems(shoppingItems.map(i => i.id === item.id ? { ...i, quantityToBuy: val } : i));
-                            }}
-                          />
-                          <span className="text-xs text-slate-400">{item.unit}</span>
-                        </div>
-                      </td>
-                      <td className="p-3 text-right">
-                        <div className="flex justify-end items-center gap-2">
-                          {item.isManual ? (
-                            <span className="badge badge-info" style={{ textTransform: 'none', fontSize: '10px' }}>Manual</span>
-                          ) : (
-                            <span className="badge badge-warning" style={{ textTransform: 'none', fontSize: '10px' }}>Automático</span>
-                          )}
-                          <button 
-                            className="btn btn-ghost btn-xs text-danger" 
-                            title="Eliminar de la lista"
-                            onClick={() => setShoppingItems(shoppingItems.filter(i => i.id !== item.id))}
-                          >
-                            ✕
-                          </button>
-                        </div>
+                </thead>
+                <tbody>
+                  {shoppingItems.length === 0 ? (
+                    <tr>
+                      <td colSpan="6" className="p-6 text-center text-muted">
+                        No hay productos que requieran compra en este momento.
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    shoppingItems.map(item => {
+                      const catObj = CATEGORIES.find(c => c.id === (item.category || autoCategorize(item.name))) || CATEGORIES[4];
+                      return (
+                        <tr key={item.id}>
+                          <td className="text-center">
+                            <input 
+                              type="checkbox"
+                              className="cursor-pointer"
+                              checked={item.checked}
+                              onChange={e => {
+                                setShoppingItems(shoppingItems.map(i => i.id === item.id ? { ...i, checked: e.target.checked } : i));
+                              }}
+                            />
+                          </td>
+                          <td>
+                            <div className="product-cell">
+                              <div className="flex items-center gap-2">
+                                <span className="product-name">{item.name}</span>
+                                {item.currentStock <= item.minStock && !item.isManual && (
+                                  <span className="badge badge-danger" style={{ textTransform: 'none', fontSize: '10px', padding: '1px 6px' }}>Stock Bajo</span>
+                                )}
+                              </div>
+                              <div className="flex">
+                                <span className={`badge ${catObj.badgeClass}`}>
+                                  {catObj.emoji} {catObj.name}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="text-center">
+                            <span className={`px-2 py-0.5 rounded font-bold text-xs ${item.currentStock <= 0 ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'}`}>
+                              {item.currentStock} {item.unit}
+                            </span>
+                          </td>
+                          <td className="text-center text-sm font-medium text-slate-500">
+                            {item.minStock} {item.unit}
+                          </td>
+                          <td className="text-center">
+                            <div className="flex justify-center items-center gap-1">
+                              <input 
+                                type="number"
+                                className="form-input py-1 px-2 text-center text-sm"
+                                style={{ width: '80px' }}
+                                min="0.1"
+                                step="0.1"
+                                value={item.quantityToBuy}
+                                onChange={e => {
+                                  const val = parseFloat(e.target.value) || 0;
+                                  setShoppingItems(shoppingItems.map(i => i.id === item.id ? { ...i, quantityToBuy: val } : i));
+                                }}
+                              />
+                              <span className="text-xs text-slate-400">{item.unit}</span>
+                            </div>
+                          </td>
+                          <td className="text-right">
+                            <div className="flex justify-end items-center gap-2">
+                              {item.isManual ? (
+                                <span className="badge badge-info" style={{ textTransform: 'none', fontSize: '10px' }}>Manual</span>
+                              ) : (
+                                <span className="badge badge-warning" style={{ textTransform: 'none', fontSize: '10px' }}>Automático</span>
+                              )}
+                              <button 
+                                className="btn btn-ghost btn-xs text-danger" 
+                                title="Eliminar de la lista"
+                                onClick={() => setShoppingItems(shoppingItems.filter(i => i.id !== item.id))}
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           <div className="card p-4">
@@ -983,45 +1004,47 @@ export default function InventoryPage() {
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-md font-bold">Historial de Movimientos</h2>
           </div>
-          <div className="card overflow-x-auto">
-            <table className="w-full text-left border-collapse min-w-[600px]">
-              <thead>
-                <tr className="bg-slate-50 text-xs uppercase font-bold text-muted border-b">
-                  <th className="p-3">Fecha</th>
-                  <th className="p-3">Producto</th>
-                  <th className="p-3 text-center">Tipo</th>
-                  <th className="p-3 text-center">Cant.</th>
-                  <th className="p-3">Usuario</th>
-                  <th className="p-3">Detalle</th>
-                </tr>
-              </thead>
-              <tbody>
-                {movements.length === 0 ? (
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            <div className="overflow-x-auto">
+              <table className="table table-grid table-striped min-w-[600px]">
+                <thead>
                   <tr>
-                    <td colSpan="6" className="p-6 text-center text-muted">No hay movimientos registrados.</td>
+                    <th>Fecha</th>
+                    <th>Producto</th>
+                    <th className="text-center">Tipo</th>
+                    <th className="text-center">Cant.</th>
+                    <th>Usuario</th>
+                    <th>Detalle</th>
                   </tr>
-                ) : (
-                  movements.map(m => (
-                    <tr key={m.id} className="border-b last:border-0 hover:bg-slate-50 transition-colors text-sm">
-                      <td className="p-3 whitespace-nowrap">{format(m.date?.toDate() || new Date(), "d MMM, HH:mm", { locale: es })}</td>
-                      <td className="p-3 font-medium">{m.productName}</td>
-                      <td className="p-3 text-center">
-                        {m.type === 'in' && <span className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-bold">Entrada</span>}
-                        {m.type === 'out' && <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-bold">Salida</span>}
-                        {m.type === 'adjustment' && <span className="bg-slate-200 text-slate-700 px-2 py-1 rounded text-xs font-bold">Ajuste</span>}
-                      </td>
-                      <td className="p-3 text-center font-bold">
-                        {m.type === 'in' ? '+' : m.type === 'out' ? '-' : ''}{Math.abs(m.quantity)}
-                      </td>
-                      <td className="p-3 truncate max-w-[120px]" title={m.userName || users[m.userId]?.name}>
-                        {m.userName || users[m.userId]?.name || m.userId}
-                      </td>
-                      <td className="p-3 text-xs text-muted max-w-[200px] truncate" title={m.notes}>{m.notes || '-'}</td>
+                </thead>
+                <tbody>
+                  {movements.length === 0 ? (
+                    <tr>
+                      <td colSpan="6" className="p-6 text-center text-muted">No hay movimientos registrados.</td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    movements.map(m => (
+                      <tr key={m.id}>
+                        <td className="whitespace-nowrap">{format(m.date?.toDate() || new Date(), "d MMM, HH:mm", { locale: es })}</td>
+                        <td className="font-semibold">{m.productName}</td>
+                        <td className="text-center">
+                          {m.type === 'in' && <span className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-bold">Entrada</span>}
+                          {m.type === 'out' && <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-bold">Salida</span>}
+                          {m.type === 'adjustment' && <span className="bg-slate-200 text-slate-700 px-2 py-1 rounded text-xs font-bold">Ajuste</span>}
+                        </td>
+                        <td className="text-center font-bold">
+                          {m.type === 'in' ? '+' : m.type === 'out' ? '-' : ''}{Math.abs(m.quantity)}
+                        </td>
+                        <td className="truncate max-w-[120px]" title={m.userName || users[m.userId]?.name}>
+                          {m.userName || users[m.userId]?.name || m.userId}
+                        </td>
+                        <td className="text-xs text-muted max-w-[200px] truncate" title={m.notes}>{m.notes || '-'}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       ) : (
