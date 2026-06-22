@@ -19,6 +19,8 @@ import { es } from 'date-fns/locale';
 import { collection, query, where, onSnapshot, Timestamp } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 
+import { getDistance } from '../../utils/geolocation';
+
 const getCurrentLocation = () => {
   return new Promise((resolve) => {
     if (!("geolocation" in navigator)) {
@@ -77,9 +79,36 @@ export default function TodayPage() {
     allTasksCompleted: false
   });
 
+  const [userLocation, setUserLocation] = useState(null);
+
   const [debugLogs, setDebugLogs] = useState([]);
   // Guard to prevent concurrent loadToday() calls from multiple snapshot triggers
   const isLoadingTodayRef = useRef(false);
+
+  // Efecto para actualizar la ubicación del operario periódicamente
+  useEffect(() => {
+    let active = true;
+    let intervalId = null;
+
+    const updateLocation = async () => {
+      try {
+        const pos = await getCurrentLocation();
+        if (active && pos) {
+          setUserLocation(pos);
+        }
+      } catch (e) {
+        // Ignorar
+      }
+    };
+
+    updateLocation();
+    intervalId = setInterval(updateLocation, 15_000); // 15 segundos
+
+    return () => {
+      active = false;
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, []);
 
   useEffect(() => {
     if (userProfile?.uid) {
@@ -1194,7 +1223,18 @@ export default function TodayPage() {
                       </span>
                     )}
                   </div>
-                  <div className="service-address">{svc.community?.address || ''}</div>
+                  <div className="service-address" style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    <span>{svc.community?.address || ''}</span>
+                    {userLocation && svc.community?.location && (
+                      <span style={{ 
+                        fontSize: '11px', 
+                        fontWeight: 'bold', 
+                        color: getDistance(userLocation.lat, userLocation.lng, svc.community.location._lat || svc.community.location.latitude, svc.community.location._long || svc.community.location.longitude) <= 500 ? 'var(--color-success)' : 'var(--color-warning)'
+                      }}>
+                        📍 Distancia: {Math.round(getDistance(userLocation.lat, userLocation.lng, svc.community.location._lat || svc.community.location.latitude, svc.community.location._long || svc.community.location.longitude))}m
+                      </span>
+                    )}
+                  </div>
                 </div>
                 {getStatusBadge(svc.status)}
               </div>

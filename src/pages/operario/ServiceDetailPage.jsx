@@ -204,6 +204,37 @@ export default function ServiceDetailPage() {
     };
   }, [serviceId, userProfile]);
 
+  // Efecto para actualizar la distancia en tiempo real
+  useEffect(() => {
+    if (!community?.location) return;
+
+    let active = true;
+    let intervalId = null;
+
+    const updateDistance = async () => {
+      try {
+        const pos = await getCurrentPosition();
+        if (!active) return;
+        const commLat = community.location._lat || community.location.latitude || 0;
+        const commLng = community.location._long || community.location.longitude || 0;
+        if (commLat && commLng) {
+          const check = isWithinRange(pos.lat, pos.lng, commLat, commLng, 500);
+          setDistanceInfo(check);
+        }
+      } catch (err) {
+        // Ignorar errores de GPS silenciosos
+      }
+    };
+
+    updateDistance();
+    intervalId = setInterval(updateDistance, 10_000); // 10 segundos
+
+    return () => {
+      active = false;
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [community, getCurrentPosition]);
+
   // Función inteligente para estimar hora de llegada y salida basadas en la jornada
   const calculateEstimates = async (userId, currentSvc, workday) => {
     try {

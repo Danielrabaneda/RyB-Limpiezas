@@ -12,7 +12,7 @@ import { format } from 'date-fns';
 
 // ==================== CONSTANTES ====================
 const CHECK_INTERVAL = 30 * 1000;          // 30s polling de respaldo
-const PROXIMITY_RADIUS_ENTRY = 30;          // 30m para detectar llegada (antes 50m)
+const PROXIMITY_RADIUS_ENTRY = 20;          // 20m para detectar llegada (antes 30m)
 const PROXIMITY_RADIUS_EXIT = 100;          // 100m para detectar salida (antes 40m)
 const RE_NOTIFY_INTERVAL_MS = 3 * 60 * 1000; // Re-notificar cada 3 min
 const ENTRY_CONFIRM_DELAY_MS = 90 * 1000;   // 90s de permanencia mínima para confirmar llegada
