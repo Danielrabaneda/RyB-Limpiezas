@@ -13,9 +13,10 @@ import {
 import { uploadPhoto } from '../../services/storageService';
 import { createGPSSuggestion } from '../../services/gpsSuggestionService';
 import { createEvidenceReport } from '../../services/evidenceService';
-import { transferService } from '../../services/transferService';
+import { transferService, rescheduleService } from '../../services/transferService';
 import { getOperarios } from '../../services/authService';
 import TransferModal from '../../components/TransferModal';
+import RescheduleModal from '../../components/RescheduleModal';
 import SignatureCanvas from '../../components/SignatureCanvas';
 import { getCommunityGuides } from '../../services/documentVaultService';
 import { getActiveWorkday } from '../../services/workdayService';
@@ -41,6 +42,7 @@ export default function ServiceDetailPage() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [transferModalOpen, setTransferModalOpen] = useState(false);
+  const [rescheduleModalOpen, setRescheduleModalOpen] = useState(false);
   const [operariosMap, setOperariosMap] = useState({});
   const [selectedTaskExec, setSelectedTaskExec] = useState(null);
   const [notes, setNotes] = useState('');
@@ -372,6 +374,25 @@ export default function ServiceDetailPage() {
       navigate('/operario');
     } catch (err) {
       alert('Error en el traspaso: ' + err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function handleRescheduleConfirm(newDate) {
+    setActionLoading(true);
+    try {
+      await rescheduleService({
+        serviceId,
+        newDate,
+        requesterRole: 'operario',
+        userId: userProfile.uid
+      });
+      alert('Cambio de fecha solicitado. El administrador deberá validarlo.');
+      setRescheduleModalOpen(false);
+      fetchServiceDetails();
+    } catch (err) {
+      alert('Error en el cambio de fecha: ' + err.message);
     } finally {
       setActionLoading(false);
     }
@@ -715,13 +736,22 @@ export default function ServiceDetailPage() {
               service.status === 'in_progress' ? '🔄 En curso' : '⏳ Pendiente'}
             </span>
             {!isCompleted && !isCheckedIn && isTitular && (
-              <button 
-                className="btn btn-ghost btn-xs" 
-                onClick={() => setTransferModalOpen(true)}
-                style={{ color: 'var(--color-warning)', padding: '4px 8px', border: '1px solid currentColor' }}
-              >
-                🔄 Traspasar
-              </button>
+              <div className="flex gap-2">
+                <button 
+                  className="btn btn-ghost btn-xs" 
+                  onClick={() => setTransferModalOpen(true)}
+                  style={{ color: 'var(--color-warning)', padding: '4px 8px', border: '1px solid currentColor' }}
+                >
+                  🔄 Traspasar
+                </button>
+                <button 
+                  className="btn btn-ghost btn-xs" 
+                  onClick={() => setRescheduleModalOpen(true)}
+                  style={{ color: 'var(--color-primary)', padding: '4px 8px', border: '1px solid currentColor' }}
+                >
+                  📅 Mover día
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -813,6 +843,14 @@ export default function ServiceDetailPage() {
         onConfirm={handleTransferConfirm}
         loading={actionLoading}
         title={`Traspasar servicio ${community?.name}`}
+      />
+
+      <RescheduleModal 
+        isOpen={rescheduleModalOpen}
+        onClose={() => setRescheduleModalOpen(false)}
+        onConfirm={handleRescheduleConfirm}
+        currentDate={service?.scheduledDate}
+        loading={actionLoading}
       />
 
 

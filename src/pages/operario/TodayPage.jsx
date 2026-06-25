@@ -8,8 +8,9 @@ import { getCommunityTasks } from '../../services/taskService';
 import { getActiveCheckIn } from '../../services/checkInService';
 import { getActiveWorkday, startWorkday, endWorkday, activateCar, deactivateCar, getWorkdaysSummaryForDate, findLastActivityForUser, closeStaleWorkday } from '../../services/workdayService';
 import { saveManualMileage } from '../../services/mileageService';
-import { transferService, transferDay, transferWeek } from '../../services/transferService';
+import { transferService, transferDay, transferWeek, rescheduleService } from '../../services/transferService';
 import TransferModal from '../../components/TransferModal';
+import RescheduleModal from '../../components/RescheduleModal';
 import { getOperarios } from '../../services/authService';
 import { updateWorkdayCompanion } from '../../services/workdayService';
 import { addCompanionToService, removeCompanionFromService } from '../../services/scheduleService';
@@ -64,6 +65,7 @@ export default function TodayPage() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [transferModal, setTransferModal] = useState({ open: false, type: 'single', service: null });
+  const [rescheduleModal, setRescheduleModal] = useState({ open: false, serviceId: null, currentDate: null });
   const [permissionsMissing, setPermissionsMissing] = useState(false);
   const [allOperarios, setAllOperarios] = useState([]);
   const [companionSelectorOpen, setCompanionSelectorOpen] = useState(false);
@@ -643,6 +645,26 @@ export default function TodayPage() {
       loadToday();
     } catch (err) {
       alert('Error en el traspaso: ' + err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRescheduleConfirm = async (newDate) => {
+    if (!rescheduleModal.serviceId) return;
+    setActionLoading(true);
+    try {
+      await rescheduleService({
+        serviceId: rescheduleModal.serviceId,
+        newDate,
+        requesterRole: 'operario',
+        userId: userProfile.uid
+      });
+      alert('Cambio de fecha solicitado. El administrador deberá validarlo.');
+      setRescheduleModal({ open: false, serviceId: null, currentDate: null });
+      loadToday();
+    } catch (err) {
+      alert('Error en el cambio de fecha: ' + err.message);
     } finally {
       setActionLoading(false);
     }
@@ -1240,16 +1262,28 @@ export default function TodayPage() {
               </div>
               
               {!svc.isCompanion && !['completed', 'in_progress'].includes(svc.status) && (
-                <button 
-                  className="btn btn-ghost btn-xs mt-1 mb-2"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setTransferModal({ open: true, type: 'single', service: svc });
-                  }}
-                  style={{ color: 'var(--color-warning)', padding: 0 }}
-                >
-                  🔄 Traspasar solo este servicio
-                </button>
+                <div className="flex gap-2 w-full mt-1 mb-2">
+                  <button 
+                    className="btn btn-ghost btn-xs flex-1"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setTransferModal({ open: true, type: 'single', service: svc });
+                    }}
+                    style={{ color: 'var(--color-warning)', border: '1px solid var(--color-warning)', fontSize: '11px', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                  >
+                    🔄 Traspasar
+                  </button>
+                  <button 
+                    className="btn btn-ghost btn-xs flex-1"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRescheduleModal({ open: true, serviceId: svc.id, currentDate: svc.scheduledDate });
+                    }}
+                    style={{ color: 'var(--color-primary)', border: '1px solid var(--color-primary)', fontSize: '11px', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                  >
+                    📅 Mover día
+                  </button>
+                </div>
               )}
 
               <div className="service-tasks" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'nowrap', gap: '8px' }}>
@@ -1318,6 +1352,14 @@ export default function TodayPage() {
           transferModal.type === 'week' ? 'Traspasar próxima semana' :
           `Traspasar servicio ${transferModal.service?.community?.name || ''}`
         }
+      />
+
+      <RescheduleModal 
+        isOpen={rescheduleModal.open}
+        onClose={() => setRescheduleModal({ open: false, serviceId: null, currentDate: null })}
+        onConfirm={handleRescheduleConfirm}
+        currentDate={rescheduleModal.currentDate}
+        loading={actionLoading}
       />
 
 

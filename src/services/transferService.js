@@ -307,11 +307,23 @@ export async function rejectTransfer(transferId) {
     );
     const servicesSnap = await getDocs(q);
     servicesSnap.forEach(d => {
+      const svcData = d.data();
+      const origDateRaw = svcData.originalDate;
+      const origDate = origDateRaw ? (origDateRaw.toDate ? origDateRaw.toDate() : new Date(origDateRaw)) : null;
+      const oldDate = data.oldDate.toDate ? data.oldDate.toDate() : new Date(data.oldDate);
+      
+      const returnsToOriginal = !origDate || (
+        origDate.getFullYear() === oldDate.getFullYear() &&
+        origDate.getMonth() === oldDate.getMonth() &&
+        origDate.getDate() === oldDate.getDate()
+      );
+
       batch.update(d.ref, { 
         scheduledDate: data.oldDate,
-        rescheduleValidated: false,
+        rescheduleValidated: !returnsToOriginal,
         rescheduleId: null,
-        originalDate: null
+        originalDate: returnsToOriginal ? null : svcData.originalDate,
+        isRescheduled: !returnsToOriginal
       });
     });
   } else {
