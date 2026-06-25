@@ -9,17 +9,19 @@ import { createSystemNotification } from '../../services/notificationService';
 import { persistEntryDetection, persistExitDetection } from '../../services/geoDetectionService';
 import { registerForPushNotifications } from '../../services/fcmService';
 import { format } from 'date-fns';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { db } from '../../config/firebase';
 
 // ==================== CONSTANTES ====================
 const CHECK_INTERVAL = 30 * 1000;          // 30s polling de respaldo
-const PROXIMITY_RADIUS_ENTRY = 20;          // 20m para detectar llegada (antes 30m)
-const PROXIMITY_RADIUS_EXIT = 100;          // 100m para detectar salida (antes 40m)
+const PROXIMITY_RADIUS_ENTRY = 30;          // 30m para detectar llegada
+const PROXIMITY_RADIUS_EXIT = 50;           // 50m para detectar salida
 const RE_NOTIFY_INTERVAL_MS = 3 * 60 * 1000; // Re-notificar cada 3 min
 const ENTRY_CONFIRM_DELAY_MS = 90 * 1000;   // 90s de permanencia mínima para confirmar llegada
 const EXIT_CONFIRM_DELAY_MS = 5 * 60 * 1000; // 5 min para confirmar salida
 const COMMUNITY_CACHE_TTL = 10 * 60 * 1000;  // Caché de comunidades: 10 min
-const MIN_ACCURACY_FOR_ENTRY = 80;          // No detectar entrada si precisión GPS > 80m
-const MAX_ACCURACY_FOR_EXIT = 150;          // No detectar salida si precisión GPS > 150m
+const MIN_ACCURACY_FOR_ENTRY = 40;          // No detectar entrada si precisión GPS > 40m
+const MAX_ACCURACY_FOR_EXIT = 80;           // No detectar salida si precisión GPS > 80m
 const LAST_POSITION_KEY = 'tracker_last_position'; // Persistir última posición para recovery
 const MAX_SUSPENSION_FOR_ESTIMATE = 60 * 60 * 1000; // No estimar si suspensión > 1 hora
 
@@ -67,6 +69,16 @@ export default function GeolocationTracker() {
   const servicesCachedAtRef = useRef(0);    // Timestamp de último fetch de servicios
   const wakeLockRef = useRef(null);         // Wake Lock para mantener la pantalla activa
   const fcmRegisteredRef = useRef(false);   // Evitar re-registro de FCM
+
+  // Refs para optimización y mejoras de geolocalización
+  const activeWorkdayRef = useRef(null);
+  const activeCheckInRef = useRef(null);
+  const lastWatchPositionTimeRef = useRef(Date.now());
+  const kalmanRef = useRef({
+    lat: null,
+    lng: null,
+    variance: 1.0,
+  });
 
   // ==================== REGISTRO FCM ====================
   useEffect(() => {
@@ -124,6 +136,47 @@ export default function GeolocationTracker() {
   useEffect(() => {
     if (!isOperario || !userProfile?.uid) return;
 
+    // --- SUSCRIPCIONES EN TIEMPO REAL PARA JORNADA Y CHECK-IN (Reducción de queries) ---
+    const qWorkday = query(
+      collection(db, 'workdays'),
+      where('userId', '==', userProfile.uid)
+    );
+    const unsubscribeWorkday = onSnapshot(qWorkday, (snap) => {
+      const active = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .find(wd => wd.status === 'active');
+      
+      setActiveWorkday(active || null);
+      activeWorkdayRef.current = active || null;
+      console.log('[Tracker] Estado de jornada actualizado:', active ? 'Activo' : 'Inactivo');
+    }, (err) => {
+      console.error("[Tracker] Error en suscripción a jornada:", err);
+    });
+
+    const qCheckIn = query(
+      collection(db, 'checkIns'),
+      where('userId', '==', userProfile.uid)
+    );
+    const unsubscribeCheckIn = onSnapshot(qCheckIn, (snap) => {
+      const open = snap.docs
+        .map(d => ({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }))
+        .filter(c => c.checkOutTime === null);
+      
+      if (open.length === 0) {
+        activeCheckInRef.current = null;
+      } else {
+        const sorted = open.sort((a, b) => {
+          const aTime = a.checkInTime ? (a.checkInTime.toDate ? a.checkInTime.toDate() : new Date(a.checkInTime)) : new Date();
+          const bTime = b.checkInTime ? (b.checkInTime.toDate ? b.checkInTime.toDate() : new Date(b.checkInTime)) : new Date();
+          return bTime - aTime;
+        });
+        activeCheckInRef.current = sorted[0];
+      }
+      console.log('[Tracker] Estado de check-in actualizado:', activeCheckInRef.current ? 'Activo' : 'Inactivo');
+    }, (err) => {
+      console.error("[Tracker] Error en suscripción a check-in:", err);
+    });
+
     // --- LIMPIEZA DIARIA DE DATOS LOCALES ---
     const lastClean = localStorage.getItem('last_geo_cleanup');
     const todayStr = new Date().toDateString();
@@ -150,7 +203,52 @@ export default function GeolocationTracker() {
         const wasAppSuspended = timeSinceLastProcess >= EXIT_CONFIRM_DELAY_MS;
         localStorage.setItem('tracker_last_processed_at', Date.now().toString());
 
-        const { latitude, longitude, accuracy } = position.coords;
+        const { latitude: rawLat, longitude: rawLng, accuracy, speed, heading } = position.coords;
+        lastWatchPositionTimeRef.current = Date.now();
+
+        // 1D Kalman Filter to smooth out GPS noise
+        let latitude = rawLat;
+        let longitude = rawLng;
+
+        let shouldResetKalman = kalmanRef.current.lat === null || wasAppSuspended;
+        if (!shouldResetKalman && kalmanRef.current.lat !== null) {
+          const rawDistanceMoved = getDistance(rawLat, rawLng, kalmanRef.current.lat, kalmanRef.current.lng);
+          if (rawDistanceMoved > 200) {
+            console.log(`[Kalman] Salto de posición de ${Math.round(rawDistanceMoved)}m detectado. Reseteando filtro.`);
+            shouldResetKalman = true;
+          }
+        }
+
+        if (shouldResetKalman) {
+          kalmanRef.current = {
+            lat: rawLat,
+            lng: rawLng,
+            variance: (accuracy * 0.000009) * (accuracy * 0.000009),
+          };
+        } else {
+          // Process noise scales with speed to avoid lag when moving quickly
+          const speedMps = (speed !== null && speed !== undefined && !isNaN(speed)) ? speed : 1.5;
+          const processNoiseMeters = Math.max(1, speedMps * 2);
+          const processNoiseDegrees = processNoiseMeters * 0.000009;
+          const qNoise = processNoiseDegrees * processNoiseDegrees;
+          
+          kalmanRef.current.variance += qNoise;
+
+          // Measurement noise based on reported accuracy
+          const measurementNoiseDegrees = accuracy * 0.000009;
+          const rNoise = measurementNoiseDegrees * measurementNoiseDegrees;
+
+          // Kalman Gain
+          const kGain = kalmanRef.current.variance / (kalmanRef.current.variance + rNoise);
+
+          // Update position estimate
+          kalmanRef.current.lat = kalmanRef.current.lat + kGain * (rawLat - kalmanRef.current.lat);
+          kalmanRef.current.lng = kalmanRef.current.lng + kGain * (rawLng - kalmanRef.current.lng);
+          kalmanRef.current.variance = (1 - kGain) * kalmanRef.current.variance;
+
+          latitude = kalmanRef.current.lat;
+          longitude = kalmanRef.current.lng;
+        }
 
         // Leer posición anterior ANTES de guardar la nueva (para recovery inteligente)
         let prevPosition = null;
@@ -159,15 +257,28 @@ export default function GeolocationTracker() {
           if (prevPosRaw) prevPosition = JSON.parse(prevPosRaw);
         } catch (e) { /* ignore */ }
 
-        // Persistir posición actual para futuros recoveries tras suspensión del SO
+        // Calcular velocidad
+        let currentSpeed = speed; // m/s
+        if (currentSpeed === null || currentSpeed === undefined || isNaN(currentSpeed)) {
+          if (prevPosition && prevPosition.timestamp) {
+            const timeSec = (Date.now() - prevPosition.timestamp) / 1000;
+            if (timeSec > 0) {
+              const distMeters = getDistance(rawLat, rawLng, prevPosition.lat, prevPosition.lng);
+              currentSpeed = distMeters / timeSec;
+            }
+          }
+        }
+        const isSpeedTooHigh = currentSpeed !== null && currentSpeed > 8.33; // 8.33 m/s = 30 km/h
+
+        // Persistir posición filtrada actual para futuros recoveries tras suspensión del SO
         localStorage.setItem(LAST_POSITION_KEY, JSON.stringify({
           lat: latitude, lng: longitude, accuracy, timestamp: Date.now()
         }));
-        console.log(`[GPS] Precisión: ${Math.round(accuracy)}m | Lat: ${latitude.toFixed(6)} | Lng: ${longitude.toFixed(6)}${wasAppSuspended ? ` | ⚠️ APP SUSPENDIDA ${Math.round(timeSinceLastProcess/1000)}s` : ''}`);
+
+        console.log(`[GPS] Precisión: ${Math.round(accuracy)}m | Lat: ${latitude.toFixed(6)} | Lng: ${longitude.toFixed(6)}${wasAppSuspended ? ` | ⚠️ APP SUSPENDIDA ${Math.round(timeSinceLastProcess/1000)}s` : ''}${currentSpeed !== null ? ` | Vel: ${Math.round(currentSpeed * 3.6)} km/h` : ''}`);
 
         // 1. Verificar jornada activa
-        const workday = await getActiveWorkday(userProfile.uid);
-        setActiveWorkday(workday);
+        const workday = activeWorkdayRef.current;
 
         if (!workday) {
           // Sin jornada activa → liberar Wake Lock si lo teníamos
@@ -189,7 +300,7 @@ export default function GeolocationTracker() {
         if (services.length === 0) return;
 
         // 3. Obtener check-in activo
-        const checkIn = await getActiveCheckIn(userProfile.uid);
+        const checkIn = activeCheckInRef.current;
         const completedTodaySet = getCompletedTodaySet();
 
         // 4. Calcular distancias (usando caché de comunidades)
@@ -350,7 +461,7 @@ export default function GeolocationTracker() {
         else {
           const now = Date.now();
 
-          // Filtrar: solo servicios pendientes, dentro del radio, con GPS suficientemente preciso
+          // Filtrar: solo servicios pendientes, dentro del radio, con GPS suficientemente preciso y velocidad adecuada
           const nearby = servicesWithDistance
             .filter(s => {
               if (s.distance > s.effectiveEntryRadius) return false;
@@ -360,6 +471,11 @@ export default function GeolocationTracker() {
               // No detectar entrada con GPS impreciso
               if (s.gpsAccuracy > MIN_ACCURACY_FOR_ENTRY) {
                 console.log(`[Tracker] ${s.communityName}: GPS demasiado impreciso (${Math.round(s.gpsAccuracy)}m) para detectar entrada`);
+                return false;
+              }
+              // Filtro de velocidad: ignorar entrada si el usuario viaja a más de 30 km/h (8.33 m/s)
+              if (isSpeedTooHigh) {
+                console.log(`[Tracker] ${s.communityName}: Velocidad demasiado alta (${Math.round(currentSpeed * 3.6)} km/h) para detectar entrada`);
                 return false;
               }
               return true;
@@ -529,8 +645,17 @@ export default function GeolocationTracker() {
     );
 
     // Fallback: comprobación manual cada 30s por si watchPosition se detiene
+    // Solo dispara getCurrentPosition si watchPosition no ha respondido en 60s
     const fallbackInterval = setInterval(() => {
-      navigator.geolocation.getCurrentPosition(processPosition, null, { enableHighAccuracy: true, timeout: 15000 });
+      const timeSinceLastUpdate = Date.now() - lastWatchPositionTimeRef.current;
+      if (timeSinceLastUpdate > 60000) {
+        console.warn(`[Tracker] watchPosition no ha respondido en ${Math.round(timeSinceLastUpdate/1000)}s. Ejecutando fallback getCurrentPosition.`);
+        navigator.geolocation.getCurrentPosition(
+          processPosition, 
+          (err) => console.warn('[Tracker] Fallback GPS error:', err), 
+          { enableHighAccuracy: true, timeout: 15000 }
+        );
+      }
     }, CHECK_INTERVAL);
 
     // ==================== CLEANUP ====================
@@ -539,6 +664,8 @@ export default function GeolocationTracker() {
       clearInterval(fallbackInterval);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       releaseWakeLock();
+      unsubscribeWorkday();
+      unsubscribeCheckIn();
     };
   }, [userProfile, isOperario, getCommunityWithCache, requestWakeLock, releaseWakeLock]);
 
