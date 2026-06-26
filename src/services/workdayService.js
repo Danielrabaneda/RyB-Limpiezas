@@ -217,7 +217,7 @@ export async function getWorkdaysSummaryForDate(userId, date = new Date()) {
   }
 
   // BUSCAR JORNADA ACTIVA EN TODOS LOS DÍAS (por si se olvidó cerrarla ayer)
-  const globalActiveWd = allWorkdays.find(wd => wd.status === 'active');
+  const globalActiveWd = await getActiveWorkday(userId);
   if (globalActiveWd) {
     hasActive = true;
     activeWorkday = globalActiveWd;
