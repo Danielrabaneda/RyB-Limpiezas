@@ -14,7 +14,8 @@ import {
   saveInvoiceTemplate,
   deleteInvoiceTemplate,
   getLastEmittedInvoice,
-  emitAllInvoices
+  emitAllInvoices,
+  getNextInvoiceNumber
 } from '../../services/invoiceService';
 import { getCommunities } from '../../services/communityService';
 import { format } from 'date-fns';
@@ -352,7 +353,17 @@ export default function InvoicesPage() {
   };
 
   // Modal add handlers
-  const handleOpenAddInvoice = () => {
+  const handleOpenAddInvoice = async () => {
+    setActionLoading(true);
+    let nextNum = 'Borrador';
+    try {
+      nextNum = await getNextInvoiceNumber(filterYear);
+    } catch (err) {
+      console.error("Error fetching next invoice number:", err);
+    } finally {
+      setActionLoading(false);
+    }
+
     setAddForm({
       clientType: 'community',
       selectedCommunityId: '',
@@ -366,7 +377,8 @@ export default function InvoicesPage() {
       year: filterYear,
       month: filterMonth,
       saveAsTemplate: false,
-      templateName: ''
+      templateName: '',
+      invoiceNumber: nextNum
     });
     setAddModalOpen(true);
   };
@@ -487,9 +499,20 @@ export default function InvoicesPage() {
       const taxAmount = parseFloat((subtotal * (parseFloat(addForm.taxRate) / 100)).toFixed(2));
       const totalAmount = parseFloat((subtotal + taxAmount).toFixed(2));
 
+      const typedNum = addForm.invoiceNumber?.trim() || 'Borrador';
+      const isDraft = typedNum.toLowerCase() === 'borrador';
+      let invoiceSeq = null;
+      if (!isDraft) {
+        const seqMatch = typedNum.match(/\d+$/);
+        if (seqMatch) {
+          invoiceSeq = parseInt(seqMatch[0]);
+        }
+      }
+
       const invoiceData = {
-        invoiceNumber: "Borrador",
-        status: "draft",
+        invoiceNumber: typedNum,
+        ...(invoiceSeq !== null ? { invoiceSeq } : {}),
+        status: isDraft ? 'draft' : 'pending',
         year: parseInt(addForm.year),
         month: parseInt(addForm.month),
         client: {
@@ -510,11 +533,28 @@ export default function InvoicesPage() {
         taxAmount,
         totalAmount,
         paymentMethod: addForm.paymentMethod,
-        issueDate: null,
-        dueDate: null
+        issueDate: isDraft ? null : new Date(),
+        dueDate: isDraft ? null : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
       };
 
       await createInvoice(invoiceData);
+
+      // Try to increment sequence in settings if a manual number was typed
+      if (!isDraft && invoiceSeq !== null) {
+        try {
+          if (billingSettings && invoiceSeq >= (parseInt(billingSettings.nextInvoiceSeq) || 1)) {
+            await saveBillingSettings({
+              nextInvoiceSeq: invoiceSeq + 1
+            });
+            setBillingSettings(prev => ({
+              ...prev,
+              nextInvoiceSeq: invoiceSeq + 1
+            }));
+          }
+        } catch (seqErr) {
+          console.warn("Could not auto-increment settings nextInvoiceSeq:", seqErr);
+        }
+      }
 
       if (addForm.saveAsTemplate) {
         const templateData = {
@@ -537,7 +577,7 @@ export default function InvoicesPage() {
         await saveInvoiceTemplate(templateData);
       }
 
-      alert('Factura manual creada correctamente en borradores.');
+      alert(isDraft ? 'Factura manual creada correctamente en borradores.' : 'Factura manual emitida correctamente.');
       setAddModalOpen(false);
       await Promise.all([loadInvoices(), loadTemplates()]);
     } catch (err) {
@@ -1845,9 +1885,24 @@ export default function InvoicesPage() {
                   </div>
                 </div>
 
-                {/* Period Section */}
-                <h4 style={{ fontWeight: 'bold', fontSize: '0.875rem', marginBottom: '10px', color: 'var(--color-primary)', borderTop: '1px solid #e2e8f0', paddingTop: '12px' }}>📅 Período de Facturación</h4>
-                <div className="grid grid-2 gap-3 mb-4">
+                {/* Period & Invoice Number Section */}
+                <h4 style={{ fontWeight: 'bold', fontSize: '0.875rem', marginBottom: '10px', color: 'var(--color-primary)', borderTop: '1px solid #e2e8f0', paddingTop: '12px' }}>📅 Datos y Período de Facturación</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontSize: '12px' }}>Número de Factura</label>
+                    <input 
+                      type="text" 
+                      className="form-input" 
+                      style={{ padding: '8px' }}
+                      placeholder="Ej: Borrador o número"
+                      value={addForm.invoiceNumber || ''}
+                      onChange={e => setAddForm({...addForm, invoiceNumber: e.target.value})}
+                      required
+                    />
+                    <small style={{ fontSize: '10px', color: '#64748b', display: 'block', marginTop: '2px' }}>
+                      Usa <strong>Borrador</strong> para crear borrador
+                    </small>
+                  </div>
                   <div className="form-group">
                     <label className="form-label" style={{ fontSize: '12px' }}>Año período</label>
                     <select 
