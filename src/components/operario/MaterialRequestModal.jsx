@@ -83,9 +83,19 @@ export default function MaterialRequestModal({ isOpen, onClose, communityId, com
                 onChange={e => setFormData({...formData, productId: e.target.value})}
               >
                 <option value="">— Elegir producto —</option>
-                {products.map(p => (
-                  <option key={p.id} value={p.id}>{p.name} ({p.unit})</option>
-                ))}
+                {products.map(p => {
+                  const isOutOfStock = p.currentStock !== undefined && p.currentStock <= 0;
+                  return (
+                    <option 
+                      key={p.id} 
+                      value={p.id} 
+                      disabled={isOutOfStock} 
+                      style={{ color: isOutOfStock ? 'red' : 'inherit' }}
+                    >
+                      {p.name} ({p.unit}){isOutOfStock ? ' - SIN STOCK' : ''}
+                    </option>
+                  );
+                })}
               </select>
             </div>
 
