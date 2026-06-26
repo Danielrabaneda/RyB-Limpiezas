@@ -34,6 +34,21 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------------------
+    // GEO DETECTIONS & FCM TOKENS
+    // -------------------------------------------------------------------------
+    match /geoDetections/{detectionId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow create, update: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAdmin();
+    }
+
+    match /fcmTokens/{tokenId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow create, update: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+    }
+
+    // -------------------------------------------------------------------------
     // USERS
     // -------------------------------------------------------------------------
     match /users/{userId} {
@@ -51,8 +66,8 @@ service cloud.firestore {
     // COMMUNITIES & TASKS (Global Config)
     // -------------------------------------------------------------------------
     match /communities/{communityId} {
-      // Everyone needs to read communities
-      allow read: if true;
+      // Only authenticated users can read communities
+      allow read: if isAuthenticated();
       // Only admins manage communities
       allow write: if isAdmin();
     }
@@ -76,8 +91,8 @@ service cloud.firestore {
     // SCHEDULED SERVICES
     // -------------------------------------------------------------------------
     match /scheduledServices/{serviceId} {
-      // Everyone needs to read schedules (for companions and general schedule views)
-      allow read: if true;
+      // Only authenticated users can read schedules
+      allow read: if isAuthenticated();
       
       // Admins can manage schedule entirely.
       allow create, delete: if isAdmin();
@@ -118,7 +133,7 @@ service cloud.firestore {
     }
 
     match /checkIns/{checkInId} {
-      allow read: if true;
+      allow read: if isAuthenticated();
       allow create: if isOwner(request.resource.data.userId);
       allow update: if isAdmin() || isOwner(resource.data.userId);
       allow delete: if isAdmin();
@@ -190,7 +205,7 @@ service cloud.firestore {
     }
 
     match /settings/{settingId} {
-      allow read: if true;
+      allow read: if isAuthenticated();
       allow write: if isAdmin();
     }
 

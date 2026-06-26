@@ -23,6 +23,11 @@ export function AuthProvider({ children }) {
   async function login(email, password) {
     const cred = await signInWithEmailAndPassword(auth, email, password);
     const profile = await fetchUserProfile(cred.user.uid);
+    if (!profile || profile.active === false) {
+      await signOut(auth);
+      setUserProfile(null);
+      throw new Error('Su cuenta está inactiva o ha sido dada de baja.');
+    }
     return { user: cred.user, profile };
   }
 
@@ -89,7 +94,13 @@ export function AuthProvider({ children }) {
       setCurrentUser(user);
       if (user) {
         try {
-          await fetchUserProfile(user.uid);
+          const profile = await fetchUserProfile(user.uid);
+          if (!profile || profile.active === false) {
+            console.warn('AuthContext: User profile not found or inactive. Forcing logout.');
+            await signOut(auth);
+            setUserProfile(null);
+            setCurrentUser(null);
+          }
         } catch (err) {
           console.error('Error fetching user profile during init:', err);
         }

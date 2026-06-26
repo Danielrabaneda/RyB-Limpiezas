@@ -299,6 +299,8 @@ export async function getScheduledServicesForWeek(userId, date) {
   } catch (error) {
     console.error("Error in getScheduledServicesForWeek:", error);
     // Fallback to basic query if complex fails or for simplicity
+    const start = Timestamp.fromMillis(startRange);
+    const end = Timestamp.fromMillis(endRange);
     const q = query(
       collection(db, 'scheduledServices'),
       where('assignedUserId', '==', userId),

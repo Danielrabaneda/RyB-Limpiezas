@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { getFirestore, enableIndexedDbPersistence } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
 export const firebaseConfig = {
@@ -15,5 +15,17 @@ export const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+
+// Habilitar persistencia offline para dispositivos móviles / baja conectividad
+if (typeof window !== 'undefined') {
+  enableIndexedDbPersistence(db).catch((err) => {
+    if (err.code === 'failed-precondition') {
+      console.warn('[Firebase] La persistencia offline falló (múltiples pestañas abiertas)');
+    } else if (err.code === 'unimplemented') {
+      console.warn('[Firebase] El navegador no soporta persistencia offline');
+    }
+  });
+}
+
 export const storage = getStorage(app);
 export default app;

@@ -14,10 +14,10 @@ import { db } from '../../config/firebase';
 
 // ==================== CONSTANTES ====================
 const CHECK_INTERVAL = 30 * 1000;          // 30s polling de respaldo
-const PROXIMITY_RADIUS_ENTRY = 30;          // 30m para detectar llegada
+const PROXIMITY_RADIUS_ENTRY = 60;          // 60m para detectar llegada
 const PROXIMITY_RADIUS_EXIT = 50;           // 50m para detectar salida
 const RE_NOTIFY_INTERVAL_MS = 3 * 60 * 1000; // Re-notificar cada 3 min
-const ENTRY_CONFIRM_DELAY_MS = 90 * 1000;   // 90s de permanencia mínima para confirmar llegada
+const ENTRY_CONFIRM_DELAY_MS = 20 * 1000;   // 20s de permanencia mínima para confirmar llegada
 const EXIT_CONFIRM_DELAY_MS = 5 * 60 * 1000; // 5 min para confirmar salida
 const COMMUNITY_CACHE_TTL = 10 * 60 * 1000;  // Caché de comunidades: 10 min
 const MIN_ACCURACY_FOR_ENTRY = 40;          // No detectar entrada si precisión GPS > 40m

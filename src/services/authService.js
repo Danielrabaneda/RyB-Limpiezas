@@ -87,7 +87,7 @@ export async function deleteOperario(uid, options = {}) {
     const [cSnap, wSnap, mSnap] = await Promise.all([
       getDocs(query(collection(db, 'checkIns'), where('userId', '==', uid))),
       getDocs(query(collection(db, 'workdays'), where('userId', '==', uid))),
-      getDocs(query(collection(db, 'mileage'), where('userId', '==', uid))),
+      getDocs(query(collection(db, 'dailyMileage'), where('userId', '==', uid))),
     ]);
     cSnap.docs.forEach(d => refsToDelete.push(d.ref));
     wSnap.docs.forEach(d => refsToDelete.push(d.ref));

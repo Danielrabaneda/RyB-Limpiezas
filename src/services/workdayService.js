@@ -105,22 +105,17 @@ export async function endWorkday(workdayId, breadcrumbs = [], customEndTime = nu
 }
 
 export async function getActiveWorkday(userId) {
-  // Ultra-simplificado: solo filtramos por userId para evitar CUALQUIER necesidad de índice compuesto.
-  // Como un usuario tiene muy pocos registros de jornada al mes, filtrar en memoria es instantáneo.
+  // Optimización: consulta directa por userId y status activo
   const q = query(
     collection(db, COLLECTION_NAME),
-    where('userId', '==', userId)
+    where('userId', '==', userId),
+    where('status', '==', 'active')
   );
   
   const snap = await getDocs(q);
   if (snap.empty) return null;
   
-  // Filtramos el que esté activo en memoria
-  const active = snap.docs
-    .map(d => ({ id: d.id, ...d.data() }))
-    .find(wd => wd.status === 'active');
-  
-  return active || null;
+  return { id: snap.docs[0].id, ...snap.docs[0].data() };
 }
 
 
@@ -166,30 +161,17 @@ export async function getWorkdaysForOperario(userId, startDate, endDate) {
     const start = Timestamp.fromDate(startOfDay(startDate));
     const end = Timestamp.fromDate(endOfDay(endDate));
     
-    // Query only by userId to pass Firestore security rules and avoid composite indexes
+    // Optimización: consulta directa por rango utilizando el índice compuesto
     const q = query(
       collection(db, COLLECTION_NAME),
-      where('userId', '==', userId)
+      where('userId', '==', userId),
+      where('date', '>=', start),
+      where('date', '<=', end),
+      orderBy('date', 'desc')
     );
     
     const snap = await getDocs(q);
-    
-    let results = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    
-    // Filter by date range in memory and sort
-    results = results.filter(wd => {
-      const wdDateRaw = wd.date?.toDate ? wd.date.toDate() : new Date(wd.date);
-      return wdDateRaw >= startOfDay(startDate) && wdDateRaw <= endOfDay(endDate);
-    });
-    
-    // Sort descending by date
-    results.sort((a, b) => {
-      const aDate = a.date?.toDate ? a.date.toDate() : new Date(a.date);
-      const bDate = b.date?.toDate ? b.date.toDate() : new Date(b.date);
-      return bDate - aDate;
-    });
-
-    return results;
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
   } catch (error) {
     console.error("Error in getWorkdaysForOperario:", error);
     return [];
@@ -201,27 +183,19 @@ export async function getWorkdaysForOperario(userId, startDate, endDate) {
  * Useful for aggregating hours from multiple sessions in one day.
  */
 export async function getWorkdaysSummaryForDate(userId, date = new Date()) {
-  // Query only by userId to avoid composite index requirements
+  const start = Timestamp.fromDate(startOfDay(date));
+  const end = Timestamp.fromDate(endOfDay(date));
+
+  // Optimización: consulta directa por rango del día para hoy
   const q = query(
     collection(db, COLLECTION_NAME),
-    where('userId', '==', userId)
+    where('userId', '==', userId),
+    where('date', '>=', start),
+    where('date', '<=', end)
   );
   
   const snap = await getDocs(q);
-  const allWorkdays = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  
-  // Robust date filtering using Madrid timezone strings
-  const targetDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(date);
-  
-  const todayWorkdays = allWorkdays.filter(wd => {
-    try {
-      const wdDateRaw = wd.date?.toDate ? wd.date.toDate() : new Date(wd.date);
-      const wdDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(wdDateRaw);
-      return wdDateStr === targetDateStr;
-    } catch (e) {
-      return false;
-    }
-  });
+  const todayWorkdays = snap.docs.map(d => ({ id: d.id, ...d.data() }));
   
   let totalMinutes = 0;
   let hasActive = false;
