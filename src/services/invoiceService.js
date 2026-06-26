@@ -1,6 +1,7 @@
 import { 
   collection, doc, addDoc, updateDoc, getDocs, getDoc, deleteDoc,
-  query, where, orderBy, limit, serverTimestamp, runTransaction, setDoc
+  query, where, orderBy, limit, serverTimestamp, runTransaction, setDoc,
+  writeBatch
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { getCommunities } from './communityService';
@@ -73,6 +74,15 @@ export async function updateInvoice(id, data) {
 
 export async function deleteInvoice(id) {
   await deleteDoc(doc(db, COLLECTION, id));
+}
+
+export async function deleteMultipleInvoices(ids) {
+  if (!ids || ids.length === 0) return;
+  const batch = writeBatch(db);
+  for (const id of ids) {
+    batch.delete(doc(db, COLLECTION, id));
+  }
+  await batch.commit();
 }
 
 // Get the next invoice number for display/preview purposes

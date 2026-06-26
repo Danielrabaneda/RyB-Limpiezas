@@ -6,6 +6,7 @@ import {
   createInvoice, 
   updateInvoice, 
   deleteInvoice, 
+  deleteMultipleInvoices,
   emitInvoice, 
   updateInvoiceStatus, 
   generateMonthlyDrafts,
@@ -210,6 +211,31 @@ export default function InvoicesPage() {
     } catch (err) {
       console.error(err);
       alert('Error al emitir los borradores en lote: ' + err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleDeleteAllDrafts = async () => {
+    const draftCount = filteredInvoices.length;
+    if (draftCount === 0) return;
+    
+    if (!confirm(`¿Estás seguro de que deseas eliminar TODOS los ${draftCount} borradores visibles? Esta acción no se puede deshacer.`)) {
+      return;
+    }
+    
+    setActionLoading(true);
+    try {
+      const ids = filteredInvoices.map(inv => inv.id);
+      await deleteMultipleInvoices(ids);
+      alert(`Se han eliminado ${draftCount} borradores con éxito.`);
+      
+      const lastInv = await getLastEmittedInvoice();
+      setLastInvoice(lastInv);
+      await loadInvoices();
+    } catch (err) {
+      console.error(err);
+      alert('Error al borrar los borradores: ' + err.message);
     } finally {
       setActionLoading(false);
     }
@@ -1475,15 +1501,26 @@ export default function InvoicesPage() {
             </h4>
             <div style={{ display: 'flex', gap: '8px' }}>
               {activeTab === 'drafts' && filteredInvoices.length > 0 && (
-                <button 
-                  type="button"
-                  className="btn btn-sm btn-success"
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-                  onClick={handleEmitAllDrafts}
-                  disabled={actionLoading}
-                >
-                  🚀 Emitir todos los borradores ({filteredInvoices.length})
-                </button>
+                <>
+                  <button 
+                    type="button"
+                    className="btn btn-sm btn-success"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                    onClick={handleEmitAllDrafts}
+                    disabled={actionLoading}
+                  >
+                    🚀 Emitir todos los borradores ({filteredInvoices.length})
+                  </button>
+                  <button 
+                    type="button"
+                    className="btn btn-sm btn-danger"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                    onClick={handleDeleteAllDrafts}
+                    disabled={actionLoading}
+                  >
+                    🗑️ Borrar todos los borradores ({filteredInvoices.length})
+                  </button>
+                </>
               )}
               {filteredInvoices.length > 0 && (
                 <button 
