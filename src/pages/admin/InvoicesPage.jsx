@@ -23,6 +23,12 @@ import { useAuth } from '../../contexts/AuthContext';
 import jsPDF from 'jspdf';
 import JSZip from 'jszip';
 
+const parseLocaleFloat = (val) => {
+  if (val === undefined || val === null || val === '') return 0;
+  const clean = String(val).replace(',', '.');
+  return parseFloat(clean) || 0;
+};
+
 export default function InvoicesPage() {
   const { currentUser, userProfile } = useAuth();
   
@@ -450,8 +456,8 @@ export default function InvoicesPage() {
         
         const updated = { ...item, [field]: value };
         if (field === 'quantity' || field === 'price') {
-          const q = field === 'quantity' ? parseFloat(value) || 0 : parseFloat(item.quantity) || 0;
-          const p = field === 'price' ? parseFloat(value) || 0 : parseFloat(item.price) || 0;
+          const q = field === 'quantity' ? parseLocaleFloat(value) : parseLocaleFloat(item.quantity);
+          const p = field === 'price' ? parseLocaleFloat(value) : parseLocaleFloat(item.price);
           updated.total = parseFloat((q * p).toFixed(2));
         }
         return updated;
@@ -577,8 +583,8 @@ export default function InvoicesPage() {
         
         const updated = { ...item, [field]: value };
         if (field === 'quantity' || field === 'price') {
-          const q = field === 'quantity' ? parseFloat(value) || 0 : parseFloat(item.quantity) || 0;
-          const p = field === 'price' ? parseFloat(value) || 0 : parseFloat(item.price) || 0;
+          const q = field === 'quantity' ? parseLocaleFloat(value) : parseLocaleFloat(item.quantity);
+          const p = field === 'price' ? parseLocaleFloat(value) : parseLocaleFloat(item.price);
           updated.total = parseFloat((q * p).toFixed(2));
         }
         return updated;
@@ -1897,8 +1903,8 @@ export default function InvoicesPage() {
                           className="form-input text-center"
                           style={{ padding: '8px 4px' }}
                           required
-                          min="0.1"
-                          step="0.1"
+                          min="0"
+                          step="any"
                           value={item.quantity}
                           onChange={e => handleAddItemChange(idx, 'quantity', e.target.value)}
                         />
@@ -1911,7 +1917,7 @@ export default function InvoicesPage() {
                           style={{ padding: '8px' }}
                           required
                           min="0"
-                          step="0.01"
+                          step="any"
                           value={item.price}
                           onChange={e => handleAddItemChange(idx, 'price', e.target.value)}
                         />
@@ -2120,8 +2126,8 @@ export default function InvoicesPage() {
                           className="form-input text-center"
                           style={{ padding: '8px 4px' }}
                           required
-                          min="0.1"
-                          step="0.1"
+                          min="0"
+                          step="any"
                           value={item.quantity}
                           onChange={e => handleItemChange(idx, 'quantity', e.target.value)}
                         />
@@ -2134,7 +2140,7 @@ export default function InvoicesPage() {
                           style={{ padding: '8px' }}
                           required
                           min="0"
-                          step="0.01"
+                          step="any"
                           value={item.price}
                           onChange={e => handleItemChange(idx, 'price', e.target.value)}
                         />
