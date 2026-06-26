@@ -24,7 +24,9 @@ const DEFAULT_SETTINGS = {
   invoiceNumberFormat: 'numeric', // 'numeric' (59, 60...) or 'formatted' (F-2026-0059...)
   fileNamePattern: 'Factura_{numero}_{comunidad}',
   useSaveAsDialog: false,
-  seqMode: 'manual'
+  seqMode: 'manual',
+  issueDateMode: 'today',
+  customIssueDate: ''
 };
 
 export async function getBillingSettings() {
@@ -123,13 +125,21 @@ export async function emitInvoice(id) {
       invoiceNumber = String(nextSeq);
     }
     
+    let issueDate;
+    if (settings.issueDateMode === 'custom' && settings.customIssueDate) {
+      issueDate = new Date(settings.customIssueDate + 'T00:00:00');
+    } else {
+      issueDate = new Date();
+    }
+    const dueDate = new Date(issueDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+
     // Update invoice with assigned number
     transaction.update(invoiceRef, {
       status: 'pending',
       invoiceNumber: invoiceNumber,
       invoiceSeq: nextSeq,
-      issueDate: serverTimestamp(),
-      dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+      issueDate: issueDate,
+      dueDate: dueDate
     });
     
     // Increment sequence counter atomically
@@ -278,8 +288,13 @@ export async function emitAllInvoices(ids) {
       invoiceSnaps.push({ ref, snap });
     }
     
-    const now = new Date();
-    const dueDate = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    let issueDate;
+    if (settings.issueDateMode === 'custom' && settings.customIssueDate) {
+      issueDate = new Date(settings.customIssueDate + 'T00:00:00');
+    } else {
+      issueDate = new Date();
+    }
+    const dueDate = new Date(issueDate.getTime() + 30 * 24 * 60 * 60 * 1000);
     
     for (const { ref, snap } of invoiceSnaps) {
       if (!snap.exists()) throw new Error("Una de las facturas no existe");
@@ -297,7 +312,7 @@ export async function emitAllInvoices(ids) {
         status: 'pending',
         invoiceNumber: invoiceNumber,
         invoiceSeq: nextSeq,
-        issueDate: serverTimestamp(),
+        issueDate: issueDate,
         dueDate: dueDate
       });
       

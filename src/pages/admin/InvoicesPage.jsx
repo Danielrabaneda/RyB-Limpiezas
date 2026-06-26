@@ -101,7 +101,9 @@ export default function InvoicesPage() {
     invoiceNumberFormat: 'numeric',
     fileNamePattern: 'Factura_{numero}_{comunidad}',
     useSaveAsDialog: false,
-    seqMode: 'manual'
+    seqMode: 'manual',
+    issueDateMode: 'today',
+    customIssueDate: ''
   });
 
   useEffect(() => {
@@ -558,6 +560,12 @@ export default function InvoicesPage() {
         }
       }
 
+      let issueDate = new Date();
+      if (!isDraft && billingSettings && billingSettings.issueDateMode === 'custom' && billingSettings.customIssueDate) {
+        issueDate = new Date(billingSettings.customIssueDate + 'T00:00:00');
+      }
+      const dueDate = new Date(issueDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+
       const invoiceData = {
         invoiceNumber: typedNum,
         ...(invoiceSeq !== null ? { invoiceSeq } : {}),
@@ -582,8 +590,8 @@ export default function InvoicesPage() {
         taxAmount,
         totalAmount,
         paymentMethod: addForm.paymentMethod,
-        issueDate: isDraft ? null : new Date(),
-        dueDate: isDraft ? null : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+        issueDate: isDraft ? null : issueDate,
+        dueDate: isDraft ? null : dueDate
       };
 
       await createInvoice(invoiceData);
@@ -1528,6 +1536,41 @@ export default function InvoicesPage() {
                     }
                   </strong>
                 </div>
+              </div>
+
+              {/* Invoice Issue Date Settings */}
+              <div className="form-group" style={{ gridColumn: 'span 2', padding: '16px', background: '#f5f3ff', borderRadius: 'var(--radius-md)', border: '1px solid #ddd6fe', marginTop: '10px' }}>
+                <h4 style={{ fontWeight: 'bold', fontSize: '0.875rem', marginBottom: '12px' }}>📅 Fecha de Emisión de Facturas</h4>
+                
+                <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <div style={{ flex: 1, minWidth: '220px' }}>
+                    <label className="form-label" style={{ fontSize: '12px', fontWeight: 'bold' }}>Modo de Fecha de Emisión</label>
+                    <select 
+                      className="form-select"
+                      value={settingsForm.issueDateMode || 'today'}
+                      onChange={e => setSettingsForm({...settingsForm, issueDateMode: e.target.value})}
+                    >
+                      <option value="today">Fecha del día en el que se emite (Actual)</option>
+                      <option value="custom">Fecha específica personalizada</option>
+                    </select>
+                  </div>
+
+                  {(settingsForm.issueDateMode === 'custom') && (
+                    <div style={{ flex: 1, minWidth: '180px' }}>
+                      <label className="form-label" style={{ fontSize: '11px', fontWeight: 'bold' }}>Fecha específica de emisión</label>
+                      <input 
+                        type="date" 
+                        className="form-input"
+                        required
+                        value={settingsForm.customIssueDate || ''}
+                        onChange={e => setSettingsForm({...settingsForm, customIssueDate: e.target.value})}
+                      />
+                    </div>
+                  )}
+                </div>
+                <p style={{ fontSize: '10px', color: '#64748b', marginTop: '8px', margin: 0 }}>
+                  Indica qué fecha se asignará a las facturas cuando se emiten (desde borradores o creación manual). La fecha de vencimiento se calculará automáticamente a 30 días a partir de esta fecha de emisión.
+                </p>
               </div>
 
               {/* PDF Save Configuration */}
