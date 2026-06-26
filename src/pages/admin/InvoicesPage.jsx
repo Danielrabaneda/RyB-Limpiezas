@@ -52,6 +52,7 @@ export default function InvoicesPage() {
   const [previewModal, setPreviewModal] = useState({ open: false, pdfUrl: '' });
   const [downloadModal, setDownloadModal] = useState({ open: false, invoices: [] });
   const [lastInvoice, setLastInvoice] = useState(null);
+  const [selectedInvoices, setSelectedInvoices] = useState({});
   
   // Templates and Add Modal states
   const [templates, setTemplates] = useState([]);
@@ -110,6 +111,10 @@ export default function InvoicesPage() {
   useEffect(() => {
     loadInvoices();
   }, [filterYear, filterMonth]);
+
+  useEffect(() => {
+    setSelectedInvoices({});
+  }, [activeTab, filterYear, filterMonth]);
 
   const loadInitialData = async () => {
     setLoading(true);
@@ -287,6 +292,50 @@ export default function InvoicesPage() {
     } catch (err) {
       console.error(err);
       alert('Error al borrar: ' + err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleToggleSelectRow = (id, checked) => {
+    setSelectedInvoices(prev => ({
+      ...prev,
+      [id]: !!checked
+    }));
+  };
+
+  const handleToggleSelectAll = (checked) => {
+    if (checked) {
+      const newSelections = {};
+      filteredInvoices.forEach(inv => {
+        newSelections[inv.id] = true;
+      });
+      setSelectedInvoices(newSelections);
+    } else {
+      setSelectedInvoices({});
+    }
+  };
+
+  const handleDeleteSelected = async () => {
+    const selectedIds = Object.keys(selectedInvoices).filter(id => selectedInvoices[id]);
+    if (selectedIds.length === 0) return;
+
+    if (!confirm(`¿Estás seguro de que deseas eliminar las ${selectedIds.length} facturas seleccionadas? Esta acción no se puede deshacer.`)) {
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      await deleteMultipleInvoices(selectedIds);
+      alert(`Se han eliminado ${selectedIds.length} facturas con éxito.`);
+      setSelectedInvoices({});
+      
+      const lastInv = await getLastEmittedInvoice();
+      setLastInvoice(lastInv);
+      await loadInvoices();
+    } catch (err) {
+      console.error(err);
+      alert('Error al borrar las facturas seleccionadas: ' + err.message);
     } finally {
       setActionLoading(false);
     }
@@ -1579,6 +1628,17 @@ export default function InvoicesPage() {
                   📥 Descargar todos los PDFs ({filteredInvoices.length})
                 </button>
               )}
+              {Object.keys(selectedInvoices).filter(id => selectedInvoices[id]).length > 0 && (
+                <button 
+                  type="button"
+                  className="btn btn-sm btn-danger"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  onClick={handleDeleteSelected}
+                  disabled={actionLoading}
+                >
+                  🗑️ Borrar seleccionadas ({Object.keys(selectedInvoices).filter(id => selectedInvoices[id]).length})
+                </button>
+              )}
             </div>
           </div>
           <div className="overflow-x-auto">
@@ -1591,7 +1651,22 @@ export default function InvoicesPage() {
                 <th className="p-3 text-center">Base Imponible</th>
                 <th className="p-3 text-center">IVA</th>
                 <th className="p-3 text-center">Importe Total</th>
-                <th className="p-3 text-right">Acciones</th>
+                <th className="p-3 text-right">
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                    <span>Acciones</span>
+                    {filteredInvoices.length > 0 && (
+                      <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '10px', fontWeight: 'normal', textTransform: 'none', cursor: 'pointer', color: '#64748b' }}>
+                        <input 
+                          type="checkbox" 
+                          checked={filteredInvoices.every(inv => !!selectedInvoices[inv.id])}
+                          onChange={(e) => handleToggleSelectAll(e.target.checked)}
+                          style={{ width: '13px', height: '13px', cursor: 'pointer' }}
+                        />
+                        Seleccionar todo
+                      </label>
+                    )}
+                  </div>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -1627,8 +1702,15 @@ export default function InvoicesPage() {
                     <td className="p-3 text-center font-bold text-slate-800">
                       {inv.totalAmount.toLocaleString('es-ES', { minimumFractionDigits: 2 })} €
                     </td>
-                    <td className="p-3 text-right" style={{ minWidth: '310px' }}>
+                    <td className="p-3 text-right" style={{ minWidth: '330px' }}>
                       <div className="flex justify-end gap-1.5">
+                        <input 
+                          type="checkbox" 
+                          checked={!!selectedInvoices[inv.id]}
+                          onChange={(e) => handleToggleSelectRow(inv.id, e.target.checked)}
+                          style={{ width: '15px', height: '15px', marginRight: '8px', alignSelf: 'center', cursor: 'pointer' }}
+                          title="Seleccionar para borrado en lote"
+                        />
                         {inv.status === 'draft' && (
                           <>
                             <button 
