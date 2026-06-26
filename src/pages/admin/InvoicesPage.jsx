@@ -1146,6 +1146,10 @@ export default function InvoicesPage() {
     const cif = (inv.client?.cif || '').toLowerCase();
     const invNum = (inv.invoiceNumber || '').toLowerCase();
     return name.includes(term) || cif.includes(term) || invNum.includes(term);
+  }).sort((a, b) => {
+    const nameA = a.client?.name || '';
+    const nameB = b.client?.name || '';
+    return nameA.localeCompare(nameB, 'es', { sensitivity: 'base' });
   });
 
   // Calculate totals for summary cards
