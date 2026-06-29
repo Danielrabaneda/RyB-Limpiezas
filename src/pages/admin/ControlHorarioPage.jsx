@@ -4,6 +4,7 @@ import { getAllUsers } from '../../services/authService';
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, isPast, isSameDay, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { formatDecimalHours, formatMinutes } from '../../utils/formatTime';
+import { getGroupInfo } from '../../utils/dateGrouping';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
@@ -26,12 +27,11 @@ export default function ControlHorarioPage() {
   useEffect(() => {
     if (workdays.length > 0) {
       const today = new Date();
-      const start = startOfWeek(today, { weekStartsOn: 1 });
-      const end = endOfWeek(today, { weekStartsOn: 1 });
-      const currentWeekKey = `${format(start, 'yyyy-MM-dd')}_${format(end, 'yyyy-MM-dd')}`;
+      const info = getGroupInfo(today);
+      const currentWeekKey = info?.groupKey;
       
       const newExpanded = new Set(expandedWeeks);
-      newExpanded.add(currentWeekKey);
+      if (currentWeekKey) newExpanded.add(currentWeekKey);
       setExpandedWeeks(newExpanded);
       
       // Also expand today
@@ -234,34 +234,30 @@ export default function ControlHorarioPage() {
     setExpandedDays(newSet);
   };
 
-  // Hierarchical Grouping (Week -> Day -> Operario)
+  // Hierarchical Grouping (Week/Month/Year -> Day -> Operario)
   const hierarchicalData = (() => {
     const groups = {};
 
-    const getWeekKey = (date) => {
-      const start = startOfWeek(date, { weekStartsOn: 1 });
-      const end = endOfWeek(date, { weekStartsOn: 1 });
-      return `${format(start, 'yyyy-MM-dd')}_${format(end, 'yyyy-MM-dd')}`;
-    };
-
     const parseDate = (d) => d?.toDate ? d.toDate() : new Date(d);
 
-    const initOp = (weekKey, dayKey, opId, opName) => {
-      if (!groups[weekKey]) {
-        const [startStr, endStr] = weekKey.split('_');
-        const startDateObj = new Date(startStr);
-        const endDateObj = new Date(endStr);
-        groups[weekKey] = {
-          weekId: weekKey,
-          label: `Semana ${format(startDateObj, 'dd/MM')} - ${format(endDateObj, 'dd/MM')}`,
+    const initOp = (groupKey, groupInfo, dayKey, opId, opName) => {
+      if (!groups[groupKey]) {
+        groups[groupKey] = {
+          weekId: groupKey, // Keep weekId to minimize JSX changes
+          id: groupKey,
+          label: groupInfo.label,
+          subLabel: groupInfo.subLabel,
+          type: groupInfo.type,
+          isCurrent: groupInfo.isCurrent,
+          isComplete: !groupInfo.isCurrent,
+          sortDate: groupInfo.sortDate,
           days: {},
-          stats: { minutes: 0, count: 0 },
-          isComplete: isPast(endDateObj) && !isSameDay(endDateObj, new Date())
+          stats: { minutes: 0, count: 0 }
         };
       }
-      if (!groups[weekKey].days[dayKey]) {
+      if (!groups[groupKey].days[dayKey]) {
         const dayDate = new Date(dayKey);
-        groups[weekKey].days[dayKey] = {
+        groups[groupKey].days[dayKey] = {
           dayId: dayKey,
           label: format(dayDate, "EEEE d 'de' MMMM", { locale: es }),
           date: dayDate,
@@ -269,41 +265,45 @@ export default function ControlHorarioPage() {
           stats: { minutes: 0, count: 0 }
         };
       }
-      if (!groups[weekKey].days[dayKey].operators[opId]) {
-        groups[weekKey].days[dayKey].operators[opId] = {
+      if (!groups[groupKey].days[dayKey].operators[opId]) {
+        groups[groupKey].days[dayKey].operators[opId] = {
           opId,
           name: opName,
           sessions: [],
           stats: { minutes: 0 }
         };
       }
-      return groups[weekKey].days[dayKey].operators[opId];
+      return groups[groupKey].days[dayKey].operators[opId];
     };
 
     workdays.forEach(wd => {
       const date = parseDate(wd.date);
       if (!date || isNaN(date.getTime())) return;
-      const weekKey = getWeekKey(date);
+      
+      const info = getGroupInfo(date);
+      if (!info) return;
+
+      const groupKey = info.groupKey;
       const dayKey = format(date, 'yyyy-MM-dd');
       const opId = wd.userId;
       const opName = wd.operarioName || wd.userName || 'Desconocido';
 
-      const op = initOp(weekKey, dayKey, opId, opName);
+      const op = initOp(groupKey, info, dayKey, opId, opName);
       op.sessions.push(wd);
       const mins = wd.totalMinutes || 0;
       op.stats.minutes += mins;
       
-      groups[weekKey].stats.minutes += mins;
-      groups[weekKey].stats.count++;
-      groups[weekKey].days[dayKey].stats.minutes += mins;
-      groups[weekKey].days[dayKey].stats.count++;
+      groups[groupKey].stats.minutes += mins;
+      groups[groupKey].stats.count++;
+      groups[groupKey].days[dayKey].stats.minutes += mins;
+      groups[groupKey].days[dayKey].stats.count++;
     });
 
     return Object.values(groups)
-      .sort((a, b) => b.weekId.localeCompare(a.weekId))
-      .map(week => ({
-        ...week,
-        days: Object.values(week.days)
+      .sort((a, b) => b.sortDate.getTime() - a.sortDate.getTime())
+      .map(group => ({
+        ...group,
+        days: Object.values(group.days)
           .sort((a, b) => b.dayId.localeCompare(a.dayId))
           .map(day => ({
             ...day,
@@ -439,7 +439,7 @@ export default function ControlHorarioPage() {
       ) : (
         <div className="hierarchical-reports">
           {hierarchicalData.map(week => {
-            const isCurrentWeek = !week.isComplete;
+            const isCurrentWeek = week.isCurrent;
 
             if (isCurrentWeek) {
               // Show days of current week directly
@@ -463,11 +463,11 @@ export default function ControlHorarioPage() {
                   >
                     <div className="flex items-center gap-3">
                       <div className="week-icon" style={{ fontSize: '1.2rem' }}>
-                        {expandedWeeks.has(week.weekId) ? '📂' : '📁'}
+                        {week.type === 'year' ? '🗓️' : week.type === 'month' ? '📅' : (expandedWeeks.has(week.weekId) ? '📂' : '📁')}
                       </div>
                       <div>
                         <h3 style={{ fontSize: 'var(--font-base)', fontWeight: 700 }}>{week.label}</h3>
-                        <span className="text-xs text-muted">Semana Finalizada</span>
+                        <span className="text-xs text-muted">{week.subLabel}</span>
                       </div>
                     </div>
                     <div className="week-stats flex gap-4 text-sm font-semibold">

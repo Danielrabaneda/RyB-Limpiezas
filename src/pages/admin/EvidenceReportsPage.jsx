@@ -4,6 +4,7 @@ import { getCommunities } from '../../services/communityService';
 import { getOperarios } from '../../services/authService';
 import { format, subDays } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { groupFlatList } from '../../utils/dateGrouping';
 
 export default function EvidenceReportsPage() {
   const [startDate, setStartDate] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd'));
@@ -16,6 +17,14 @@ export default function EvidenceReportsPage() {
   const [loading, setLoading] = useState(true);
   const [expandedReport, setExpandedReport] = useState(null);
   const [lightboxImg, setLightboxImg] = useState(null);
+  const [expandedGroups, setExpandedGroups] = useState(new Set());
+
+  const toggleGroup = (id) => {
+    const newSet = new Set(expandedGroups);
+    if (newSet.has(id)) newSet.delete(id);
+    else newSet.add(id);
+    setExpandedGroups(newSet);
+  };
 
   useEffect(() => {
     loadBaseData();
@@ -74,8 +83,158 @@ export default function EvidenceReportsPage() {
 
   const totalReports = reports.length;
   const pendingReports = reports.filter(r => r.status === 'submitted').length;
-  const reviewedReports = reports.filter(r => r.status === 'reviewed').length;
   const totalPhotos = reports.reduce((acc, r) => acc + (r.photoUrls?.length || 0), 0);
+
+  function renderReportCard(report) {
+    const isExpanded = expandedReport === report.id;
+    const createdAt = report.createdAt?.toDate ? report.createdAt.toDate() : (report.createdAt ? new Date(report.createdAt) : null);
+
+    return (
+      <div
+        key={report.id}
+        className="card"
+        style={{
+          borderLeft: report.status === 'reviewed'
+            ? '4px solid var(--color-success)'
+            : '4px solid var(--color-warning)',
+          transition: 'all 0.2s ease',
+        }}
+      >
+        {/* Header — clickable */}
+        <div
+          style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}
+          onClick={() => setExpandedReport(isExpanded ? null : report.id)}
+        >
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <span style={{ fontWeight: 800, fontSize: 'var(--font-base)' }}>
+                🏢 {report.communityName || getCommunityName(report.communityId)}
+              </span>
+              <span className={`badge ${report.status === 'reviewed' ? 'badge-success' : 'badge-warning'}`} style={{ fontSize: '0.65rem' }}>
+                {report.status === 'reviewed' ? '✅ Revisado' : '🟡 Pendiente'}
+              </span>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap text-xs text-muted">
+              <span>👤 {report.userName || getOperarioName(report.userId)}</span>
+              <span>📋 {report.taskName || 'Tarea'}</span>
+              {createdAt && <span>📅 {format(createdAt, "dd/MM/yyyy 'a las' HH:mm", { locale: es })}</span>}
+            </div>
+            <div className="flex items-center gap-2 mt-2 text-xs">
+              {report.photoUrls?.length > 0 && (
+                <span style={{ background: 'var(--color-bg-light, #f1f5f9)', padding: '2px 8px', borderRadius: '12px', fontWeight: 600 }}>
+                  📷 {report.photoUrls.length} foto{report.photoUrls.length > 1 ? 's' : ''}
+                </span>
+              )}
+              {report.notes && (
+                <span style={{ background: 'var(--color-bg-light, #f1f5f9)', padding: '2px 8px', borderRadius: '12px', fontWeight: 600 }}>
+                  📝 Nota incluida
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
+            <span style={{ fontSize: '1.2rem', transition: 'transform 0.2s', transform: isExpanded ? 'rotate(180deg)' : 'rotate(0)' }}>
+              🔽
+            </span>
+          </div>
+        </div>
+
+        {/* Expanded content */}
+        {isExpanded && (
+          <div style={{ marginTop: 'var(--space-4)', paddingTop: 'var(--space-4)', borderTop: '1px solid var(--color-border, #e2e8f0)' }}>
+            {/* Notes */}
+            {report.notes && (
+              <div style={{
+                background: 'var(--color-bg-light, #f8fafc)',
+                borderRadius: 'var(--radius-md)',
+                padding: 'var(--space-3) var(--space-4)',
+                marginBottom: 'var(--space-4)',
+                borderLeft: '3px solid var(--color-primary)',
+              }}>
+                <p className="text-xs font-bold text-muted mb-1">📝 Notas del operario:</p>
+                <p className="text-sm" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+                  {report.notes}
+                </p>
+              </div>
+            )}
+
+            {/* Photos grid */}
+            {report.photoUrls?.length > 0 && (
+              <div>
+                <p className="text-xs font-bold text-muted mb-2">📷 Fotos adjuntas:</p>
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
+                  gap: '8px',
+                }}>
+                  {report.photoUrls.map((url, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        borderRadius: 'var(--radius-md)',
+                        overflow: 'hidden',
+                        cursor: 'pointer',
+                        border: '2px solid var(--color-border, #e2e8f0)',
+                        transition: 'transform 0.15s, box-shadow 0.15s',
+                        aspectRatio: '1',
+                      }}
+                      onClick={() => setLightboxImg(url)}
+                      onMouseOver={e => { e.currentTarget.style.transform = 'scale(1.03)'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.15)'; }}
+                      onMouseOut={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = 'none'; }}
+                    >
+                      <img
+                        src={url}
+                        alt={`Evidencia ${i + 1}`}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex gap-2 mt-4 justify-end flex-wrap">
+              {report.status !== 'reviewed' && (
+                <button
+                  className="btn btn-sm"
+                  style={{
+                    background: 'var(--color-success)',
+                    color: 'white',
+                    border: 'none',
+                    fontWeight: 700,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                  onClick={(e) => { e.stopPropagation(); handleMarkReviewed(report.id); }}
+                >
+                  ✅ Marcar revisado
+                </button>
+              )}
+              <button
+                className="btn btn-sm"
+                style={{
+                  background: 'var(--color-danger, #ef4444)',
+                  color: 'white',
+                  border: 'none',
+                  fontWeight: 700,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                }}
+                onClick={(e) => { e.stopPropagation(); handleDelete(report.id); }}
+              >
+                🗑️ Eliminar
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const groupedReports = groupFlatList(reports, report => report.createdAt);
 
   return (
     <>
@@ -140,153 +299,51 @@ export default function EvidenceReportsPage() {
           </div>
         ) : (
           <div className="flex flex-col gap-4">
-            {reports.map(report => {
-              const isExpanded = expandedReport === report.id;
-              const createdAt = report.createdAt?.toDate ? report.createdAt.toDate() : (report.createdAt ? new Date(report.createdAt) : null);
-              
-              return (
-                <div
-                  key={report.id}
-                  className="card"
-                  style={{
-                    borderLeft: report.status === 'reviewed'
-                      ? '4px solid var(--color-success)'
-                      : '4px solid var(--color-warning)',
-                    transition: 'all 0.2s ease',
-                  }}
-                >
-                  {/* Header — clickable */}
-                  <div
-                    style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}
-                    onClick={() => setExpandedReport(isExpanded ? null : report.id)}
-                  >
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        <span style={{ fontWeight: 800, fontSize: 'var(--font-base)' }}>
-                          🏢 {report.communityName || getCommunityName(report.communityId)}
-                        </span>
-                        <span className={`badge ${report.status === 'reviewed' ? 'badge-success' : 'badge-warning'}`} style={{ fontSize: '0.65rem' }}>
-                          {report.status === 'reviewed' ? '✅ Revisado' : '🟡 Pendiente'}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-3 flex-wrap text-xs text-muted">
-                        <span>👤 {report.userName || getOperarioName(report.userId)}</span>
-                        <span>📋 {report.taskName || 'Tarea'}</span>
-                        {createdAt && <span>📅 {format(createdAt, "dd/MM/yyyy 'a las' HH:mm", { locale: es })}</span>}
-                      </div>
-                      <div className="flex items-center gap-2 mt-2 text-xs">
-                        {report.photoUrls?.length > 0 && (
-                          <span style={{ background: 'var(--color-bg-light, #f1f5f9)', padding: '2px 8px', borderRadius: '12px', fontWeight: 600 }}>
-                            📷 {report.photoUrls.length} foto{report.photoUrls.length > 1 ? 's' : ''}
-                          </span>
-                        )}
-                        {report.notes && (
-                          <span style={{ background: 'var(--color-bg-light, #f1f5f9)', padding: '2px 8px', borderRadius: '12px', fontWeight: 600 }}>
-                            📝 Nota incluida
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
-                      <span style={{ fontSize: '1.2rem', transition: 'transform 0.2s', transform: isExpanded ? 'rotate(180deg)' : 'rotate(0)' }}>
-                        🔽
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Expanded content */}
-                  {isExpanded && (
-                    <div style={{ marginTop: 'var(--space-4)', paddingTop: 'var(--space-4)', borderTop: '1px solid var(--color-border, #e2e8f0)' }}>
-                      {/* Notes */}
-                      {report.notes && (
-                        <div style={{
-                          background: 'var(--color-bg-light, #f8fafc)',
-                          borderRadius: 'var(--radius-md)',
-                          padding: 'var(--space-3) var(--space-4)',
-                          marginBottom: 'var(--space-4)',
-                          borderLeft: '3px solid var(--color-primary)',
-                        }}>
-                          <p className="text-xs font-bold text-muted mb-1">📝 Notas del operario:</p>
-                          <p className="text-sm" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
-                            {report.notes}
-                          </p>
+            {groupedReports.map(group => {
+              if (group.isCurrent) {
+                return group.items.map(report => renderReportCard(report));
+              } else {
+                const isExpanded = expandedGroups.has(group.id);
+                return (
+                  <div key={group.id} className="week-card mb-4">
+                    <div 
+                      className={`week-header card ${isExpanded ? 'expanded' : ''}`}
+                      onClick={() => toggleGroup(group.id)}
+                      style={{ 
+                        display: 'flex', 
+                        justifyContent: 'space-between', 
+                        alignItems: 'center', 
+                        cursor: 'pointer',
+                        background: 'var(--color-bg-input)',
+                        borderLeft: isExpanded ? '4px solid var(--color-accent)' : '1px solid var(--color-border)',
+                        padding: 'var(--space-4)'
+                      }}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="week-icon" style={{ fontSize: '1.2rem' }}>
+                          {group.type === 'year' ? '🗓️' : group.type === 'month' ? '📅' : (isExpanded ? '📂' : '📁')}
                         </div>
-                      )}
-
-                      {/* Photos grid */}
-                      {report.photoUrls?.length > 0 && (
                         <div>
-                          <p className="text-xs font-bold text-muted mb-2">📷 Fotos adjuntas:</p>
-                          <div style={{
-                            display: 'grid',
-                            gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
-                            gap: '8px',
-                          }}>
-                            {report.photoUrls.map((url, i) => (
-                              <div
-                                key={i}
-                                style={{
-                                  borderRadius: 'var(--radius-md)',
-                                  overflow: 'hidden',
-                                  cursor: 'pointer',
-                                  border: '2px solid var(--color-border, #e2e8f0)',
-                                  transition: 'transform 0.15s, box-shadow 0.15s',
-                                  aspectRatio: '1',
-                                }}
-                                onClick={() => setLightboxImg(url)}
-                                onMouseOver={e => { e.currentTarget.style.transform = 'scale(1.03)'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.15)'; }}
-                                onMouseOut={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = 'none'; }}
-                              >
-                                <img
-                                  src={url}
-                                  alt={`Evidencia ${i + 1}`}
-                                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                                />
-                              </div>
-                            ))}
-                          </div>
+                          <h3 style={{ fontSize: 'var(--font-base)', fontWeight: 700 }}>{group.label}</h3>
+                          <span className="text-xs text-muted">{group.subLabel}</span>
                         </div>
-                      )}
-
-                      {/* Actions */}
-                      <div className="flex gap-2 mt-4 justify-end flex-wrap">
-                        {report.status !== 'reviewed' && (
-                          <button
-                            className="btn btn-sm"
-                            style={{
-                              background: 'var(--color-success)',
-                              color: 'white',
-                              border: 'none',
-                              fontWeight: 700,
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                            }}
-                            onClick={(e) => { e.stopPropagation(); handleMarkReviewed(report.id); }}
-                          >
-                            ✅ Marcar revisado
-                          </button>
-                        )}
-                        <button
-                          className="btn btn-sm"
-                          style={{
-                            background: 'var(--color-danger, #ef4444)',
-                            color: 'white',
-                            border: 'none',
-                            fontWeight: 700,
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                          }}
-                          onClick={(e) => { e.stopPropagation(); handleDelete(report.id); }}
-                        >
-                          🗑️ Eliminar
-                        </button>
+                      </div>
+                      <div className="week-stats flex gap-4 text-sm font-semibold">
+                        <span title="Reportes" style={{ color: 'var(--color-primary)' }}>
+                          📸 {group.items.length} reportes
+                        </span>
+                        <span style={{ color: 'var(--text-muted)' }}>{isExpanded ? '🔽' : '▶️'}</span>
                       </div>
                     </div>
-                  )}
-                </div>
-              );
+
+                    {isExpanded && (
+                      <div className="week-content mt-2 ml-4 flex flex-col gap-4">
+                        {group.items.map(report => renderReportCard(report))}
+                      </div>
+                    )}
+                  </div>
+                );
+              }
             })}
           </div>
         )}

@@ -15,6 +15,7 @@ import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { useAuth } from '../../contexts/AuthContext';
 import { getAllUsers } from '../../services/authService';
+import { groupFlatList } from '../../utils/dateGrouping';
 
 export const CATEGORIES = [
   { id: 'quimicos', name: 'Químicos / Limpieza', emoji: '🧪', badgeClass: 'badge-cat-quimicos' },
@@ -83,6 +84,14 @@ export default function InventoryPage() {
   const [movements, setMovements] = useState([]);
   const [users, setUsers] = useState({});
   const [loading, setLoading] = useState(true);
+  const [expandedGroups, setExpandedGroups] = useState(new Set());
+
+  const toggleGroup = (id) => {
+    const newSet = new Set(expandedGroups);
+    if (newSet.has(id)) newSet.delete(id);
+    else newSet.add(id);
+    setExpandedGroups(newSet);
+  };
   
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [newProduct, setNewProduct] = useState({ name: '', unit: 'unidad', minStock: '5', category: 'general' });
@@ -650,6 +659,93 @@ export default function InventoryPage() {
     };
   };
 
+  function renderOrderCard(order) {
+    const product = products.find(p => p.id === order.productId);
+    const currentStock = product?.currentStock || 0;
+    const canDeliver = currentStock >= order.quantity;
+
+    return (
+      <div key={order.id} className="card p-4 flex flex-col gap-3">
+        <div className="flex flex-wrap justify-between items-start gap-2">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className={`status-badge ${order.status === 'pending' ? 'status-pending' : 'status-completed'}`}>
+                {order.status === 'pending' ? '⏳ Pendiente' : '✅ Entregado'}
+              </span>
+              <span className="text-xs text-muted">
+                {format(order.createdAt?.toDate() || new Date(), "d MMM, HH:mm", { locale: es })}
+              </span>
+            </div>
+            <h3 className="text-lg font-bold mt-1">{order.productName} × {order.quantity} {order.unit}</h3>
+          </div>
+          <button className="btn btn-ghost btn-xs text-danger" onClick={() => handleDeleteOrder(order.id)}>🗑️</button>
+        </div>
+
+        <div className="bg-slate-50 p-2 rounded text-sm">
+          <p><strong>Operario:</strong> {users[order.userId]?.name || users[order.userId]?.displayName || 'Desconocido'}</p>
+          {order.notes && <p className="mt-1 italic text-slate-500">"{order.notes}"</p>}
+          {order.status === 'pending' && (
+            <p className={`mt-2 text-xs font-bold ${canDeliver ? 'text-green-600' : 'text-red-600'}`}>
+              Stock actual: {currentStock} {order.unit}
+            </p>
+          )}
+        </div>
+
+        {order.status === 'pending' && (
+          <button 
+            className={`btn btn-sm w-full ${canDeliver ? 'btn-primary' : 'bg-red-100 text-red-700 hover:bg-red-200 border-0'}`}
+            onClick={() => {
+              if (!canDeliver) {
+                if (!confirm(`⚠️ STOCK INSUFICIENTE. Tienes ${currentStock} y se piden ${order.quantity}. ¿Entregar de todas formas y dejar el stock en negativo?`)) {
+                  return;
+                }
+              }
+              handleStatusChange(order.id, 'completed');
+            }}
+          >
+            Marcar como Entregado
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  function renderMovementTableHeader() {
+    return (
+      <thead>
+        <tr>
+          <th>Fecha</th>
+          <th>Producto</th>
+          <th className="text-center">Tipo</th>
+          <th className="text-center">Cant.</th>
+          <th>Usuario</th>
+          <th>Detalle</th>
+        </tr>
+      </thead>
+    );
+  }
+
+  function renderMovementRow(m) {
+    return (
+      <tr key={m.id}>
+        <td className="whitespace-nowrap">{format(m.date?.toDate() || new Date(), "d MMM, HH:mm", { locale: es })}</td>
+        <td className="font-semibold">{m.productName}</td>
+        <td className="text-center">
+          {m.type === 'in' && <span className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-bold">Entrada</span>}
+          {m.type === 'out' && <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-bold">Salida</span>}
+          {m.type === 'adjustment' && <span className="bg-slate-200 text-slate-700 px-2 py-1 rounded text-xs font-bold">Ajuste</span>}
+        </td>
+        <td className="text-center font-bold">
+          {m.type === 'in' ? '+' : m.type === 'out' ? '-' : ''}{Math.abs(m.quantity)}
+        </td>
+        <td className="truncate max-w-[120px]" title={m.userName || users[m.userId]?.name}>
+          {m.userName || users[m.userId]?.name || m.userId}
+        </td>
+        <td className="text-xs text-muted max-w-[200px] truncate" title={m.notes}>{m.notes || '-'}</td>
+      </tr>
+    );
+  }
+
   return (
     <div className="page-container">
       <div className="header-section">
@@ -697,57 +793,60 @@ export default function InventoryPage() {
           {orders.length === 0 ? (
             <div className="empty-state">No hay pedidos registrados</div>
           ) : (
-            <div className="grid gap-4">
-              {orders.map(order => {
-                const product = products.find(p => p.id === order.productId);
-                const currentStock = product?.currentStock || 0;
-                const canDeliver = currentStock >= order.quantity;
-
-                return (
-                  <div key={order.id} className="card p-4 flex flex-col gap-3">
-                    <div className="flex flex-wrap justify-between items-start gap-2">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className={`status-badge ${order.status === 'pending' ? 'status-pending' : 'status-completed'}`}>
-                            {order.status === 'pending' ? '⏳ Pendiente' : '✅ Entregado'}
-                          </span>
-                          <span className="text-xs text-muted">
-                            {format(order.createdAt?.toDate() || new Date(), "d MMM, HH:mm", { locale: es })}
-                          </span>
-                        </div>
-                        <h3 className="text-lg font-bold mt-1">{order.productName} × {order.quantity} {order.unit}</h3>
+            <div className="flex flex-col gap-4">
+              {(() => {
+                const grouped = groupFlatList(orders, o => o.createdAt);
+                return grouped.map(group => {
+                  if (group.isCurrent) {
+                    return (
+                      <div key={group.id} className="grid gap-4">
+                        {group.items.map(order => renderOrderCard(order))}
                       </div>
-                      <button className="btn btn-ghost btn-xs text-danger" onClick={() => handleDeleteOrder(order.id)}>🗑️</button>
-                    </div>
+                    );
+                  } else {
+                    const isExpanded = expandedGroups.has(group.id);
+                    return (
+                      <div key={group.id} className="week-card mb-2">
+                        <div 
+                          className={`week-header card ${isExpanded ? 'expanded' : ''}`}
+                          onClick={() => toggleGroup(group.id)}
+                          style={{ 
+                            display: 'flex', 
+                            justifyContent: 'space-between', 
+                            alignItems: 'center', 
+                            cursor: 'pointer',
+                            background: 'var(--color-bg-input)',
+                            borderLeft: isExpanded ? '4px solid var(--color-accent)' : '1px solid var(--color-border)',
+                            padding: 'var(--space-4)'
+                          }}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="week-icon" style={{ fontSize: '1.2rem' }}>
+                              {group.type === 'year' ? '🗓️' : group.type === 'month' ? '📅' : (isExpanded ? '📂' : '📁')}
+                            </div>
+                            <div>
+                              <h3 style={{ fontSize: 'var(--font-base)', fontWeight: 700 }}>{group.label}</h3>
+                              <span className="text-xs text-muted">{group.subLabel}</span>
+                            </div>
+                          </div>
+                          <div className="week-stats flex gap-4 text-sm font-semibold">
+                            <span title="Pedidos" style={{ color: 'var(--color-primary)' }}>
+                              📋 {group.items.length} pedidos
+                            </span>
+                            <span style={{ color: 'var(--text-muted)' }}>{isExpanded ? '🔽' : '▶️'}</span>
+                          </div>
+                        </div>
 
-                    <div className="bg-slate-50 p-2 rounded text-sm">
-                      <p><strong>Operario:</strong> {users[order.userId]?.name || users[order.userId]?.displayName || 'Desconocido'}</p>
-                      {order.notes && <p className="mt-1 italic text-slate-500">"{order.notes}"</p>}
-                      {order.status === 'pending' && (
-                        <p className={`mt-2 text-xs font-bold ${canDeliver ? 'text-green-600' : 'text-red-600'}`}>
-                          Stock actual: {currentStock} {order.unit}
-                        </p>
-                      )}
-                    </div>
-
-                    {order.status === 'pending' && (
-                      <button 
-                        className={`btn btn-sm w-full ${canDeliver ? 'btn-primary' : 'bg-red-100 text-red-700 hover:bg-red-200 border-0'}`}
-                        onClick={() => {
-                          if (!canDeliver) {
-                            if (!confirm(`⚠️ STOCK INSUFICIENTE. Tienes ${currentStock} y se piden ${order.quantity}. ¿Entregar de todas formas y dejar el stock en negativo?`)) {
-                              return;
-                            }
-                          }
-                          handleStatusChange(order.id, 'completed');
-                        }}
-                      >
-                        Marcar como Entregado
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
+                        {isExpanded && (
+                          <div className="week-content mt-2 ml-4 grid gap-4">
+                            {group.items.map(order => renderOrderCard(order))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+                });
+              })()}
             </div>
           )}
         </div>
@@ -1004,48 +1103,81 @@ export default function InventoryPage() {
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-md font-bold">Historial de Movimientos</h2>
           </div>
-          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-            <div className="overflow-x-auto">
-              <table className="table table-grid table-striped min-w-[600px]">
-                <thead>
-                  <tr>
-                    <th>Fecha</th>
-                    <th>Producto</th>
-                    <th className="text-center">Tipo</th>
-                    <th className="text-center">Cant.</th>
-                    <th>Usuario</th>
-                    <th>Detalle</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {movements.length === 0 ? (
-                    <tr>
-                      <td colSpan="6" className="p-6 text-center text-muted">No hay movimientos registrados.</td>
-                    </tr>
-                  ) : (
-                    movements.map(m => (
-                      <tr key={m.id}>
-                        <td className="whitespace-nowrap">{format(m.date?.toDate() || new Date(), "d MMM, HH:mm", { locale: es })}</td>
-                        <td className="font-semibold">{m.productName}</td>
-                        <td className="text-center">
-                          {m.type === 'in' && <span className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-bold">Entrada</span>}
-                          {m.type === 'out' && <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-bold">Salida</span>}
-                          {m.type === 'adjustment' && <span className="bg-slate-200 text-slate-700 px-2 py-1 rounded text-xs font-bold">Ajuste</span>}
-                        </td>
-                        <td className="text-center font-bold">
-                          {m.type === 'in' ? '+' : m.type === 'out' ? '-' : ''}{Math.abs(m.quantity)}
-                        </td>
-                        <td className="truncate max-w-[120px]" title={m.userName || users[m.userId]?.name}>
-                          {m.userName || users[m.userId]?.name || m.userId}
-                        </td>
-                        <td className="text-xs text-muted max-w-[200px] truncate" title={m.notes}>{m.notes || '-'}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+          {movements.length === 0 ? (
+            <div className="card text-center p-6 text-muted">No hay movimientos registrados.</div>
+          ) : (
+            <div className="flex flex-col gap-4">
+              {(() => {
+                const grouped = groupFlatList(movements, m => m.date);
+                return grouped.map(group => {
+                  if (group.isCurrent) {
+                    return (
+                      <div key={group.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                        <div className="overflow-x-auto">
+                          <table className="table table-grid table-striped min-w-[600px]" style={{ margin: 0 }}>
+                            {renderMovementTableHeader()}
+                            <tbody>
+                              {group.items.map(m => renderMovementRow(m))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  } else {
+                    const isExpanded = expandedGroups.has(group.id);
+                    return (
+                      <div key={group.id} className="week-card mb-2">
+                        <div 
+                          className={`week-header card ${isExpanded ? 'expanded' : ''}`}
+                          onClick={() => toggleGroup(group.id)}
+                          style={{ 
+                            display: 'flex', 
+                            justifyContent: 'space-between', 
+                            alignItems: 'center', 
+                            cursor: 'pointer',
+                            background: 'var(--color-bg-input)',
+                            borderLeft: isExpanded ? '4px solid var(--color-accent)' : '1px solid var(--color-border)',
+                            padding: 'var(--space-4)'
+                          }}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="week-icon" style={{ fontSize: '1.2rem' }}>
+                              {group.type === 'year' ? '🗓️' : group.type === 'month' ? '📅' : (isExpanded ? '📂' : '📁')}
+                            </div>
+                            <div>
+                              <h3 style={{ fontSize: 'var(--font-base)', fontWeight: 700 }}>{group.label}</h3>
+                              <span className="text-xs text-muted">{group.subLabel}</span>
+                            </div>
+                          </div>
+                          <div className="week-stats flex gap-4 text-sm font-semibold">
+                            <span title="Movimientos" style={{ color: 'var(--color-primary)' }}>
+                              📊 {group.items.length} movimientos
+                            </span>
+                            <span style={{ color: 'var(--text-muted)' }}>{isExpanded ? '🔽' : '▶️'}</span>
+                          </div>
+                        </div>
+
+                        {isExpanded && (
+                          <div className="week-content mt-2 ml-4">
+                            <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                              <div className="overflow-x-auto">
+                                <table className="table table-grid table-striped min-w-[600px]" style={{ margin: 0 }}>
+                                  {renderMovementTableHeader()}
+                                  <tbody>
+                                    {group.items.map(m => renderMovementRow(m))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+                });
+              })()}
             </div>
-          </div>
+          )}
         </div>
       ) : (
         (() => {
