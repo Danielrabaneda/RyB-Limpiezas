@@ -518,8 +518,3 @@ exports.cleanupStaleFcmTokens = onSchedule(
   }
 );
 
-
-
-
-
-

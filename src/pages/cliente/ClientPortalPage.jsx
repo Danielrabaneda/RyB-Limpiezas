@@ -167,7 +167,7 @@ export default function ClientPortalPage() {
               <div>
                 <p style={{ margin: '0 0 2px 0', fontSize: '15px', fontWeight: 'bold', color: '#0f172a' }}>Completado con éxito</p>
                 <p style={{ margin: '0', fontSize: '12px', color: '#64748b' }}>
-                  El {getFormattedDate(lastCompletedReport.createdAt)} de {getFormattedTime(lastCompletedReport.checkInTime)} a {getFormattedTime(lastCompletedReport.checkOutTime)}
+                  El {getFormattedDate(lastCompletedReport.checkInTime || lastCompletedReport.createdAt)} de {getFormattedTime(lastCompletedReport.checkInTime)} a {getFormattedTime(lastCompletedReport.checkOutTime)}
                 </p>
                 {lastCompletedReport.signature?.signerName && (
                   <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: '#1e40af', fontWeight: '600' }}>
@@ -256,7 +256,7 @@ export default function ClientPortalPage() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid #f1f5f9', paddingBottom: '12px', marginBottom: '12px' }}>
                     <div>
                       <p style={{ margin: '0 0 2px 0', fontSize: '14px', fontWeight: 'bold', color: '#0f172a', textTransform: 'capitalize' }}>
-                        {format(rep.createdAt?.toDate ? rep.createdAt.toDate() : new Date(rep.createdAt), "EEEE dd 'de' MMMM", { locale: es })}
+                        {format((rep.checkInTime || rep.createdAt)?.toDate ? (rep.checkInTime || rep.createdAt).toDate() : new Date(rep.checkInTime || rep.createdAt), "EEEE dd 'de' MMMM", { locale: es })}
                       </p>
                       <p style={{ margin: '0', fontSize: '11px', color: '#94a3b8' }}>ID Servicio: #{rep.id.substring(0, 8).toUpperCase()}</p>
                     </div>
@@ -276,7 +276,7 @@ export default function ClientPortalPage() {
                     </div>
                     <div>
                       <span style={{ color: '#94a3b8', display: 'block', fontSize: '10px', textTransform: 'uppercase', fontWeight: 'bold' }}>Duración</span>
-                      <strong style={{ color: '#1e40af' }}>{rep.totalMinutes || 0} min</strong>
+                      <strong style={{ color: '#1e40af' }}>{rep.durationMinutes || rep.totalMinutes || 0} min</strong>
                     </div>
                   </div>
 

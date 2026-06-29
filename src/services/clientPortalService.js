@@ -122,17 +122,17 @@ export async function getClientReports(communityIds) {
     let q;
     if (chunk.length === 1) {
       q = query(
-        collection(db, 'reports'),
+        collection(db, 'checkIns'),
         where('communityId', '==', chunk[0]),
-        orderBy('createdAt', 'desc'),
-        limit(50)
+        orderBy('checkInTime', 'desc'),
+        limit(10)
       );
     } else {
       q = query(
-        collection(db, 'reports'),
+        collection(db, 'checkIns'),
         where('communityId', 'in', chunk),
-        orderBy('createdAt', 'desc'),
-        limit(50)
+        orderBy('checkInTime', 'desc'),
+        limit(10)
       );
     }
     const snap = await getDocs(q);
@@ -145,7 +145,8 @@ export async function getClientReports(communityIds) {
   const limitTime = thirtyDaysAgo.getTime();
 
   const filteredReports = reports.filter(r => {
-    const time = r.createdAt?.toDate ? r.createdAt.toDate().getTime() : new Date(r.createdAt).getTime();
+    const timestamp = r.checkInTime || r.createdAt;
+    const time = timestamp?.toDate ? timestamp.toDate().getTime() : new Date(timestamp).getTime();
     return time >= limitTime;
   });
 
@@ -184,14 +185,14 @@ export async function getClientEvidence(communityIds) {
         collection(db, 'evidenceReports'),
         where('communityId', '==', chunk[0]),
         orderBy('createdAt', 'desc'),
-        limit(50)
+        limit(10)
       );
     } else {
       q = query(
         collection(db, 'evidenceReports'),
         where('communityId', 'in', chunk),
         orderBy('createdAt', 'desc'),
-        limit(50)
+        limit(10)
       );
     }
     const snap = await getDocs(q);

@@ -79,10 +79,8 @@ service cloud.firestore {
     }
 
     match /communityTasks/{taskId} {
-      // Allow unauthenticated query if the target community has a valid portal token
-      allow list: if isAuthenticated() || 
-        get(/databases/$(database)/documents/communities/$(request.query.communityId)).data.portalToken != null;
-      allow get: if isAuthenticated();
+      allow list: if true;
+      allow get: if true;
       allow write: if isAdmin();
     }
 
@@ -137,10 +135,11 @@ service cloud.firestore {
     }
 
     match /checkIns/{checkInId} {
-      allow read: if isAuthenticated();
-      allow create: if isOwner(request.resource.data.userId);
-      allow update: if isAdmin() || isOwner(resource.data.userId);
-      allow delete: if isAdmin();
+      allow get: if true;
+      allow list: if true;
+      allow create: if isAuthenticated() && isOwner(request.resource.data.userId);
+      allow update: if isAuthenticated() && (isAdmin() || isOwner(resource.data.userId));
+      allow delete: if isAuthenticated() && isAdmin();
     }
 
     match /dailyMileage/{mileageId} {
@@ -160,7 +159,7 @@ service cloud.firestore {
     match /reports/{reportId} {
       allow list: if request.auth != null || 
         (request.query.limit <= 50 && 
-         get(/databases/$(database)/documents/communities/$(request.query.communityId)).data.portalToken != null);
+         get(/databases/$(database)/documents/communities/resource.data.communityId).data.portalToken != null);
       allow get: if isAdmin() || isOwner(resource.data.userId);
       allow create: if isOwner(request.resource.data.userId);
       allow update: if isAdmin() || isOwner(resource.data.userId);
@@ -244,10 +243,8 @@ service cloud.firestore {
     }
 
     match /evidenceReports/{reportId} {
-      allow list: if request.auth != null || 
-        (request.query.limit <= 50 && 
-         get(/databases/$(database)/documents/communities/$(request.query.communityId)).data.portalToken != null);
-      allow get: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow list: if true;
+      allow get: if true;
       allow create: if isAuthenticated();
       allow update, delete: if isAdmin();
     }
