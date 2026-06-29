@@ -154,30 +154,40 @@ export default function ClientPortalPage() {
               📍 {community?.address}
             </p>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
-            <div style={{ fontSize: '2rem', lineHeight: '1' }}>🏢</div>
-            <button 
-              onClick={() => setShowInstallModal(true)}
-              style={{ 
-                background: 'rgba(255, 255, 255, 0.15)', 
-                color: 'white', 
-                border: '1px solid rgba(255, 255, 255, 0.3)', 
-                borderRadius: '20px', 
-                padding: '4px 10px', 
-                fontSize: '10px', 
-                fontWeight: 'bold', 
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                whiteSpace: 'nowrap',
-                transition: 'background 0.2s',
-                fontFamily: 'inherit'
-              }}
-            >
-              📲 Guardar en Móvil
-            </button>
-          </div>
+          <div style={{ fontSize: '2rem' }}>🏢</div>
+        </div>
+
+        {/* Botón para guardar en inicio, posicionado más abajo y con mayor contraste */}
+        <div style={{ maxWidth: '640px', margin: '20px auto 0 auto', display: 'flex', justifyContent: 'flex-end' }}>
+          <button 
+            onClick={() => setShowInstallModal(true)}
+            style={{ 
+              background: '#ffffff', 
+              color: '#1e3a8a', 
+              border: 'none', 
+              borderRadius: '20px', 
+              padding: '6px 14px', 
+              fontSize: '11px', 
+              fontWeight: 'bold', 
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+              transition: 'transform 0.15s, background 0.15s',
+              fontFamily: 'inherit'
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.transform = 'scale(1.03)';
+              e.currentTarget.style.background = '#f8fafc';
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.transform = 'scale(1)';
+              e.currentTarget.style.background = '#ffffff';
+            }}
+          >
+            📲 Guardar en Móvil
+          </button>
         </div>
       </div>
 
