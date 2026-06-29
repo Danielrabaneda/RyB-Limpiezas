@@ -20,6 +20,7 @@ export default function ClientPortalPage() {
   const [operarios, setOperarios] = useState([]);
   
   const [activeTab, setActiveTab] = useState('visits'); // 'visits', 'evidence', 'tasks'
+  const [showInstallModal, setShowInstallModal] = useState(false);
 
   const showVisitTimes = community?.showVisitTimes !== false;
 
@@ -153,7 +154,30 @@ export default function ClientPortalPage() {
               📍 {community?.address}
             </p>
           </div>
-          <div style={{ fontSize: '2rem' }}>🏢</div>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+            <div style={{ fontSize: '2rem', lineHeight: '1' }}>🏢</div>
+            <button 
+              onClick={() => setShowInstallModal(true)}
+              style={{ 
+                background: 'rgba(255, 255, 255, 0.15)', 
+                color: 'white', 
+                border: '1px solid rgba(255, 255, 255, 0.3)', 
+                borderRadius: '20px', 
+                padding: '4px 10px', 
+                fontSize: '10px', 
+                fontWeight: 'bold', 
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                whiteSpace: 'nowrap',
+                transition: 'background 0.2s',
+                fontFamily: 'inherit'
+              }}
+            >
+              📲 Guardar en Móvil
+            </button>
+          </div>
         </div>
       </div>
 
@@ -447,6 +471,103 @@ export default function ClientPortalPage() {
         <p style={{ margin: '0 0 4px 0' }}>SaaS LimpiaGest para RyB Limpiezas</p>
         <p style={{ margin: '0' }}>© {new Date().getFullYear()} RyB Limpiezas. Todos los derechos reservados.</p>
       </footer>
+
+      {showInstallModal && (
+        <div style={{ 
+          position: 'fixed', 
+          top: 0, 
+          left: 0, 
+          right: 0, 
+          bottom: 0, 
+          background: 'rgba(15, 23, 42, 0.6)', 
+          backdropFilter: 'blur(4px)',
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center', 
+          zIndex: 9999, 
+          padding: '20px' 
+        }}>
+          <div style={{ 
+            background: 'white', 
+            borderRadius: '24px', 
+            width: '100%', 
+            maxWidth: '380px', 
+            padding: '24px', 
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            position: 'relative',
+            boxSizing: 'border-box'
+          }}>
+            {/* Close Button */}
+            <button 
+              onClick={() => setShowInstallModal(false)}
+              style={{ 
+                position: 'absolute', 
+                top: '16px', 
+                right: '16px', 
+                background: 'none', 
+                border: 'none', 
+                fontSize: '1.2rem', 
+                cursor: 'pointer', 
+                color: '#64748b' 
+              }}
+            >
+              ✕
+            </button>
+
+            {/* Title */}
+            <h3 style={{ margin: '0 0 12px 0', fontSize: '18px', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span>📲</span> Añadir acceso directo
+            </h3>
+            
+            <p style={{ margin: '0 0 20px 0', fontSize: '13px', color: '#64748b', lineHeight: '1.5' }}>
+              Guarda este portal en la pantalla de inicio de tu teléfono para acceder rápidamente como si fuera una aplicación instalada:
+            </p>
+
+            {/* Instructions container */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', textAlign: 'left' }}>
+              {/* Apple iOS */}
+              <div style={{ borderLeft: '3px solid #10b981', paddingLeft: '12px' }}>
+                <strong style={{ fontSize: '13px', color: '#0f172a', display: 'block', marginBottom: '4px' }}>🍏 iPhone / iPad (Safari):</strong>
+                <ol style={{ margin: 0, paddingLeft: '16px', fontSize: '12px', color: '#475569', lineHeight: '1.6' }}>
+                  <li>Pulsa el botón de <strong>Compartir</strong> (icono <span style={{ fontSize: '15px' }}>⎋</span> abajo en el navegador).</li>
+                  <li>Desplázate hacia abajo y selecciona <strong>"Añadir a la pantalla de inicio"</strong>.</li>
+                  <li>Pulsa <strong>"Añadir"</strong> arriba a la derecha.</li>
+                </ol>
+              </div>
+
+              {/* Android */}
+              <div style={{ borderLeft: '3px solid #3b82f6', paddingLeft: '12px' }}>
+                <strong style={{ fontSize: '13px', color: '#0f172a', display: 'block', marginBottom: '4px' }}>🤖 Android (Chrome):</strong>
+                <ol style={{ margin: 0, paddingLeft: '16px', fontSize: '12px', color: '#475569', lineHeight: '1.6' }}>
+                  <li>Pulsa el menú de <strong>tres puntos</strong> (arriba a la derecha <span style={{ fontSize: '15px' }}>⋮</span>).</li>
+                  <li>Selecciona <strong>"Añadir a la pantalla de inicio"</strong> o <strong>"Instalar aplicación"</strong>.</li>
+                  <li>Confirma pulsando <strong>"Añadir"</strong>.</li>
+                </ol>
+              </div>
+            </div>
+
+            {/* Close Button Bottom */}
+            <button 
+              onClick={() => setShowInstallModal(false)}
+              style={{ 
+                marginTop: '24px', 
+                width: '100%', 
+                background: '#1e3a8a', 
+                color: 'white', 
+                border: 'none', 
+                borderRadius: '12px', 
+                padding: '12px', 
+                fontSize: '13px', 
+                fontWeight: 'bold', 
+                cursor: 'pointer',
+                boxShadow: '0 4px 6px -1px rgba(30, 58, 138, 0.2)'
+              }}
+            >
+              Entendido
+            </button>
+          </div>
+        </div>
+      )}
 
     </div>
   );
