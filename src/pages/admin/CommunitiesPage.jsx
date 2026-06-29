@@ -1035,7 +1035,7 @@ export default function CommunitiesPage() {
                       <p style={{ margin: '0 0 16px 0', fontSize: '10px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Control de Calidad Digital</p>
                       
                       <img 
-                        src={`https://chart.googleapis.com/chart?chs=160x160&cht=qr&chl=${encodeURIComponent(`${window.location.origin}/portal/${selectedCommunity.portalToken}`)}`}
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(`${window.location.origin}/portal/${selectedCommunity.portalToken}`)}`}
                         alt="Código QR de Acceso" 
                         style={{ width: '160px', height: '160px', border: '1px solid #e2e8f0', padding: '4px', background: 'white' }}
                       />
@@ -1075,7 +1075,7 @@ export default function CommunitiesPage() {
                               <div class="poster">
                                 <div class="title">RyB Limpiezas</div>
                                 <div class="subtitle">Control de Calidad Digital</div>
-                                <img src="https://chart.googleapis.com/chart?chs=200x200&cht=qr&chl=${encodeURIComponent(`${window.location.origin}/portal/${selectedCommunity.portalToken}`)}" class="qr-img" />
+                                <img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`${window.location.origin}/portal/${selectedCommunity.portalToken}`)}" class="qr-img" />
                                 <div class="comm-name">${selectedCommunity.name}</div>
                                 <p class="instructions">Escanee este código con su móvil para consultar el histórico de visitas, tareas y fotos de evidencias de los últimos 30 días de este edificio.</p>
                                 <div class="footer">Sistema LimpiaGest - RyB Limpiezas</div>
