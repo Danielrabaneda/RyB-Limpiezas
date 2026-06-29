@@ -5,6 +5,8 @@ import { getCommunityTasks } from '../../services/taskService';
 import { getOperarios } from '../../services/authService';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { signInAnonymously } from 'firebase/auth';
+import { auth } from '../../config/firebase';
 
 export default function ClientPortalPage() {
   const { token } = useParams();
@@ -24,6 +26,15 @@ export default function ClientPortalPage() {
       setLoading(true);
       setError(null);
       try {
+        // Asegurar autenticación anónima para evitar límites de lectura de reglas de Firestore
+        try {
+          if (!auth.currentUser) {
+            await signInAnonymously(auth);
+          }
+        } catch (authErr) {
+          console.warn('Advertencia: No se pudo iniciar sesión de forma anónima. Intentando cargar datos de forma pública.', authErr);
+        }
+
         // 1. Validar el token y obtener la comunidad
         const commData = await getCommunityByPortalToken(token);
         if (!commData) {
