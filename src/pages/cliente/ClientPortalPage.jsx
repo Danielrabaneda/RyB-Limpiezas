@@ -308,44 +308,88 @@ export default function ClientPortalPage() {
 
         {/* Pestaña: Evidencias Fotográficas */}
         {activeTab === 'evidence' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             {evidence.length === 0 ? (
-              <div style={{ background: 'white', padding: '32px 16px', borderRadius: '16px', textAlign: 'center', border: '1px solid #e2e8f0' }}>
-                <div style={{ fontSize: '2rem', marginBottom: '8px' }}>📸</div>
-                <h4 style={{ margin: '0 0 4px 0', fontWeight: 'bold', color: '#0f172a' }}>Sin evidencias</h4>
+              <div style={{ background: 'white', padding: '48px 16px', borderRadius: '16px', textAlign: 'center', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+                <div style={{ fontSize: '3rem', marginBottom: '12px' }}>📸</div>
+                <h4 style={{ margin: '0 0 4px 0', fontWeight: 'bold', color: '#0f172a', fontSize: '16px' }}>Sin evidencias</h4>
                 <p style={{ margin: '0', fontSize: '13px', color: '#64748b' }}>No se han subido fotos de evidencias en los últimos 30 días.</p>
               </div>
             ) : (
-              evidence.map(ev => (
-                <div key={ev.id} style={{ background: 'white', borderRadius: '16px', overflow: 'hidden', border: '1px solid #e2e8f0' }}>
-                  {/* Photo Container */}
-                  <div style={{ position: 'relative', background: '#0f172a', display: 'flex', justifyContent: 'center' }}>
-                    <img 
-                      src={ev.photoUrl} 
-                      alt={ev.taskName} 
-                      style={{ maxWidth: '100%', maxHeight: '320px', objectFit: 'contain' }}
-                    />
-                    <div style={{ position: 'absolute', bottom: '8px', left: '8px', background: 'rgba(15,23,42,0.85)', color: 'white', padding: '4px 8px', borderRadius: '4px', fontSize: '9px', fontWeight: 'bold', fontFamily: 'monospace' }}>
-                      📍 GPS Verificado
+              evidence.map(ev => {
+                const urls = ev.photoUrls && ev.photoUrls.length > 0 ? ev.photoUrls : (ev.photoUrl ? [ev.photoUrl] : []);
+                return (
+                  <div key={ev.id} style={{ background: 'white', borderRadius: '20px', padding: '16px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02), 0 2px 4px -1px rgba(0,0,0,0.01)' }}>
+                    {/* Header Info */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                      <div>
+                        <h4 style={{ margin: '0 0 2px 0', fontSize: '15px', fontWeight: 'bold', color: '#0f172a' }}>{ev.taskName || 'Limpieza General'}</h4>
+                        <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '500' }}>
+                          {getFormattedDate(ev.createdAt)}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#16a34a', padding: '4px 8px', borderRadius: '12px', fontSize: '10px', fontWeight: 'bold' }}>
+                        <span>📍</span> GPS Verificado
+                      </div>
                     </div>
-                  </div>
-                  {/* Info Card */}
-                  <div style={{ padding: '16px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                      <h4 style={{ margin: '0', fontSize: '15px', fontWeight: 'bold', color: '#0f172a' }}>{ev.taskName || 'Limpieza General'}</h4>
-                      <span style={{ fontSize: '11px', color: '#64748b' }}>{getFormattedDate(ev.createdAt)}</span>
-                    </div>
-                    {ev.notes && (
-                      <p style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#475569', background: '#f8fafc', padding: '8px 12px', borderRadius: '8px', borderLeft: '3px solid #cbd5e1' }}>
-                        "{ev.notes}"
-                      </p>
+
+                    {/* Photos Gallery */}
+                    {urls.length > 0 ? (
+                      <div style={{ 
+                        display: 'grid', 
+                        gridTemplateColumns: urls.length === 1 ? '1fr' : urls.length === 2 ? '1fr 1fr' : 'repeat(auto-fit, minmax(140px, 1fr))',
+                        gap: '8px',
+                        marginBottom: '12px',
+                        borderRadius: '12px',
+                        overflow: 'hidden'
+                      }}>
+                        {urls.map((url, i) => (
+                          <div 
+                            key={i} 
+                            style={{ 
+                              position: 'relative', 
+                              height: urls.length === 1 ? '240px' : '140px',
+                              cursor: 'pointer',
+                              overflow: 'hidden',
+                              background: '#f1f5f9',
+                              border: '1px solid #e2e8f0',
+                              borderRadius: '8px'
+                            }}
+                            onClick={() => window.open(url, '_blank')}
+                            title="Haga clic para ver en tamaño completo"
+                          >
+                            <img 
+                              src={url} 
+                              alt={`${ev.taskName || 'Evidencia'} ${i + 1}`} 
+                              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                            />
+                            <div style={{ position: 'absolute', top: '8px', right: '8px', background: 'rgba(15,23,42,0.6)', color: 'white', width: '24px', height: '24px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px' }}>
+                              🔍
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div style={{ background: '#f8fafc', padding: '24px', borderRadius: '12px', textAlign: 'center', border: '1px dashed #cbd5e1', marginBottom: '12px', color: '#64748b', fontSize: '12px' }}>
+                        📷 No se adjuntó imagen
+                      </div>
                     )}
-                    <div style={{ fontSize: '11px', color: '#94a3b8' }}>
-                      Realizado por: {ev.operarioName || 'Limpiador RyB'}
+
+                    {/* Notes */}
+                    {ev.notes && (
+                      <div style={{ background: '#f8fafc', borderLeft: '4px solid #3b82f6', padding: '10px 14px', borderRadius: '0 8px 8px 0', fontSize: '13px', color: '#334155', fontStyle: 'italic', marginBottom: '12px' }}>
+                        "{ev.notes}"
+                      </div>
+                    )}
+
+                    {/* Footer / Operario */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '12px', borderTop: '1px solid #f1f5f9', fontSize: '11px', color: '#64748b' }}>
+                      <div>Realizado por: <strong style={{ color: '#475569' }}>{ev.operarioName || ev.userName || 'Limpiador RyB'}</strong></div>
+                      <div style={{ background: '#f1f5f9', padding: '2px 8px', borderRadius: '10px', fontSize: '10px', fontWeight: '600' }}>Evidencia digital</div>
                     </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         )}
