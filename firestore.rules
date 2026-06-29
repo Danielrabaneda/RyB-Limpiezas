@@ -66,8 +66,9 @@ service cloud.firestore {
     // COMMUNITIES & TASKS (Global Config)
     // -------------------------------------------------------------------------
     match /communities/{communityId} {
-      // Only authenticated users can read communities
-      allow read: if isAuthenticated();
+      // Only authenticated users can read communities, except for public get request if portal token is active
+      allow get: if isAuthenticated() || resource.data.portalToken != null;
+      allow list: if isAuthenticated();
       // Only admins manage communities
       allow write: if isAdmin();
     }
@@ -78,7 +79,10 @@ service cloud.firestore {
     }
 
     match /communityTasks/{taskId} {
-      allow read: if isAuthenticated();
+      // Allow unauthenticated query if the target community has a valid portal token
+      allow list: if isAuthenticated() || 
+        get(/databases/$(database)/documents/communities/$(request.query.communityId)).data.portalToken != null;
+      allow get: if isAuthenticated();
       allow write: if isAdmin();
     }
 

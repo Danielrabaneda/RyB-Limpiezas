@@ -35,10 +35,22 @@ export default function ClientPortalPage() {
 
         // 2. Cargar reportes, evidencias, tareas y operarios en paralelo
         const [repsData, evsData, tsksData, opsData] = await Promise.all([
-          getClientReports([commData.id]),
-          getClientEvidence([commData.id]),
-          getCommunityTasks(commData.id),
-          getOperarios()
+          getClientReports([commData.id]).catch(err => {
+            console.error('Error cargando reportes:', err);
+            return [];
+          }),
+          getClientEvidence([commData.id]).catch(err => {
+            console.error('Error cargando evidencias:', err);
+            return [];
+          }),
+          getCommunityTasks(commData.id).catch(err => {
+            console.error('Error cargando tareas:', err);
+            return [];
+          }),
+          getOperarios().catch(err => {
+            console.warn('No se pudieron cargar los operarios:', err);
+            return [];
+          })
         ]);
 
         setReports(repsData || []);

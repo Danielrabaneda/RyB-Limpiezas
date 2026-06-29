@@ -1,5 +1,5 @@
 import { 
-  collection, doc, getDoc, getDocs, query, where, orderBy,
+  collection, doc, getDoc, getDocs, query, where, orderBy, limit,
   writeBatch, serverTimestamp, deleteDoc, setDoc, updateDoc, Timestamp
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
@@ -119,11 +119,22 @@ export async function getClientReports(communityIds) {
 
   for (let i = 0; i < communityIds.length; i += CHUNK_LIMIT) {
     const chunk = communityIds.slice(i, i + CHUNK_LIMIT);
-    const q = query(
-      collection(db, 'reports'),
-      where('communityId', 'in', chunk),
-      orderBy('createdAt', 'desc')
-    );
+    let q;
+    if (chunk.length === 1) {
+      q = query(
+        collection(db, 'reports'),
+        where('communityId', '==', chunk[0]),
+        orderBy('createdAt', 'desc'),
+        limit(50)
+      );
+    } else {
+      q = query(
+        collection(db, 'reports'),
+        where('communityId', 'in', chunk),
+        orderBy('createdAt', 'desc'),
+        limit(50)
+      );
+    }
     const snap = await getDocs(q);
     snap.docs.forEach(d => reports.push({ id: d.id, ...d.data() }));
   }
@@ -167,11 +178,22 @@ export async function getClientEvidence(communityIds) {
 
   for (let i = 0; i < communityIds.length; i += CHUNK_LIMIT) {
     const chunk = communityIds.slice(i, i + CHUNK_LIMIT);
-    const q = query(
-      collection(db, 'evidenceReports'),
-      where('communityId', 'in', chunk),
-      orderBy('createdAt', 'desc')
-    );
+    let q;
+    if (chunk.length === 1) {
+      q = query(
+        collection(db, 'evidenceReports'),
+        where('communityId', '==', chunk[0]),
+        orderBy('createdAt', 'desc'),
+        limit(50)
+      );
+    } else {
+      q = query(
+        collection(db, 'evidenceReports'),
+        where('communityId', 'in', chunk),
+        orderBy('createdAt', 'desc'),
+        limit(50)
+      );
+    }
     const snap = await getDocs(q);
     snap.docs.forEach(d => evidences.push({ id: d.id, ...d.data() }));
   }
