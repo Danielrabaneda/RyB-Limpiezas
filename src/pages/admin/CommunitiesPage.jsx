@@ -10,7 +10,7 @@ import { transferPermanent } from '../../services/transferService';
 import { useAuth } from '../../contexts/AuthContext';
 import TransferModal from '../../components/TransferModal';
 import GarageYearlyView from '../../components/GarageYearlyView';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { uploadDocument, getCommunityGuides, deleteDocument } from '../../services/documentVaultService';
 import { uploadPhoto } from '../../services/storageService';
@@ -1008,6 +1008,33 @@ export default function CommunitiesPage() {
                         📋 Copiar
                       </button>
                     </div>
+                  </div>
+
+                  {/* Option to show/hide visit times */}
+                  <div className="flex items-center gap-2" style={{ padding: '8px 12px', background: 'var(--color-bg)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', marginTop: '-4px' }}>
+                    <input 
+                      type="checkbox" 
+                      id="show-visit-times-checkbox"
+                      checked={selectedCommunity.showVisitTimes !== false}
+                      onChange={async () => {
+                        const newValue = !(selectedCommunity.showVisitTimes !== false);
+                        try {
+                          const communityRef = doc(db, 'communities', selectedCommunity.id);
+                          await updateDoc(communityRef, { showVisitTimes: newValue });
+                          
+                          const updated = { ...selectedCommunity, showVisitTimes: newValue };
+                          setSelectedCommunity(updated);
+                          setCommunities(prev => prev.map(c => c.id === selectedCommunity.id ? updated : c));
+                        } catch (err) {
+                          console.error('Error al actualizar opciones del portal:', err);
+                          alert('Error al guardar configuración: ' + err.message);
+                        }
+                      }}
+                      style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                    />
+                    <label htmlFor="show-visit-times-checkbox" className="text-xs font-bold text-slate-700 cursor-pointer" style={{ margin: 0 }}>
+                      Mostrar entrada, salida y duración en el portal público
+                    </label>
                   </div>
 
                   {/* QR Code Printable Section */}
