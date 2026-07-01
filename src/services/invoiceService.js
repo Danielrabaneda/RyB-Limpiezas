@@ -3,7 +3,9 @@ import {
   query, where, orderBy, limit, serverTimestamp, runTransaction, setDoc,
   writeBatch
 } from 'firebase/firestore';
-import { db } from '../config/firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { httpsCallable } from 'firebase/functions';
+import { db, storage, functions } from '../config/firebase';
 import { getCommunities } from './communityService';
 
 const COLLECTION = 'invoices';
@@ -26,7 +28,14 @@ const DEFAULT_SETTINGS = {
   useSaveAsDialog: false,
   seqMode: 'manual',
   issueDateMode: 'today',
-  customIssueDate: ''
+  customIssueDate: '',
+  smtpHost: '',
+  smtpPort: '587',
+  smtpSecure: false,
+  smtpEmail: '',
+  smtpPassword: '',
+  emailSubjectTemplate: 'Factura {numero} - RyB Limpiezas',
+  emailBodyTemplate: '<p>Hola,</p><p>Le adjuntamos la factura <strong>{numero}</strong> correspondiente al servicio de limpieza de la comunidad <strong>{comunidad}</strong>.</p><p>Atentamente,<br/>RyB Limpiezas</p>'
 };
 
 export async function getBillingSettings() {
@@ -323,5 +332,22 @@ export async function emitAllInvoices(ids) {
       nextInvoiceSeq: nextSeq
     });
   });
+}
+
+export async function uploadInvoicePDFToStorage(invoiceId, pdfBlob, filename) {
+  const path = `invoices/${invoiceId}/${filename}`;
+  const storageRef = ref(storage, path);
+  const metadata = {
+    contentType: 'application/pdf'
+  };
+  await uploadBytes(storageRef, pdfBlob, metadata);
+  const url = await getDownloadURL(storageRef);
+  return url;
+}
+
+export async function sendInvoiceEmails(invoiceIds) {
+  const fn = httpsCallable(functions, 'sendInvoiceEmails');
+  const result = await fn({ invoiceIds });
+  return result.data;
 }
 

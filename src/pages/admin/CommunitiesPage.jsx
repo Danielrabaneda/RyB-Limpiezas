@@ -95,6 +95,11 @@ export default function CommunitiesPage() {
       const [comms, ops] = await Promise.all([getCommunities(), getOperarios()]);
       setCommunities(comms || []);
       setOperarios(ops || []);
+      setSelectedCommunity(current => {
+        if (!current) return null;
+        const fresh = comms.find(c => c.id === current.id);
+        return fresh ? { ...current, ...fresh } : current;
+      });
     } catch (err) {
       console.error("Error loading communities data:", err);
       alert('Error crítico al cargar datos: ' + err.message);
@@ -322,6 +327,19 @@ export default function CommunitiesPage() {
   async function handleSaveCommunity(e) {
     e.preventDefault();
     try {
+      let finalBillingEmail = form.billingEmail || '';
+      const emailInput = document.getElementById('new-billing-email');
+      if (emailInput && emailInput.value.trim()) {
+        const val = emailInput.value.trim().replace(/[,;]/g, '');
+        if (val && val.includes('@')) {
+          const list = finalBillingEmail.split(/[,;]/).map(x => x.trim()).filter(Boolean);
+          if (!list.includes(val)) {
+            list.push(val);
+            finalBillingEmail = list.join(', ');
+          }
+        }
+      }
+
       const communityData = {
         name: form.name,
         address: form.address,
@@ -336,7 +354,7 @@ export default function CommunitiesPage() {
         billingAddress: form.billingAddress || '',
         basePrice: parseFloat(form.basePrice) || 0,
         paymentMethod: form.paymentMethod || 'transferencia',
-        billingEmail: form.billingEmail || '',
+        billingEmail: finalBillingEmail,
       };
 
       if (editingCommunity) {
@@ -584,8 +602,8 @@ export default function CommunitiesPage() {
 
   return (
     <div className="animate-fadeIn">
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+        <div className="flex flex-wrap items-center gap-3">
           <h2 style={{ fontSize: 'var(--font-2xl)', fontWeight: 800 }}>Comunidades</h2>
           <div className="flex items-center gap-2">
             <button 
@@ -610,7 +628,7 @@ export default function CommunitiesPage() {
       </div>
 
       {activeTab === 'list' ? (
-        <div className="grid" style={{ gridTemplateColumns: '1fr 1.5fr', gap: 'var(--space-6)' }}>
+        <div className="grid communities-grid">
         {/* Community list */}
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{ padding: 'var(--space-4) var(--space-5)', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -1341,7 +1359,7 @@ export default function CommunitiesPage() {
 
                 <div className="form-group" style={{ padding: 'var(--space-4)', background: '#f8fafc', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', marginTop: '12px' }}>
                   <h4 style={{ fontWeight: 'bold', fontSize: '0.9rem', marginBottom: '10px', color: 'var(--color-primary)' }}>📄 Datos de Facturación</h4>
-                  <div className="form-row mb-3" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                  <div className="form-row mb-3">
                     <div>
                       <label className="form-label">CIF/NIF Comunidad</label>
                       <input 
@@ -1366,16 +1384,87 @@ export default function CommunitiesPage() {
                     </div>
                   </div>
 
-                  <div className="form-row mb-3" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                  <div className="form-row mb-3">
                     <div>
-                      <label className="form-label">Email de Facturación</label>
-                      <input 
-                        type="email" 
-                        className="form-input" 
-                        placeholder="Ej: admin@comunidad.com"
-                        value={form.billingEmail || ''}
-                        onChange={e => setForm(f => ({...f, billingEmail: e.target.value}))}
-                      />
+                      <label className="form-label">Email de Facturación (Múltiples permitidos)</label>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {/* chips */}
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                          {(form.billingEmail || '').split(/[,;]/).map(e => e.trim()).filter(Boolean).map((email, idx) => (
+                            <span 
+                              key={idx} 
+                              style={{ 
+                                display: 'inline-flex', 
+                                alignItems: 'center', 
+                                gap: '4px', 
+                                background: '#e2e8f0', 
+                                color: '#334155', 
+                                padding: '2px 8px', 
+                                borderRadius: '12px', 
+                                fontSize: '11px',
+                                fontWeight: '500' 
+                              }}
+                            >
+                              {email}
+                              <button 
+                                type="button" 
+                                style={{ border: 'none', background: 'transparent', color: '#64748b', cursor: 'pointer', padding: '0 2px', fontWeight: 'bold' }}
+                                onClick={() => {
+                                  const list = (form.billingEmail || '').split(/[,;]/).map(e => e.trim()).filter(Boolean);
+                                  list.splice(idx, 1);
+                                  setForm(f => ({ ...f, billingEmail: list.join(', ') }));
+                                }}
+                              >
+                                ✕
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                        {/* input + add */}
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          <input 
+                            type="text" 
+                            className="form-input" 
+                            placeholder="Escribe un email y pulsa Enter o ➕..."
+                            id="new-billing-email"
+                            onKeyDown={e => {
+                              if (e.key === 'Enter' || e.key === ',' || e.key === ';') {
+                                e.preventDefault();
+                                const val = e.target.value.trim().replace(/[,;]/g, '');
+                                if (val && val.includes('@')) {
+                                  const list = (form.billingEmail || '').split(/[,;]/).map(e => e.trim()).filter(Boolean);
+                                  if (!list.includes(val)) {
+                                    list.push(val);
+                                    setForm(f => ({ ...f, billingEmail: list.join(', ') }));
+                                  }
+                                  e.target.value = '';
+                                }
+                              }
+                            }}
+                          />
+                          <button 
+                            type="button"
+                            className="btn btn-secondary"
+                            style={{ padding: '6px 12px', fontSize: '13px' }}
+                            onClick={() => {
+                              const input = document.getElementById('new-billing-email');
+                              if (input) {
+                                const val = input.value.trim();
+                                if (val && val.includes('@')) {
+                                  const list = (form.billingEmail || '').split(/[,;]/).map(e => e.trim()).filter(Boolean);
+                                  if (!list.includes(val)) {
+                                    list.push(val);
+                                    setForm(f => ({ ...f, billingEmail: list.join(', ') }));
+                                  }
+                                  input.value = '';
+                                }
+                              }
+                            }}
+                          >
+                            ➕
+                          </button>
+                        </div>
+                      </div>
                     </div>
                     <div>
                       <label className="form-label">Método de Pago</label>

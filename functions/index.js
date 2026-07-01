@@ -7,10 +7,13 @@
  */
 
 const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, Timestamp, FieldValue } = require("firebase-admin/firestore");
 const { getMessaging } = require("firebase-admin/messaging");
+const { getStorage } = require("firebase-admin/storage");
+const nodemailer = require("nodemailer");
 
 // Inicializar Firebase Admin
 initializeApp();
@@ -515,6 +518,155 @@ exports.cleanupStaleFcmTokens = onSchedule(
       logger.error("Error fatal en cleanupStaleFcmTokens:", error);
       throw error;
     }
+  }
+);
+
+exports.sendInvoiceEmails = onCall(
+  {
+    region: "europe-west1",
+    memory: "256MiB",
+    timeoutSeconds: 120,
+  },
+  async (request) => {
+    // 1. Authenticate user
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión para realizar esta acción.");
+    }
+
+    const { invoiceIds } = request.data;
+    if (!invoiceIds || !Array.isArray(invoiceIds)) {
+      throw new HttpsError("invalid-argument", "El argumento 'invoiceIds' debe ser una lista.");
+    }
+
+    logger.info(`[sendInvoiceEmails] Iniciando proceso de envío de correos para ${invoiceIds.length} facturas. Solicitado por: ${request.auth.uid}`);
+
+    // Verify user role is admin
+    const userDoc = await db.collection("users").doc(request.auth.uid).get();
+    if (!userDoc.exists || userDoc.data().role !== "admin") {
+      throw new HttpsError("permission-denied", "No tienes permisos de administrador para realizar esta acción.");
+    }
+
+    // Load billing settings for SMTP configuration
+    const billingSettingsSnap = await db.collection("settings").doc("billing").get();
+    if (!billingSettingsSnap.exists) {
+      throw new HttpsError("failed-precondition", "La configuración de facturación no existe.");
+    }
+    const billingSettings = billingSettingsSnap.data();
+
+    if (!billingSettings.smtpHost || !billingSettings.smtpEmail || !billingSettings.smtpPassword) {
+      throw new HttpsError("failed-precondition", "La configuración SMTP está incompleta. Por favor configúrala en Ajustes.");
+    }
+
+    // Configure Nodemailer Transport
+    const transporter = nodemailer.createTransport({
+      host: billingSettings.smtpHost,
+      port: parseInt(billingSettings.smtpPort) || 587,
+      secure: billingSettings.smtpSecure || false, // true for port 465, false for 587/others
+      auth: {
+        user: billingSettings.smtpEmail,
+        pass: billingSettings.smtpPassword,
+      },
+    });
+
+    const results = [];
+
+    // Process each invoice
+    for (const invoiceId of invoiceIds) {
+      try {
+        const invoiceRef = db.collection("invoices").doc(invoiceId);
+        const invoiceDoc = await invoiceRef.get();
+        if (!invoiceDoc.exists) {
+          results.push({ id: invoiceId, status: "error", error: "La factura no existe" });
+          continue;
+        }
+
+        const inv = invoiceDoc.data();
+        if (!inv.pdfStoragePath) {
+          results.push({ id: invoiceId, status: "error", error: "La factura no tiene PDF generado y subido a almacenamiento." });
+          continue;
+        }
+
+        const rawEmails = inv.client?.email || inv.clientEmail || "";
+        const emailList = rawEmails.split(/[,;]/).map(e => e.trim()).filter(Boolean);
+        if (emailList.length === 0) {
+          results.push({ id: invoiceId, status: "error", error: "No hay correos destinatarios definidos para esta factura." });
+          continue;
+        }
+
+        // Download PDF from storage
+        const bucket = getStorage().bucket();
+        const file = bucket.file(inv.pdfStoragePath);
+        
+        logger.info(`[sendInvoiceEmails] Descargando PDF desde Storage: ${inv.pdfStoragePath}`);
+        const [pdfBuffer] = await file.download();
+
+        // Prepare email variables
+        const numFact = inv.invoiceNumber || "Borrador";
+        const communityName = inv.client?.name || "Comunidad";
+        const pdfMonthNames = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+        const mesName = pdfMonthNames[inv.month] || "";
+        const anio = String(inv.year || new Date().getFullYear());
+
+        // Template replacement helper
+        const replaceTemplates = (text) => {
+          if (!text) return "";
+          return text
+            .replace(/{numero}/g, numFact)
+            .replace(/{comunidad}/g, communityName)
+            .replace(/{mes}/g, mesName)
+            .replace(/{año}/g, anio)
+            .replace(/{a\u00f1o}/g, anio);
+        };
+
+        const subject = replaceTemplates(billingSettings.emailSubjectTemplate || "Factura {numero} - RyB Limpiezas");
+        const bodyHtml = replaceTemplates(billingSettings.emailBodyTemplate || `<p>Hola,</p><p>Le adjuntamos la factura <strong>{numero}</strong> de la comunidad <strong>{comunidad}</strong>.</p>`);
+
+        // Filename format (same as browser or simple fallback)
+        const filename = inv.pdfStoragePath.split("/").pop() || `Factura_${numFact}.pdf`;
+
+        // Send Email
+        logger.info(`[sendInvoiceEmails] Enviando factura ${numFact} a ${emailList.join(", ")}`);
+        await transporter.sendMail({
+          from: `"${billingSettings.companyName || "RyB Limpiezas"}" <${billingSettings.smtpEmail}>`,
+          to: emailList,
+          subject: subject,
+          html: bodyHtml,
+          attachments: [
+            {
+              filename: filename,
+              content: pdfBuffer,
+              contentType: "application/pdf",
+            },
+          ],
+        });
+
+        // Update invoice sent status in Firestore
+        await invoiceRef.update({
+          emailSent: true,
+          emailSentAt: FieldValue.serverTimestamp(),
+          emailSentError: null,
+        });
+
+        results.push({ id: invoiceId, status: "success" });
+        logger.info(`[sendInvoiceEmails] Factura ${numFact} enviada correctamente.`);
+
+      } catch (err) {
+        logger.error(`[sendInvoiceEmails] Error enviando factura ${invoiceId}:`, err);
+        
+        // Save error status to document
+        try {
+          await db.collection("invoices").doc(invoiceId).update({
+            emailSentError: err.message || String(err),
+          });
+        } catch (dbErr) {
+          logger.error(`[sendInvoiceEmails] Error actualizando error de envío en DB para ${invoiceId}:`, dbErr);
+        }
+
+        results.push({ id: invoiceId, status: "error", error: err.message || String(err) });
+      }
+    }
+
+    return { results };
   }
 );
 

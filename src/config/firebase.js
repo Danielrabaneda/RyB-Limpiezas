@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, enableIndexedDbPersistence } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
+import { getFunctions } from 'firebase/functions';
 
 export const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -28,4 +29,5 @@ if (typeof window !== 'undefined') {
 }
 
 export const storage = getStorage(app);
+export const functions = getFunctions(app, 'europe-west1');
 export default app;

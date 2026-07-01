@@ -4,6 +4,7 @@ import { doc, updateDoc, getDoc, setDoc } from 'firebase/firestore';
 import { updateEmail, updatePassword } from 'firebase/auth';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, auth, storage } from '../../config/firebase';
+import { getBillingSettings, saveBillingSettings } from '../../services/invoiceService';
 
 export default function SettingsPage() {
   const { currentUser, userProfile } = useAuth();
@@ -49,6 +50,55 @@ export default function SettingsPage() {
     }
     fetchSettings();
   }, []);
+
+  // SMTP state
+  const [smtpSettings, setSmtpSettings] = useState({
+    smtpHost: '',
+    smtpPort: '587',
+    smtpSecure: false,
+    smtpEmail: '',
+    smtpPassword: '',
+    emailSubjectTemplate: 'Factura {numero} - RyB Limpiezas',
+    emailBodyTemplate: ''
+  });
+  const [smtpLoading, setSmtpLoading] = useState(false);
+  const [smtpMsg, setSmtpMsg] = useState('');
+
+  useEffect(() => {
+    // Load SMTP settings
+    async function fetchSmtpSettings() {
+      try {
+        const settings = await getBillingSettings();
+        setSmtpSettings({
+          smtpHost: settings.smtpHost || '',
+          smtpPort: settings.smtpPort || '587',
+          smtpSecure: settings.smtpSecure || false,
+          smtpEmail: settings.smtpEmail || '',
+          smtpPassword: settings.smtpPassword || '',
+          emailSubjectTemplate: settings.emailSubjectTemplate || 'Factura {numero} - RyB Limpiezas',
+          emailBodyTemplate: settings.emailBodyTemplate || ''
+        });
+      } catch (e) {
+        console.error("No se pudo cargar la configuración SMTP", e);
+      }
+    }
+    fetchSmtpSettings();
+  }, []);
+
+  const handleUpdateSmtp = async (e) => {
+    e.preventDefault();
+    setSmtpLoading(true);
+    setSmtpMsg('');
+    try {
+      await saveBillingSettings(smtpSettings);
+      setSmtpMsg('Configuración de correo SMTP actualizada correctamente.');
+    } catch (err) {
+      console.error(err);
+      setSmtpMsg('Error al actualizar SMTP: ' + err.message);
+    } finally {
+      setSmtpLoading(false);
+    }
+  };
 
   const handleUpdateProfile = async (e) => {
     e.preventDefault();
@@ -265,6 +315,113 @@ export default function SettingsPage() {
 
             <button type="submit" className="btn btn-primary" disabled={profileLoading}>
               {profileLoading ? 'Guardando...' : 'Actualizar perfil'}
+            </button>
+          </form>
+        </div>
+
+        {/* SMTP Configuration Card */}
+        <div className="card" style={{ gridColumn: 'span 2' }}>
+          <h3 style={{ fontSize: 'var(--font-xl)', fontWeight: 700, marginBottom: 'var(--space-4)' }}>📧 Configuración de Correo de la Empresa (SMTP)</h3>
+          <form onSubmit={handleUpdateSmtp} className="flex flex-col gap-4">
+            <div className="grid grid-2 gap-4">
+              <div className="form-group">
+                <label className="form-label">Servidor SMTP (Host)</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  placeholder="smtp.gmail.com"
+                  value={smtpSettings.smtpHost} 
+                  onChange={e => setSmtpSettings({...smtpSettings, smtpHost: e.target.value})} 
+                  required 
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Puerto SMTP</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  placeholder="587"
+                  value={smtpSettings.smtpPort} 
+                  onChange={e => setSmtpSettings({...smtpSettings, smtpPort: e.target.value})} 
+                  required 
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Email de la Empresa (Usuario SMTP)</label>
+                <input 
+                  type="email" 
+                  className="form-input" 
+                  placeholder="facturas@empresa.com"
+                  value={smtpSettings.smtpEmail} 
+                  onChange={e => setSmtpSettings({...smtpSettings, smtpEmail: e.target.value})} 
+                  required 
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Contraseña SMTP / Contraseña de Aplicación</label>
+                <input 
+                  type="password" 
+                  className="form-input" 
+                  placeholder="••••••••••••••••"
+                  value={smtpSettings.smtpPassword} 
+                  onChange={e => setSmtpSettings({...smtpSettings, smtpPassword: e.target.value})} 
+                  required 
+                />
+              </div>
+
+              <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <input 
+                    type="checkbox" 
+                    id="smtp-secure" 
+                    checked={smtpSettings.smtpSecure} 
+                    onChange={e => setSmtpSettings({...smtpSettings, smtpSecure: e.target.checked})} 
+                    style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                  />
+                  <label htmlFor="smtp-secure" className="form-label mb-0 cursor-pointer" style={{ userSelect: 'none' }}>
+                    <strong>Usar conexión segura SSL/TLS</strong> (Activar para puerto 465, desactivar para puerto 587 u otros)
+                  </label>
+                </div>
+              </div>
+
+              <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                <label className="form-label">Plantilla del Asunto del Correo</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  placeholder="Factura {numero} - RyB Limpiezas"
+                  value={smtpSettings.emailSubjectTemplate} 
+                  onChange={e => setSmtpSettings({...smtpSettings, emailSubjectTemplate: e.target.value})} 
+                  required 
+                />
+                <small style={{ color: 'var(--text-muted)' }}>Puedes usar variables dinámicas: <code>{`{numero}`}</code>, <code>{`{comunidad}`}</code>, <code>{`{mes}`}</code>, <code>{`{año}`}</code></small>
+              </div>
+
+              <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                <label className="form-label">Plantilla del Cuerpo del Correo (Soporta HTML)</label>
+                <textarea 
+                  className="form-textarea" 
+                  rows="4" 
+                  placeholder="<p>Estimado cliente,</p><p>Le adjuntamos la factura...</p>"
+                  value={smtpSettings.emailBodyTemplate} 
+                  onChange={e => setSmtpSettings({...smtpSettings, emailBodyTemplate: e.target.value})} 
+                  required 
+                />
+                <small style={{ color: 'var(--text-muted)' }}>Puedes usar variables dinámicas: <code>{`{numero}`}</code>, <code>{`{comunidad}`}</code>, <code>{`{mes}`}</code>, <code>{`{año}`}</code></small>
+              </div>
+            </div>
+
+            {smtpMsg && (
+              <div className={`p-3 rounded text-sm ${smtpMsg.includes('Error') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
+                {smtpMsg}
+              </div>
+            )}
+
+            <button type="submit" className="btn btn-primary" disabled={smtpLoading}>
+              {smtpLoading ? 'Guardando...' : 'Guardar Ajustes de Correo'}
             </button>
           </form>
         </div>

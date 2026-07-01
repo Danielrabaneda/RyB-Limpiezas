@@ -1397,7 +1397,7 @@ body.keyboard-open .operario-bottom-nav {
   }
 
   .grid-2 {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: 1fr;
   }
 
   .grid-3, .grid-4 {
@@ -1455,7 +1455,7 @@ body.keyboard-open .operario-bottom-nav {
   }
 
   .grid-2, .grid-3, .grid-4 {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: 1fr;
   }
 
   .stat-card {
@@ -2274,4 +2274,46 @@ body.loaded {
   opacity: 0.6;
   cursor: not-allowed;
   animation: none;
+}
+
+/* ==================== RESPONSIVE UTILITIES & GRID ADAPTABILITY ==================== */
+.overflow-x-auto {
+  overflow-x: auto !important;
+  -webkit-overflow-scrolling: touch;
+}
+
+.communities-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 1.8fr;
+  gap: var(--space-6);
+}
+
+@media (max-width: 992px) {
+  .communities-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.grid-3-col {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 768px) {
+  .grid-3-col {
+    grid-template-columns: 1fr;
+  }
+}
+
+.grid-3-col-client {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+@media (max-width: 640px) {
+  .grid-3-col-client {
+    grid-template-columns: 1fr;
+    gap: var(--space-2);
+  }
 }

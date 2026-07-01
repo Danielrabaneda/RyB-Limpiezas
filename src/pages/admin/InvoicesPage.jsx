@@ -15,7 +15,9 @@ import {
   deleteInvoiceTemplate,
   getLastEmittedInvoice,
   emitAllInvoices,
-  getNextInvoiceNumber
+  getNextInvoiceNumber,
+  uploadInvoicePDFToStorage,
+  sendInvoiceEmails
 } from '../../services/invoiceService';
 import { getCommunities } from '../../services/communityService';
 import { format } from 'date-fns';
@@ -53,6 +55,13 @@ export default function InvoicesPage() {
   const [downloadModal, setDownloadModal] = useState({ open: false, invoices: [] });
   const [lastInvoice, setLastInvoice] = useState(null);
   const [selectedInvoices, setSelectedInvoices] = useState({});
+  const [emailProgressModal, setEmailProgressModal] = useState({
+    open: false,
+    total: 0,
+    current: 0,
+    status: 'idle', // 'idle', 'sending', 'completed', 'error'
+    log: []
+  });
   
   // Templates and Add Modal states
   const [templates, setTemplates] = useState([]);
@@ -103,7 +112,14 @@ export default function InvoicesPage() {
     useSaveAsDialog: false,
     seqMode: 'manual',
     issueDateMode: 'today',
-    customIssueDate: ''
+    customIssueDate: '',
+    smtpHost: '',
+    smtpPort: '587',
+    smtpSecure: false,
+    smtpEmail: '',
+    smtpPassword: '',
+    emailSubjectTemplate: 'Factura {numero} - RyB Limpiezas',
+    emailBodyTemplate: ''
   });
 
   useEffect(() => {
@@ -546,6 +562,19 @@ export default function InvoicesPage() {
 
     setActionLoading(true);
     try {
+      let finalClientEmail = addForm.clientEmail || '';
+      const emailInput = document.getElementById('new-client-email-add');
+      if (emailInput && emailInput.value.trim()) {
+        const val = emailInput.value.trim().replace(/[,;]/g, '');
+        if (val && val.includes('@')) {
+          const list = finalClientEmail.split(/[,;]/).map(x => x.trim()).filter(Boolean);
+          if (!list.includes(val)) {
+            list.push(val);
+            finalClientEmail = list.join(', ');
+          }
+        }
+      }
+
       const subtotal = addForm.items.reduce((sum, item) => sum + (parseFloat(item.total) || 0), 0);
       const taxAmount = parseFloat((subtotal * (parseFloat(addForm.taxRate) / 100)).toFixed(2));
       const totalAmount = parseFloat((subtotal + taxAmount).toFixed(2));
@@ -577,7 +606,7 @@ export default function InvoicesPage() {
           name: addForm.clientName,
           cif: addForm.clientCif,
           billingAddress: addForm.clientAddress,
-          email: addForm.clientEmail
+          email: finalClientEmail
         },
         items: addForm.items.map(item => ({
           description: item.description,
@@ -620,7 +649,7 @@ export default function InvoicesPage() {
             name: addForm.clientName,
             cif: addForm.clientCif,
             billingAddress: addForm.clientAddress,
-            email: addForm.clientEmail
+            email: finalClientEmail
           },
           items: addForm.items.map(item => ({
             description: item.description,
@@ -703,6 +732,19 @@ export default function InvoicesPage() {
 
     setActionLoading(true);
     try {
+      let finalClientEmail = editForm.clientEmail || '';
+      const emailInput = document.getElementById('new-client-email-edit');
+      if (emailInput && emailInput.value.trim()) {
+        const val = emailInput.value.trim().replace(/[,;]/g, '');
+        if (val && val.includes('@')) {
+          const list = finalClientEmail.split(/[,;]/).map(x => x.trim()).filter(Boolean);
+          if (!list.includes(val)) {
+            list.push(val);
+            finalClientEmail = list.join(', ');
+          }
+        }
+      }
+
       const subtotal = editForm.items.reduce((sum, item) => sum + (parseFloat(item.total) || 0), 0);
       const taxAmount = parseFloat((subtotal * (parseFloat(editForm.taxRate) / 100)).toFixed(2));
       const totalAmount = parseFloat((subtotal + taxAmount).toFixed(2));
@@ -713,7 +755,7 @@ export default function InvoicesPage() {
           name: editForm.clientName,
           cif: editForm.clientCif,
           billingAddress: editForm.clientAddress,
-          email: editForm.clientEmail
+          email: finalClientEmail
         },
         items: editForm.items,
         taxRate: parseFloat(editForm.taxRate) || 0,
@@ -1128,6 +1170,156 @@ export default function InvoicesPage() {
       alert(`Ocurrió un error al generar el archivo ZIP: ${err.message}`);
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  const handleSendEmails = async (invoicesList) => {
+    if (!billingSettings?.smtpHost || !billingSettings?.smtpEmail) {
+      alert("Por favor, configure los detalles del correo emisor (SMTP) en la pestaña de Ajustes antes de enviar correos.");
+      return;
+    }
+
+    setEmailProgressModal({
+      open: true,
+      total: invoicesList.length,
+      current: 0,
+      status: 'sending',
+      log: ['Iniciando proceso de envío de correos...']
+    });
+    setActionLoading(true);
+
+    try {
+      let sentCount = 0;
+      for (let i = 0; i < invoicesList.length; i++) {
+        const inv = invoicesList[i];
+        
+        // Add log
+        setEmailProgressModal(prev => ({
+          ...prev,
+          log: [...prev.log, `Procesando factura ${inv.invoiceNumber || 'Borrador'} (${inv.client.name})...`]
+        }));
+
+        const emails = (inv.client.email || '').split(/[,;]/).map(e => e.trim()).filter(Boolean);
+        if (emails.length === 0) {
+          setEmailProgressModal(prev => ({
+            ...prev,
+            log: [...prev.log, `⚠️ Advertencia: Factura ${inv.invoiceNumber || 'Borrador'} no tiene emails definidos. Saltando.`]
+          }));
+          continue;
+        }
+
+        let pdfUrl = inv.pdfUrl;
+        if (!pdfUrl) {
+          setEmailProgressModal(prev => ({
+            ...prev,
+            log: [...prev.log, `Generando PDF en segundo plano...`]
+          }));
+          
+          const pdfResult = await generatePDF(inv, 'return');
+          if (!pdfResult) {
+            setEmailProgressModal(prev => ({
+              ...prev,
+              log: [...prev.log, `❌ Error: No se pudo generar el PDF para la factura ${inv.invoiceNumber || 'Borrador'}.`]
+            }));
+            continue;
+          }
+
+          setEmailProgressModal(prev => ({
+            ...prev,
+            log: [...prev.log, `Subiendo PDF a almacenamiento de Firebase...`]
+          }));
+
+          const storagePath = `invoices/${inv.id}/${pdfResult.filename}`;
+          const storageUrl = await uploadInvoicePDFToStorage(inv.id, pdfResult.blob, pdfResult.filename);
+          pdfUrl = storageUrl;
+
+          // Update in Firestore
+          await updateInvoice(inv.id, { pdfUrl, pdfStoragePath: storagePath });
+          
+          // Update in local state
+          setInvoices(prev => prev.map(item => item.id === inv.id ? { ...item, pdfUrl, pdfStoragePath: storagePath } : item));
+        }
+
+        setEmailProgressModal(prev => ({
+          ...prev,
+          log: [...prev.log, `Llamando al servidor para enviar correo a: ${emails.join(', ')}...`]
+        }));
+
+        try {
+          await sendInvoiceEmails([inv.id]);
+          
+          // Update local status of invoice
+          const now = new Date();
+          setInvoices(prev => prev.map(item => item.id === inv.id ? { ...item, emailSent: true, emailSentAt: now } : item));
+          
+          sentCount++;
+          setEmailProgressModal(prev => ({
+            ...prev,
+            current: sentCount,
+            log: [...prev.log, `✅ Factura ${inv.invoiceNumber || 'Borrador'} enviada con éxito.`]
+          }));
+        } catch (err) {
+          console.error("Error sending invoice email:", err);
+          setEmailProgressModal(prev => ({
+            ...prev,
+            log: [...prev.log, `❌ Error al enviar factura ${inv.invoiceNumber || 'Borrador'}: ${err.message}`]
+          }));
+        }
+      }
+
+      setEmailProgressModal(prev => ({
+        ...prev,
+        status: 'completed',
+        log: [...prev.log, `Proceso finalizado. Se enviaron ${sentCount} de ${invoicesList.length} facturas.`]
+      }));
+
+    } catch (err) {
+      console.error("Error overall email process:", err);
+      setEmailProgressModal(prev => ({
+        ...prev,
+        status: 'error',
+        log: [...prev.log, `❌ Error general en el proceso: ${err.message}`]
+      }));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleSendSingleEmail = (inv) => {
+    if (inv.status === 'draft') {
+      alert("No se pueden enviar borradores por correo. Primero emita la factura.");
+      return;
+    }
+    if (confirm(`¿Estás seguro de enviar la factura ${inv.invoiceNumber} por email a ${inv.client.email}?`)) {
+      handleSendEmails([inv]);
+    }
+  };
+
+  const handleSendSelectedEmails = () => {
+    const selectedList = filteredInvoices.filter(inv => selectedInvoices[inv.id]);
+    if (selectedList.length === 0) return;
+    
+    // Check if any draft is selected
+    const hasDrafts = selectedList.some(inv => inv.status === 'draft');
+    if (hasDrafts) {
+      alert("Una o más de las facturas seleccionadas son borradores. Por favor, desmarca los borradores antes de enviar por email.");
+      return;
+    }
+
+    if (confirm(`¿Estás seguro de enviar ${selectedList.length} facturas por email?`)) {
+      handleSendEmails(selectedList);
+      setSelectedInvoices({});
+    }
+  };
+
+  const handleSendAllFilteredEmails = () => {
+    const activeList = filteredInvoices.filter(inv => inv.status !== 'draft');
+    if (activeList.length === 0) {
+      alert("No hay facturas emitidas disponibles en esta lista para enviar por email.");
+      return;
+    }
+    if (confirm(`¿Estás seguro de enviar por email las ${activeList.length} facturas de esta sección?`)) {
+      handleSendEmails(activeList);
     }
   };
 
@@ -1626,6 +1818,93 @@ export default function InvoicesPage() {
                   onChange={e => setSettingsForm({...settingsForm, inscriptionText: e.target.value})}
                 />
               </div>
+
+              {/* SMTP Settings */}
+              <div style={{ gridColumn: 'span 2', marginTop: '16px', borderTop: '1px solid #e2e8f0', paddingTop: '16px' }}>
+                <h4 className="text-sm font-bold mb-3 flex items-center gap-2" style={{ color: 'var(--color-primary)' }}>
+                  📧 Configuración de Correo Emisor (SMTP)
+                </h4>
+                <div className="grid grid-2 gap-4">
+                  <div className="form-group">
+                    <label className="form-label">Servidor SMTP (Host)</label>
+                    <input 
+                      type="text" 
+                      className="form-input" 
+                      placeholder="smtp.example.com"
+                      value={settingsForm.smtpHost || ''}
+                      onChange={e => setSettingsForm({...settingsForm, smtpHost: e.target.value})}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Puerto SMTP</label>
+                    <input 
+                      type="text" 
+                      className="form-input" 
+                      placeholder="587"
+                      value={settingsForm.smtpPort || ''}
+                      onChange={e => setSettingsForm({...settingsForm, smtpPort: e.target.value})}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Email Emisor (Usuario)</label>
+                    <input 
+                      type="email" 
+                      className="form-input" 
+                      placeholder="facturas@empresa.com"
+                      value={settingsForm.smtpEmail || ''}
+                      onChange={e => setSettingsForm({...settingsForm, smtpEmail: e.target.value})}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Contraseña SMTP / App Password</label>
+                    <input 
+                      type="password" 
+                      className="form-input" 
+                      placeholder="••••••••••••••••"
+                      value={settingsForm.smtpPassword || ''}
+                      onChange={e => setSettingsForm({...settingsForm, smtpPassword: e.target.value})}
+                    />
+                  </div>
+                  <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <input 
+                        type="checkbox"
+                        id="smtpSecure"
+                        checked={settingsForm.smtpSecure || false}
+                        onChange={e => setSettingsForm({...settingsForm, smtpSecure: e.target.checked})}
+                        style={{ width: '18px', height: '18px', accentColor: 'var(--color-primary)' }}
+                      />
+                      <label htmlFor="smtpSecure" style={{ fontSize: '0.8125rem', cursor: 'pointer' }}>
+                        Usar conexión segura SSL/TLS (Normalmente puerto 465. Para puerto 587 desmarcar)
+                      </label>
+                    </div>
+                  </div>
+                  
+                  <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                    <label className="form-label">Plantilla de Asunto de Email</label>
+                    <input 
+                      type="text" 
+                      className="form-input" 
+                      placeholder="Factura {numero} - RyB Limpiezas"
+                      value={settingsForm.emailSubjectTemplate || ''}
+                      onChange={e => setSettingsForm({...settingsForm, emailSubjectTemplate: e.target.value})}
+                    />
+                    <small style={{ color: 'var(--text-muted)' }}>Puedes usar: <code>{`{numero}`}</code>, <code>{`{comunidad}`}</code>, <code>{`{mes}`}</code>, <code>{`{año}`}</code></small>
+                  </div>
+
+                  <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                    <label className="form-label">Cuerpo del Email (Soporta HTML básico)</label>
+                    <textarea 
+                      className="form-textarea" 
+                      rows="4"
+                      placeholder="<p>Hola,</p><p>Le adjuntamos la factura...</p>"
+                      value={settingsForm.emailBodyTemplate || ''}
+                      onChange={e => setSettingsForm({...settingsForm, emailBodyTemplate: e.target.value})}
+                    />
+                    <small style={{ color: 'var(--text-muted)' }}>Puedes usar: <code>{`{numero}`}</code>, <code>{`{comunidad}`}</code>, <code>{`{mes}`}</code>, <code>{`{año}`}</code></small>
+                  </div>
+                </div>
+              </div>
             </div>
             <div className="modal-footer" style={{ borderTop: 'none', padding: '16px 0 0 0' }}>
               <button type="submit" className="btn btn-primary" disabled={actionLoading}>
@@ -1675,6 +1954,17 @@ export default function InvoicesPage() {
                   📥 Descargar todos los PDFs ({filteredInvoices.length})
                 </button>
               )}
+              {filteredInvoices.length > 0 && activeTab !== 'drafts' && (
+                <button 
+                  type="button"
+                  className="btn btn-sm btn-outline"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', borderColor: 'var(--color-primary)', color: 'var(--color-primary)' }}
+                  onClick={handleSendAllFilteredEmails}
+                  disabled={actionLoading}
+                >
+                  ✉️ Enviar todas por Email ({filteredInvoices.length})
+                </button>
+              )}
               {Object.keys(selectedInvoices).filter(id => selectedInvoices[id]).length > 0 && (
                 <button 
                   type="button"
@@ -1684,6 +1974,17 @@ export default function InvoicesPage() {
                   disabled={actionLoading}
                 >
                   🗑️ Borrar seleccionadas ({Object.keys(selectedInvoices).filter(id => selectedInvoices[id]).length})
+                </button>
+              )}
+              {Object.keys(selectedInvoices).filter(id => selectedInvoices[id]).length > 0 && activeTab !== 'drafts' && (
+                <button 
+                  type="button"
+                  className="btn btn-sm btn-primary"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  onClick={handleSendSelectedEmails}
+                  disabled={actionLoading}
+                >
+                  ✉️ Enviar seleccionadas ({Object.keys(selectedInvoices).filter(id => selectedInvoices[id]).length})
                 </button>
               )}
             </div>
@@ -1726,8 +2027,30 @@ export default function InvoicesPage() {
               ) : (
                 filteredInvoices.map(inv => (
                   <tr key={inv.id} className="border-b last:border-0 hover:bg-slate-50 transition-colors">
-                    <td className="p-3 font-semibold">
-                      {activeTab === 'drafts' ? '📝 Borrador' : `📄 ${inv.invoiceNumber}`}
+                     <td className="p-3 font-semibold">
+                      {activeTab === 'drafts' ? '📝 Borrador' : (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span>📄 {inv.invoiceNumber}</span>
+                          {inv.emailSent && (
+                            <span 
+                              style={{ 
+                                display: 'inline-flex', 
+                                alignItems: 'center', 
+                                justifyContent: 'center',
+                                background: '#dcfce7', 
+                                color: '#15803d', 
+                                padding: '2px 6px', 
+                                borderRadius: '12px', 
+                                fontSize: '9px',
+                                fontWeight: 'bold' 
+                              }}
+                              title={inv.emailSentAt ? `Enviado por email el ${format(inv.emailSentAt.toDate ? inv.emailSentAt.toDate() : new Date(inv.emailSentAt), 'dd/MM/yyyy HH:mm')}` : 'Enviado por email'}
+                            >
+                              📩 Enviado
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td className="p-3">
                       <div className="font-semibold text-slate-800">{inv.client.name}</div>
@@ -1833,6 +2156,17 @@ export default function InvoicesPage() {
                         >
                           📥 PDF
                         </button>
+                        {inv.status !== 'draft' && (
+                          <button 
+                            className="btn btn-xs btn-outline"
+                            style={{ borderColor: 'var(--color-primary)', color: 'var(--color-primary)' }}
+                            onClick={() => handleSendSingleEmail(inv)}
+                            disabled={actionLoading}
+                            title="Enviar factura por Email"
+                          >
+                            ✉️ Email
+                          </button>
+                        )}
                         <button 
                           className="btn btn-xs"
                           style={{ backgroundColor: '#25d366', color: 'white', border: 'none' }}
@@ -1965,7 +2299,6 @@ export default function InvoicesPage() {
                       required
                       value={addForm.clientName}
                       onChange={e => setAddForm({...addForm, clientName: e.target.value})}
-                      disabled={addForm.clientType === 'community' && addForm.selectedCommunityId}
                     />
                   </div>
                   <div className="form-group">
@@ -1975,7 +2308,6 @@ export default function InvoicesPage() {
                       className="form-input" 
                       value={addForm.clientCif}
                       onChange={e => setAddForm({...addForm, clientCif: e.target.value})}
-                      disabled={addForm.clientType === 'community' && addForm.selectedCommunityId}
                     />
                   </div>
                   <div className="form-group" style={{ gridColumn: 'span 2' }}>
@@ -1985,19 +2317,86 @@ export default function InvoicesPage() {
                       className="form-input" 
                       value={addForm.clientAddress}
                       onChange={e => setAddForm({...addForm, clientAddress: e.target.value})}
-                      disabled={addForm.clientType === 'community' && addForm.selectedCommunityId}
                     />
                   </div>
                   <div className="form-group">
                     <label className="form-label" style={{ fontSize: '12px' }}>Email / Teléfono de Envío</label>
-                    <input 
-                      type="text" 
-                      className="form-input" 
-                      placeholder="Ej: admin@comunidad.com"
-                      value={addForm.clientEmail}
-                      onChange={e => setAddForm({...addForm, clientEmail: e.target.value})}
-                      disabled={addForm.clientType === 'community' && addForm.selectedCommunityId}
-                    />
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                        {(addForm.clientEmail || '').split(/[,;]/).map(e => e.trim()).filter(Boolean).map((email, idx) => (
+                          <span 
+                            key={idx} 
+                            style={{ 
+                              display: 'inline-flex', 
+                              alignItems: 'center', 
+                              gap: '4px', 
+                              background: '#e2e8f0', 
+                              color: '#334155', 
+                              padding: '2px 8px', 
+                              borderRadius: '12px', 
+                              fontSize: '11px',
+                              fontWeight: '500' 
+                            }}
+                          >
+                            {email}
+                            <button 
+                              type="button" 
+                              style={{ border: 'none', background: 'transparent', color: '#64748b', cursor: 'pointer', padding: '0 2px', fontWeight: 'bold' }}
+                              onClick={() => {
+                                const list = (addForm.clientEmail || '').split(/[,;]/).map(e => e.trim()).filter(Boolean);
+                                list.splice(idx, 1);
+                                setAddForm(prev => ({ ...prev, clientEmail: list.join(', ') }));
+                              }}
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                      <div style={{ display: 'flex', gap: '4px' }}>
+                        <input 
+                          type="text" 
+                          className="form-input" 
+                          placeholder="Añadir email..."
+                          id="new-client-email-add"
+                          onKeyDown={e => {
+                            if (e.key === 'Enter' || e.key === ',' || e.key === ';') {
+                              e.preventDefault();
+                              const val = e.target.value.trim().replace(/[,;]/g, '');
+                              if (val && val.includes('@')) {
+                                const list = (addForm.clientEmail || '').split(/[,;]/).map(e => e.trim()).filter(Boolean);
+                                if (!list.includes(val)) {
+                                  list.push(val);
+                                  setAddForm(prev => ({ ...prev, clientEmail: list.join(', ') }));
+                                }
+                                e.target.value = '';
+                              }
+                            }
+                          }}
+                        />
+                        <button 
+                          type="button"
+                          className="btn btn-secondary"
+                          style={{ padding: '6px 12px', fontSize: '13px' }}
+                          onClick={() => {
+                            const input = document.getElementById('new-client-email-add');
+                            if (input) {
+                              const val = input.value.trim();
+                              if (val && val.includes('@')) {
+                                const list = (addForm.clientEmail || '').split(/[,;]/).map(e => e.trim()).filter(Boolean);
+                                if (!list.includes(val)) {
+                                  list.push(val);
+                                  setAddForm(prev => ({ ...prev, clientEmail: list.join(', ') }));
+                                }
+                                input.value = '';
+                              }
+                            }
+                          }}
+                        >
+                          ➕
+                        </button>
+                      </div>
+                    </div>
                   </div>
                   <div className="form-group">
                     <label className="form-label" style={{ fontSize: '12px' }}>Método de Pago</label>
@@ -2005,7 +2404,6 @@ export default function InvoicesPage() {
                       className="form-select"
                       value={addForm.paymentMethod}
                       onChange={e => setAddForm({...addForm, paymentMethod: e.target.value})}
-                      disabled={addForm.clientType === 'community' && addForm.selectedCommunityId}
                     >
                       <option value="transferencia">Transferencia Bancaria</option>
                       <option value="recibo">Recibo Domiciliado</option>
@@ -2016,7 +2414,7 @@ export default function InvoicesPage() {
 
                 {/* Period & Invoice Number Section */}
                 <h4 style={{ fontWeight: 'bold', fontSize: '0.875rem', marginBottom: '10px', color: 'var(--color-primary)', borderTop: '1px solid #e2e8f0', paddingTop: '12px' }}>📅 Datos y Período de Facturación</h4>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                <div className="grid-3-col mb-4">
                   <div className="form-group">
                     <label className="form-label" style={{ fontSize: '12px' }}>Número de Factura</label>
                     <input 
@@ -2259,13 +2657,82 @@ export default function InvoicesPage() {
                   </div>
                   <div className="form-group">
                     <label className="form-label" style={{ fontSize: '12px' }}>Email / Teléfono de Envío</label>
-                    <input 
-                      type="text" 
-                      className="form-input" 
-                      placeholder="Ej: admin@comunidad.com"
-                      value={editForm.clientEmail}
-                      onChange={e => setEditForm({...editForm, clientEmail: e.target.value})}
-                    />
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                        {(editForm.clientEmail || '').split(/[,;]/).map(e => e.trim()).filter(Boolean).map((email, idx) => (
+                          <span 
+                            key={idx} 
+                            style={{ 
+                              display: 'inline-flex', 
+                              alignItems: 'center', 
+                              gap: '4px', 
+                              background: '#e2e8f0', 
+                              color: '#334155', 
+                              padding: '2px 8px', 
+                              borderRadius: '12px', 
+                              fontSize: '11px',
+                              fontWeight: '500' 
+                            }}
+                          >
+                            {email}
+                            <button 
+                              type="button" 
+                              style={{ border: 'none', background: 'transparent', color: '#64748b', cursor: 'pointer', padding: '0 2px', fontWeight: 'bold' }}
+                              onClick={() => {
+                                const list = (editForm.clientEmail || '').split(/[,;]/).map(e => e.trim()).filter(Boolean);
+                                list.splice(idx, 1);
+                                setEditForm(prev => ({ ...prev, clientEmail: list.join(', ') }));
+                              }}
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                      <div style={{ display: 'flex', gap: '4px' }}>
+                        <input 
+                          type="text" 
+                          className="form-input" 
+                          placeholder="Añadir email..."
+                          id="new-client-email-edit"
+                          onKeyDown={e => {
+                            if (e.key === 'Enter' || e.key === ',' || e.key === ';') {
+                              e.preventDefault();
+                              const val = e.target.value.trim().replace(/[,;]/g, '');
+                              if (val && val.includes('@')) {
+                                const list = (editForm.clientEmail || '').split(/[,;]/).map(e => e.trim()).filter(Boolean);
+                                if (!list.includes(val)) {
+                                  list.push(val);
+                                  setEditForm(prev => ({ ...prev, clientEmail: list.join(', ') }));
+                                }
+                                e.target.value = '';
+                              }
+                            }
+                          }}
+                        />
+                        <button 
+                          type="button"
+                          className="btn btn-secondary"
+                          style={{ padding: '6px 12px', fontSize: '13px' }}
+                          onClick={() => {
+                            const input = document.getElementById('new-client-email-edit');
+                            if (input) {
+                              const val = input.value.trim();
+                              if (val && val.includes('@')) {
+                                const list = (editForm.clientEmail || '').split(/[,;]/).map(e => e.trim()).filter(Boolean);
+                                if (!list.includes(val)) {
+                                  list.push(val);
+                                  setEditForm(prev => ({ ...prev, clientEmail: list.join(', ') }));
+                                }
+                                input.value = '';
+                              }
+                            }
+                          }}
+                        >
+                          ➕
+                        </button>
+                      </div>
+                    </div>
                   </div>
                   <div className="form-group">
                     <label className="form-label" style={{ fontSize: '12px' }}>Método de Pago</label>
@@ -2557,6 +3024,77 @@ export default function InvoicesPage() {
                 onClick={() => setDownloadModal({ open: false, invoices: [] })}
               >
                 Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Modal: Email Sending Progress Console */}
+      {emailProgressModal.open && (
+        <div className="modal-overlay">
+          <div 
+            className="modal animate-fadeIn" 
+            style={{ maxWidth: '600px', width: '95vw' }} 
+          >
+            <div className="modal-header">
+              <h3 className="modal-title">✉️ Envío de Facturas por Email</h3>
+              {emailProgressModal.status !== 'sending' && (
+                <button 
+                  type="button" 
+                  className="btn btn-ghost btn-sm" 
+                  onClick={() => setEmailProgressModal({ open: false, total: 0, current: 0, status: 'idle', log: [] })}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            <div className="modal-body" style={{ padding: '20px' }}>
+              <div style={{ marginBottom: '16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem', fontWeight: 'bold', marginBottom: '8px' }}>
+                  <span>Progreso de envío</span>
+                  <span>{emailProgressModal.current} de {emailProgressModal.total}</span>
+                </div>
+                {/* Progress bar */}
+                <div style={{ width: '100%', height: '8px', background: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
+                  <div style={{ 
+                    width: `${emailProgressModal.total > 0 ? (emailProgressModal.current / emailProgressModal.total) * 100 : 0}%`, 
+                    height: '100%', 
+                    background: 'var(--color-primary)', 
+                    transition: 'width 0.3s ease' 
+                  }}></div>
+                </div>
+              </div>
+
+              {/* Console log box */}
+              <div style={{ 
+                background: '#0f172a', 
+                color: '#38bdf8', 
+                padding: '12px', 
+                borderRadius: '6px', 
+                fontFamily: 'monospace', 
+                fontSize: '11px', 
+                height: '200px', 
+                overflowY: 'auto',
+                boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.6)'
+              }}>
+                {emailProgressModal.log.map((line, idx) => (
+                  <div key={idx} style={{ 
+                    marginBottom: '4px',
+                    color: line.startsWith('❌') ? '#ef4444' : line.startsWith('✅') ? '#22c55e' : line.startsWith('⚠️') ? '#f59e0b' : '#38bdf8'
+                  }}>
+                    {line}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button 
+                type="button" 
+                className="btn btn-secondary" 
+                disabled={emailProgressModal.status === 'sending'}
+                onClick={() => setEmailProgressModal({ open: false, total: 0, current: 0, status: 'idle', log: [] })}
+              >
+                Cerrar
               </button>
             </div>
           </div>

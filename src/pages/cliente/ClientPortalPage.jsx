@@ -305,7 +305,7 @@ export default function ClientPortalPage() {
                   </div>
                   
                   {showVisitTimes ? (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', fontSize: '12px' }}>
+                    <div className="grid-3-col-client" style={{ gap: '8px', fontSize: '12px' }}>
                       <div>
                         <span style={{ color: '#94a3b8', display: 'block', fontSize: '10px', textTransform: 'uppercase', fontWeight: 'bold' }}>Operario/Equipo</span>
                         <strong style={{ color: '#334155' }}>{getOperarioName(rep.userId)}</strong>
