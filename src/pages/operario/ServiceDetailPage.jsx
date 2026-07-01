@@ -110,7 +110,41 @@ export default function ServiceDetailPage() {
       try {
         const svcDate = svcData.scheduledDate?.toDate ? svcData.scheduledDate.toDate() : new Date(svcData.scheduledDate);
         const allSvcsToday = await getScheduledServicesForDate(userProfile.uid, svcDate);
-        const filtered = allSvcsToday.filter(s => s.communityId === svcData.communityId);
+        
+        // Find category/color for the current service to apply selective grouping
+        const currentSpecificTask = commTasks.find(t => t.id === svcData.communityTaskId);
+        const currentLowerName = (svcData.taskName || '').toLowerCase();
+        const currentPrintColor = currentSpecificTask?.printColor || (
+          currentLowerName.includes('escalera') ? '#22c55e' :
+          currentLowerName.includes('portal') || currentLowerName.includes('repaso') ? '#eab308' : '#ef4444'
+        );
+        const currentIsGarage = !!currentSpecificTask?.isGarage || currentLowerName.includes('garaje') || !!svcData.isGarage;
+        const currentIsOtras = currentPrintColor === '#ef4444' && !currentIsGarage;
+
+        let filtered = [];
+        if (currentIsOtras) {
+          // Group only "Otras" (red) tasks of the same community today
+          for (const s of allSvcsToday) {
+            if (s.communityId === svcData.communityId) {
+              const specTask = commTasks.find(t => t.id === s.communityTaskId);
+              const lowerName = (s.taskName || '').toLowerCase();
+              const printColor = specTask?.printColor || (
+                lowerName.includes('escalera') ? '#22c55e' :
+                lowerName.includes('portal') || lowerName.includes('repaso') ? '#eab308' : '#ef4444'
+              );
+              const isGarage = !!specTask?.isGarage || lowerName.includes('garaje') || !!s.isGarage;
+              const isOtras = printColor === '#ef4444' && !isGarage;
+              
+              if (isOtras) {
+                filtered.push(s);
+              }
+            }
+          }
+        } else {
+          // Escalera, Portal and Garaje do not group with anything else
+          filtered = [svcData];
+        }
+
         if (!filtered.some(s => s.id === svcData.id)) {
           filtered.push(svcData);
         }
@@ -500,7 +534,36 @@ export default function ServiceDetailPage() {
 
       const groupedTaskIds = new Set(currentGroup.map(s => s.communityTaskId).filter(Boolean));
 
+      // Find category/color for the current service to filter relevant tasks
+      const currentSpecificTask = allTasks.find(t => t.id === service.communityTaskId);
+      const currentLowerName = (service.taskName || '').toLowerCase();
+      const currentPrintColor = currentSpecificTask?.printColor || (
+        currentLowerName.includes('escalera') ? '#22c55e' :
+        currentLowerName.includes('portal') || currentLowerName.includes('repaso') ? '#eab308' : '#ef4444'
+      );
+      const currentIsGarage = !!currentSpecificTask?.isGarage || currentLowerName.includes('garaje') || !!service.isGarage;
+      const currentIsOtras = currentPrintColor === '#ef4444' && !currentIsGarage;
+
       const relevantTasks = allTasks.filter(task => {
+        if (!currentIsOtras) {
+          if (service.communityTaskId) {
+            return task.id === service.communityTaskId;
+          } else {
+            return task.taskName === service.taskName;
+          }
+        }
+
+        // If it's "Otras", filter community tasks that are also "Otras" (red, not garage)
+        const taskLowerName = (task.taskName || '').toLowerCase();
+        const taskPrintColor = task.printColor || (
+          taskLowerName.includes('escalera') ? '#22c55e' :
+          taskLowerName.includes('portal') || taskLowerName.includes('repaso') ? '#eab308' : '#ef4444'
+        );
+        const taskIsGarage = !!task.isGarage || taskLowerName.includes('garaje');
+        const taskIsOtras = taskPrintColor === '#ef4444' && !taskIsGarage;
+
+        if (!taskIsOtras) return false;
+
         if (completedTaskIdsThisWeek.has(task.id)) return false;
         if (groupedTaskIds.has(task.id)) return true; // Explicitly in today's group (handles rescheduling/manual dates)
         if (shouldScheduleOnDay(task, svcDate)) return true;
@@ -584,7 +647,16 @@ export default function ServiceDetailPage() {
       // Update status
       const currentGroup = groupedServices.length > 0 ? groupedServices : [service];
       for (const s of currentGroup) {
-        await updateScheduledServiceStatus(s.id, 'completed');
+        if (s.communityTaskId) {
+          const exec = taskExecutions.find(e => e.communityTaskId === s.communityTaskId);
+          if (exec && exec.status === 'completed') {
+            await updateScheduledServiceStatus(s.id, 'completed');
+          } else {
+            await updateScheduledServiceStatus(s.id, 'missed');
+          }
+        } else {
+          await updateScheduledServiceStatus(s.id, 'completed');
+        }
       }
 
       // Limpiar sugerencia utilizada (confirmed + pending)
@@ -1052,8 +1124,20 @@ export default function ServiceDetailPage() {
                       // 2. Completar el check-out con hora manual de salida
                       await completeCheckOut(checkInId, pos.lat, pos.lng, exitDate, clientSignature);
 
-                      // 3. Actualizar estado a completado
-                      await updateScheduledServiceStatus(serviceId, 'completed');
+                      // 3. Actualizar estado según tareas completadas
+                      const currentGroup = groupedServices.length > 0 ? groupedServices : [service];
+                      for (const s of currentGroup) {
+                        if (s.communityTaskId) {
+                          const exec = taskExecutions.find(e => e.communityTaskId === s.communityTaskId);
+                          if (exec && exec.status === 'completed') {
+                            await updateScheduledServiceStatus(s.id, 'completed');
+                          } else {
+                            await updateScheduledServiceStatus(s.id, 'missed');
+                          }
+                        } else {
+                          await updateScheduledServiceStatus(s.id, 'completed');
+                        }
+                      }
 
                       // 4. Limpiar sugerencias locales
                       localStorage.removeItem(`detected_entry_${serviceId}`);
@@ -1171,7 +1255,19 @@ export default function ServiceDetailPage() {
                     if (window.confirm('No tienes un fichaje activo. ¿Deseas marcar este servicio como terminado directamente?')) {
                       setActionLoading(true);
                       try {
-                        await updateScheduledServiceStatus(serviceId, 'completed');
+                        const currentGroup = groupedServices.length > 0 ? groupedServices : [service];
+                        for (const s of currentGroup) {
+                          if (s.communityTaskId) {
+                            const exec = taskExecutions.find(e => e.communityTaskId === s.communityTaskId);
+                            if (exec && exec.status === 'completed') {
+                              await updateScheduledServiceStatus(s.id, 'completed');
+                            } else {
+                              await updateScheduledServiceStatus(s.id, 'missed');
+                            }
+                          } else {
+                            await updateScheduledServiceStatus(s.id, 'completed');
+                          }
+                        }
                         alert('Servicio marcado como terminado');
                         navigate('/operario');
                       } catch(e) {

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { getScheduledServicesForWeek } from '../../services/scheduleService';
 import { getCommunity } from '../../services/communityService';
+import { getCommunityTasks } from '../../services/taskService';
 import { getWorkdaysForOperario } from '../../services/workdayService';
 import { getMileageForWeek, getMileageForMonth } from '../../services/mileageService';
 import { format, startOfWeek, endOfWeek, addDays, subWeeks, addWeeks, isSameDay, startOfMonth, endOfMonth, subMonths, addMonths } from 'date-fns';
@@ -41,12 +42,30 @@ export default function HistoryPage() {
     try {
       const svcs = await getScheduledServicesForWeek(userProfile.uid, currentWeek);
       const cache = {};
+      const taskCache = {};
       const enriched = [];
       for (const svc of svcs) {
         if (!cache[svc.communityId]) {
           cache[svc.communityId] = await getCommunity(svc.communityId);
         }
-        enriched.push({ ...svc, community: cache[svc.communityId] });
+        if (!taskCache[svc.communityId]) {
+          taskCache[svc.communityId] = await getCommunityTasks(svc.communityId);
+        }
+        const communityTasks = taskCache[svc.communityId] || [];
+        const specificTask = communityTasks.find(t => t.id === svc.communityTaskId);
+        const lowerName = (svc.taskName || '').toLowerCase();
+        const isGarage = !!specificTask?.isGarage || lowerName.includes('garaje') || !!svc.isGarage;
+        const printColor = specificTask?.printColor || (
+          lowerName.includes('escalera') ? '#22c55e' :
+          lowerName.includes('portal') || lowerName.includes('repaso') ? '#eab308' : '#ef4444'
+        );
+
+        enriched.push({
+          ...svc,
+          community: cache[svc.communityId],
+          isGarage,
+          printColor
+        });
       }
       setServices(enriched);
     } catch (err) {
@@ -325,31 +344,50 @@ export default function HistoryPage() {
                 ) : (() => {
                   const communityGroups = {};
                   dayServices.forEach(svc => {
-                    const commId = svc.communityId || 'unknown';
-                    if (!communityGroups[commId]) {
-                      communityGroups[commId] = {
+                    const isOtras = svc.printColor === '#ef4444' && !svc.isGarage;
+                    const groupKey = isOtras ? `${svc.communityId}_otras` : `${svc.communityId}_${svc.id}`;
+                    
+                    if (!communityGroups[groupKey]) {
+                      communityGroups[groupKey] = {
                         community: svc.community,
                         services: [],
                         tasks: []
                       };
                     }
-                    communityGroups[commId].services.push(svc);
-                    if (svc.taskName) {
-                      communityGroups[commId].tasks.push(svc.taskName);
+                    communityGroups[groupKey].services.push(svc);
+                    if (svc.taskName && svc.status === 'completed') {
+                      communityGroups[groupKey].tasks.push(svc.taskName);
                     }
                   });
 
                   return (
                     <div className="flex flex-col gap-2">
-                      {Object.entries(communityGroups).map(([commId, group]) => {
+                      {Object.entries(communityGroups).map(([groupKey, group]) => {
                         const allCompleted = group.services.every(s => s.status === 'completed');
-                        const hasStarted = group.services.some(s => s.status === 'completed' || s.status === 'in_progress');
+                        const allMissed = group.services.every(s => s.status === 'missed');
+                        const allFinalized = group.services.every(s => s.status === 'completed' || s.status === 'missed');
+                        const hasStarted = group.services.some(s => s.status === 'completed' || s.status === 'missed' || s.status === 'in_progress');
+                        
                         const statusColor = allCompleted 
                           ? 'var(--color-success)' 
-                          : (hasStarted ? '#0284c7' : 'var(--color-warning)');
-                        const tasksStr = group.tasks.length > 0 ? ` (${group.tasks.join(', ')})` : '';
+                          : allMissed
+                            ? 'var(--color-danger)'
+                            : allFinalized
+                              ? 'var(--color-success)'
+                              : hasStarted 
+                                ? '#0284c7' 
+                                : 'var(--color-warning)';
+                                
+                        let tasksStr = '';
+                        if (group.tasks.length > 0) {
+                          tasksStr = ` (${group.tasks.join(', ')})`;
+                        } else if (allMissed) {
+                          const missedNames = group.services.map(s => s.taskName).filter(Boolean);
+                          tasksStr = missedNames.length > 0 ? ` (No realizado: ${missedNames.join(', ')})` : ' (No realizado)';
+                        }
+                        
                         return (
-                          <div key={commId} className="flex items-center gap-3">
+                          <div key={groupKey} className="flex items-center gap-3">
                             <div style={{
                               width: 8, height: 8, borderRadius: '50%',
                               background: statusColor,

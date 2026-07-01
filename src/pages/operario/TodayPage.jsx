@@ -349,17 +349,26 @@ export default function TodayPage() {
           const communityTasks = taskCache[svc.communityId] || [];
           const specificTask = communityTasks.find(t => t.id === svc.communityTaskId);
 
+          const lowerName = (svc.taskName || '').toLowerCase();
+          const isGarage = !!specificTask?.isGarage || lowerName.includes('garaje') || !!svc.isGarage;
+          const printColor = specificTask?.printColor || (
+            lowerName.includes('escalera') ? '#22c55e' :
+            lowerName.includes('portal') || lowerName.includes('repaso') ? '#eab308' : '#ef4444'
+          );
+
           let tasks = [];
           if (svc.taskName) {
             tasks = [{ 
               id: svc.communityTaskId || svc.id, 
               taskName: svc.taskName,
-              isUrgent: svc.isUrgent || specificTask?.isUrgent || false
+              isUrgent: svc.isUrgent || specificTask?.isUrgent || false,
+              status: svc.status
             }];
           } else if (specificTask) {
             tasks = [{
               ...specificTask,
-              isUrgent: specificTask.isUrgent || svc.isUrgent || false
+              isUrgent: specificTask.isUrgent || svc.isUrgent || false,
+              status: svc.status
             }];
           }
 
@@ -367,7 +376,8 @@ export default function TodayPage() {
             ...svc,
             community: communityCache[svc.communityId] || { name: 'Comunidad desconocida' },
             tasks,
-            isGarage: !!specificTask?.isGarage
+            isGarage,
+            printColor
           });
         } catch (enrichErr) {
           console.warn(`Error enriching service ${svc.id}:`, enrichErr);
@@ -451,9 +461,9 @@ export default function TodayPage() {
         }
       }
 
-      // Group optimized services by communityId
+      // Group optimized services selectively
       const grouped = [];
-      const seenCommunities = new Set();
+      const seenGroupKeys = new Set();
       
       for (const svc of optimized) {
         if (!svc.communityId) {
@@ -461,8 +471,11 @@ export default function TodayPage() {
           continue;
         }
         
-        if (seenCommunities.has(svc.communityId)) {
-          const existingGroup = grouped.find(g => g.communityId === svc.communityId);
+        const isOtras = svc.printColor === '#ef4444' && !svc.isGarage;
+        const groupKey = isOtras ? `${svc.communityId}_otras` : `${svc.communityId}_${svc.id}`;
+        
+        if (seenGroupKeys.has(groupKey)) {
+          const existingGroup = grouped.find(g => g.groupKey === groupKey);
           if (existingGroup) {
             existingGroup.groupedServices.push(svc);
             if (svc.tasks && svc.tasks.length > 0) {
@@ -478,16 +491,21 @@ export default function TodayPage() {
             const allSvcs = existingGroup.groupedServices;
             if (allSvcs.every(s => s.status === 'completed')) {
               existingGroup.status = 'completed';
-            } else if (allSvcs.some(s => s.status === 'in_progress' || s.status === 'started' || s.status === 'completed')) {
+            } else if (allSvcs.every(s => s.status === 'missed')) {
+              existingGroup.status = 'missed';
+            } else if (allSvcs.every(s => s.status === 'completed' || s.status === 'missed')) {
+              existingGroup.status = 'completed';
+            } else if (allSvcs.some(s => s.status === 'in_progress' || s.status === 'started' || s.status === 'completed' || s.status === 'missed')) {
               existingGroup.status = 'in_progress';
             } else {
               existingGroup.status = 'pending';
             }
           }
         } else {
-          seenCommunities.add(svc.communityId);
+          seenGroupKeys.add(groupKey);
           grouped.push({
             ...svc,
+            groupKey,
             groupedServices: [svc]
           });
         }
@@ -1288,11 +1306,23 @@ export default function TodayPage() {
 
               <div className="service-tasks" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'nowrap', gap: '8px' }}>
                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', flex: 1 }}>
-                  {svc.tasks?.map(t => (
-                    <span key={t.id} className={`service-task-chip ${t.isUrgent ? 'urgent' : ''}`}>
-                      {t.isUrgent ? '🚨 ' : ''}{t.taskName}
-                    </span>
-                  ))}
+                  {svc.tasks?.map(t => {
+                    let chipClass = 'service-task-chip';
+                    if (t.status === 'completed') {
+                      chipClass += ' completed';
+                    } else if (t.status === 'missed') {
+                      chipClass += ' missed';
+                    } else if (t.isUrgent) {
+                      chipClass += ' urgent';
+                    }
+                    
+                    return (
+                      <span key={t.id} className={chipClass}>
+                        {t.status === 'completed' ? '✓ ' : t.status === 'missed' ? '✕ ' : t.isUrgent ? '🚨 ' : ''}
+                        {t.taskName}
+                      </span>
+                    );
+                  })}
                 </div>
                 {svc.isCompanion ? (
                   <button 
