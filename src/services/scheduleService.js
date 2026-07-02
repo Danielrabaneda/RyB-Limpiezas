@@ -394,6 +394,62 @@ export async function deleteFutureServicesForUserInCommunity(userId, communityId
     throw error;
   }
 }
+export async function updateScheduledServiceNotesAndPhotos(id, notes, photoUrls) {
+  const dataToUpdate = { updatedAt: serverTimestamp() };
+  if (notes !== undefined) dataToUpdate.generalNotes = notes;
+  if (photoUrls !== undefined) dataToUpdate.generalPhotoUrls = arrayUnion(...photoUrls);
+  
+  await updateDoc(doc(db, 'scheduledServices', id), dataToUpdate);
+}
+
+export async function passTaskToNextService(scheduledService, isGarage = false) {
+  try {
+    let nextDate = null;
+    if (isGarage) {
+      // Pasarlo a la primera fecha de la semana siguiente
+      const svcDate = scheduledService.scheduledDate?.toDate ? scheduledService.scheduledDate.toDate() : new Date(scheduledService.scheduledDate);
+      const nextWeek = addDays(startOfWeek(svcDate, { weekStartsOn: 1 }), 7); // Monday of next week
+      nextDate = Timestamp.fromDate(nextWeek);
+    } else {
+      // Buscar próximo servicio programado para esta comunidad
+      const now = Timestamp.fromDate(startOfDay(addDays(new Date(), 1))); // From tomorrow
+      const q = query(
+        collection(db, 'scheduledServices'),
+        where('communityId', '==', scheduledService.communityId),
+        where('scheduledDate', '>=', now),
+        where('status', '==', 'pending'),
+        orderBy('scheduledDate', 'asc')
+      );
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        nextDate = snap.docs[0].data().scheduledDate;
+      } else {
+        // Si no hay, pasarlo a mañana
+        nextDate = Timestamp.fromDate(addDays(new Date(), 1));
+      }
+    }
+
+    // Crear la nueva tarea para la próxima fecha
+    await addDoc(collection(db, 'scheduledServices'), {
+      communityId: scheduledService.communityId,
+      communityTaskId: scheduledService.communityTaskId,
+      taskName: scheduledService.taskName || '',
+      assignedUserId: scheduledService.assignedUserId,
+      scheduledDate: nextDate,
+      flexibleWeek: scheduledService.flexibleWeek || false,
+      isUrgent: scheduledService.isUrgent || false,
+      status: 'pending',
+      createdAt: serverTimestamp(),
+      isRollover: true, // Para identificar que fue pasada automáticamente
+      rolledOverFrom: scheduledService.id
+    });
+    
+    // Marcar la original como pasada ("rolled_over" o "missed") para que no se quede estancada
+    await updateScheduledServiceStatus(scheduledService.id, 'missed');
+  } catch (error) {
+    console.error('[Schedule] Error pasando tarea:', error);
+  }
+}
 
 // ==================== CLEANUP DUPLICATES ====================
 /**

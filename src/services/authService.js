@@ -102,7 +102,7 @@ export async function deleteOperario(uid, options = {}) {
 
   // 6. OPCIONAL: Borrar informes
   if (options.deleteReports) {
-    const repSnap = await getDocs(query(collection(db, 'reports'), where('userId', '==', uid)));
+    const repSnap = await getDocs(query(collection(db, 'evidenceReports'), where('userId', '==', uid)));
     repSnap.docs.forEach(d => refsToDelete.push(d.ref));
   }
 

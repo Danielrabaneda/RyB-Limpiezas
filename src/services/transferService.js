@@ -19,16 +19,41 @@ export async function rescheduleService({ serviceId, newDate, requesterRole, use
     throw new Error('Solo se pueden reprogramar servicios que aún no han comenzado.');
   }
 
+  // Verificar si el usuario tiene permisos directos
+  let isAuthorized = requesterRole === 'admin';
+  if (!isAuthorized && userId) {
+    const userSnap = await getDoc(doc(db, 'users', userId));
+    if (userSnap.exists() && userSnap.data().allowDirectTransfers === true) {
+      isAuthorized = true;
+    }
+  }
+
   const batch = writeBatch(db);
   const startOfNewDate = startOfDay(newDate);
   
-  if (requesterRole === 'admin') {
+  if (isAuthorized) {
     batch.update(serviceRef, {
       scheduledDate: Timestamp.fromDate(startOfNewDate),
       originalDate: serviceData.originalDate || serviceData.scheduledDate,
       isRescheduled: true,
+      rescheduleId: null,
+      rescheduleValidated: true,
       updatedAt: serverTimestamp()
     });
+
+    if (requesterRole !== 'admin') {
+      // Registrar log aprobado para auditoría
+      await addDoc(collection(db, 'transfers'), {
+        serviceId,
+        userId,
+        newDate: Timestamp.fromDate(startOfNewDate),
+        oldDate: serviceData.scheduledDate,
+        type: 'date_change',
+        status: 'approved',
+        requestedBy: requesterRole,
+        createdAt: serverTimestamp(),
+      });
+    }
   } else {
     const transferData = {
       serviceId,
@@ -43,9 +68,7 @@ export async function rescheduleService({ serviceId, newDate, requesterRole, use
     const transferRef = await addDoc(collection(db, 'transfers'), transferData);
     
     batch.update(serviceRef, {
-      scheduledDate: Timestamp.fromDate(startOfNewDate),
-      originalDate: serviceData.originalDate || serviceData.scheduledDate,
-      isRescheduled: true,
+      // Mantenemos la fecha original del servicio
       rescheduleId: transferRef.id,
       rescheduleValidated: false,
       updatedAt: serverTimestamp()
@@ -67,27 +90,45 @@ export async function transferService({ serviceId, fromUserId, toUserId, request
     throw new Error('Solo se pueden traspasar servicios que aún no han comenzado.');
   }
 
+  // Verificar si el usuario tiene permisos directos
+  let isAuthorized = requesterRole === 'admin';
+  if (!isAuthorized && fromUserId) {
+    const userSnap = await getDoc(doc(db, 'users', fromUserId));
+    if (userSnap.exists() && userSnap.data().allowDirectTransfers === true) {
+      isAuthorized = true;
+    }
+  }
+
   const batch = writeBatch(db);
   const transferData = {
     serviceId,
     fromUserId,
     toUserId,
     type: 'single',
-    status: requesterRole === 'admin' ? 'approved' : 'pending',
+    status: isAuthorized ? 'approved' : 'pending',
     requestedBy: requesterRole,
     createdAt: serverTimestamp(),
   };
 
   const transferRef = await addDoc(collection(db, 'transfers'), transferData);
 
-  batch.update(serviceRef, {
-    assignedUserId: toUserId,
-    isTransferred: true,
-    originalAssignedUserId: fromUserId,
-    transferId: transferRef.id,
-    transferValidated: requesterRole === 'admin',
-    updatedAt: serverTimestamp()
-  });
+  if (isAuthorized) {
+    batch.update(serviceRef, {
+      assignedUserId: toUserId,
+      isTransferred: true,
+      originalAssignedUserId: fromUserId,
+      transferId: transferRef.id,
+      transferValidated: true,
+      updatedAt: serverTimestamp()
+    });
+  } else {
+    batch.update(serviceRef, {
+      // Mantenemos al operario original
+      transferId: transferRef.id,
+      transferValidated: false,
+      updatedAt: serverTimestamp()
+    });
+  }
 
   await batch.commit();
   return transferRef.id;
@@ -106,7 +147,7 @@ export async function transferDay({ date, fromUserId, toUserId, requesterRole })
 
   const snap = await getDocs(q);
   if (snap.empty) {
-    throw new Error('No hay servicios pendientes asignados a este operario para el día seleccionado.');
+    throw new Error('No hay servicios asignados a este operario para el día seleccionado.');
   }
 
   // Si es operario, validar que NINGÚN servicio haya comenzado
@@ -120,29 +161,56 @@ export async function transferDay({ date, fromUserId, toUserId, requesterRole })
     }
   }
 
+  // Verificar si el usuario tiene permisos directos
+  let isAuthorized = requesterRole === 'admin';
+  if (!isAuthorized && fromUserId) {
+    const userSnap = await getDoc(doc(db, 'users', fromUserId));
+    if (userSnap.exists() && userSnap.data().allowDirectTransfers === true) {
+      isAuthorized = true;
+    }
+  }
+
+  // Filtrar solo los servicios pendientes (excluir realizados/en curso)
+  const pendingServices = snap.docs.filter(d => {
+    const s = d.data().status;
+    return s === 'pending' || !s;
+  });
+
+  if (pendingServices.length === 0) {
+    throw new Error('No hay servicios pendientes asignados a este operario para el día seleccionado.');
+  }
+
   const batch = writeBatch(db);
   const transferData = {
     date: Timestamp.fromDate(date),
     fromUserId,
     toUserId,
     type: 'day',
-    serviceCount: snap.size,
-    status: requesterRole === 'admin' ? 'approved' : 'pending',
+    serviceCount: pendingServices.length,
+    status: isAuthorized ? 'approved' : 'pending',
     requestedBy: requesterRole,
     createdAt: serverTimestamp(),
   };
 
   const transferRef = await addDoc(collection(db, 'transfers'), transferData);
 
-  snap.forEach(d => {
-    batch.update(d.ref, {
-      assignedUserId: toUserId,
-      isTransferred: true,
-      originalAssignedUserId: fromUserId,
-      transferId: transferRef.id,
-      transferValidated: requesterRole === 'admin',
-      updatedAt: serverTimestamp()
-    });
+  pendingServices.forEach(d => {
+    if (isAuthorized) {
+      batch.update(d.ref, {
+        assignedUserId: toUserId,
+        isTransferred: true,
+        originalAssignedUserId: fromUserId,
+        transferId: transferRef.id,
+        transferValidated: true,
+        updatedAt: serverTimestamp()
+      });
+    } else {
+      batch.update(d.ref, {
+        transferId: transferRef.id,
+        transferValidated: false,
+        updatedAt: serverTimestamp()
+      });
+    }
   });
 
   await batch.commit();
@@ -164,7 +232,7 @@ export async function transferWeek({ dateInWeek, fromUserId, toUserId, requester
 
   const snap = await getDocs(q);
   if (snap.empty) {
-    throw new Error('No hay servicios pendientes asignados a este operario para la semana seleccionada.');
+    throw new Error('No hay servicios asignados a este operario para la semana seleccionada.');
   }
 
   // Si es operario, validar que NINGÚN servicio de la semana haya comenzado
@@ -178,6 +246,25 @@ export async function transferWeek({ dateInWeek, fromUserId, toUserId, requester
     }
   }
 
+  // Verificar si el usuario tiene permisos directos
+  let isAuthorized = requesterRole === 'admin';
+  if (!isAuthorized && fromUserId) {
+    const userSnap = await getDoc(doc(db, 'users', fromUserId));
+    if (userSnap.exists() && userSnap.data().allowDirectTransfers === true) {
+      isAuthorized = true;
+    }
+  }
+
+  // Filtrar solo los servicios pendientes (excluir realizados/en curso)
+  const pendingServices = snap.docs.filter(d => {
+    const s = d.data().status;
+    return s === 'pending' || !s;
+  });
+
+  if (pendingServices.length === 0) {
+    throw new Error('No hay servicios pendientes asignados a este operario para la semana seleccionada.');
+  }
+
   const batch = writeBatch(db);
   const transferData = {
     startDate: Timestamp.fromDate(weekStart),
@@ -185,23 +272,31 @@ export async function transferWeek({ dateInWeek, fromUserId, toUserId, requester
     fromUserId,
     toUserId,
     type: 'week',
-    serviceCount: snap.size,
-    status: requesterRole === 'admin' ? 'approved' : 'pending',
+    serviceCount: pendingServices.length,
+    status: isAuthorized ? 'approved' : 'pending',
     requestedBy: requesterRole,
     createdAt: serverTimestamp(),
   };
 
   const transferRef = await addDoc(collection(db, 'transfers'), transferData);
 
-  snap.forEach(d => {
-    batch.update(d.ref, {
-      assignedUserId: toUserId,
-      isTransferred: true,
-      originalAssignedUserId: fromUserId,
-      transferId: transferRef.id,
-      transferValidated: requesterRole === 'admin',
-      updatedAt: serverTimestamp()
-    });
+  pendingServices.forEach(d => {
+    if (isAuthorized) {
+      batch.update(d.ref, {
+        assignedUserId: toUserId,
+        isTransferred: true,
+        originalAssignedUserId: fromUserId,
+        transferId: transferRef.id,
+        transferValidated: true,
+        updatedAt: serverTimestamp()
+      });
+    } else {
+      batch.update(d.ref, {
+        transferId: transferRef.id,
+        transferValidated: false,
+        updatedAt: serverTimestamp()
+      });
+    }
   });
 
   await batch.commit();
@@ -273,7 +368,13 @@ export async function approveTransfer(transferId) {
     );
     const servicesSnap = await getDocs(q);
     servicesSnap.forEach(d => {
-      batch.update(d.ref, { rescheduleValidated: true });
+      const svcData = d.data();
+      batch.update(d.ref, { 
+        scheduledDate: data.newDate,
+        originalDate: svcData.originalDate || svcData.scheduledDate,
+        isRescheduled: true,
+        rescheduleValidated: true 
+      });
     });
   } else {
     // Update all associated services for user transfer
@@ -283,7 +384,12 @@ export async function approveTransfer(transferId) {
     );
     const servicesSnap = await getDocs(q);
     servicesSnap.forEach(d => {
-      batch.update(d.ref, { transferValidated: true });
+      batch.update(d.ref, { 
+        assignedUserId: data.toUserId,
+        isTransferred: true,
+        originalAssignedUserId: data.fromUserId,
+        transferValidated: true 
+      });
     });
   }
 
@@ -307,27 +413,13 @@ export async function rejectTransfer(transferId) {
     );
     const servicesSnap = await getDocs(q);
     servicesSnap.forEach(d => {
-      const svcData = d.data();
-      const origDateRaw = svcData.originalDate;
-      const origDate = origDateRaw ? (origDateRaw.toDate ? origDateRaw.toDate() : new Date(origDateRaw)) : null;
-      const oldDate = data.oldDate.toDate ? data.oldDate.toDate() : new Date(data.oldDate);
-      
-      const returnsToOriginal = !origDate || (
-        origDate.getFullYear() === oldDate.getFullYear() &&
-        origDate.getMonth() === oldDate.getMonth() &&
-        origDate.getDate() === oldDate.getDate()
-      );
-
       batch.update(d.ref, { 
-        scheduledDate: data.oldDate,
-        rescheduleValidated: !returnsToOriginal,
         rescheduleId: null,
-        originalDate: returnsToOriginal ? null : svcData.originalDate,
-        isRescheduled: !returnsToOriginal
+        rescheduleValidated: false
       });
     });
   } else {
-    // Return all associated services to original user
+    // Clear transfer fields
     const q = query(
       collection(db, 'scheduledServices'),
       where('transferId', '==', transferId)
@@ -335,11 +427,8 @@ export async function rejectTransfer(transferId) {
     const servicesSnap = await getDocs(q);
     servicesSnap.forEach(d => {
       batch.update(d.ref, { 
-        assignedUserId: data.fromUserId,
-        isTransferred: false,
-        transferValidated: false,
         transferId: null,
-        originalAssignedUserId: null
+        transferValidated: false
       });
     });
   }

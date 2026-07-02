@@ -36,7 +36,7 @@ export function AuthProvider({ children }) {
     return signOut(auth);
   }
 
-  async function createOperario(email, password, name, phone) {
+  async function createOperario(email, password, name, phone, allowDirectTransfers = false) {
     // We create the user via secondary app to avoid logging out the admin
     const user = await createUserWithoutLogout(email, password);
     const profile = {
@@ -46,6 +46,7 @@ export function AuthProvider({ children }) {
       phone: phone || '',
       role: 'operario',
       active: true,
+      allowDirectTransfers: !!allowDirectTransfers,
       createdAt: serverTimestamp(),
     };
     await setDoc(doc(db, 'users', user.uid), profile);
@@ -60,6 +61,7 @@ export function AuthProvider({ children }) {
       email,
       role: 'operario',
       active: true,
+      allowDirectTransfers: false,
       createdAt: serverTimestamp(),
     };
     await setDoc(doc(db, 'users', cred.user.uid), profile);

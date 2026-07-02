@@ -4,7 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useGeolocation } from '../../hooks/useGeolocation';
 import { getCommunity } from '../../services/communityService';
 import { getCommunityTasks } from '../../services/taskService';
-import { getScheduledServicesForDate, updateScheduledServiceStatus, addCompanionToService, removeCompanionFromService, shouldScheduleOnDay } from '../../services/scheduleService';
+import { getScheduledServicesForDate, updateScheduledServiceStatus, addCompanionToService, removeCompanionFromService, shouldScheduleOnDay, updateScheduledServiceNotesAndPhotos, passTaskToNextService } from '../../services/scheduleService';
 import { 
   createCheckIn, completeCheckOut, getActiveCheckIn, getCheckInsForDate,
   createTaskExecution, updateTaskExecution, getTaskExecutionsForService,
@@ -62,6 +62,13 @@ export default function ServiceDetailPage() {
   const [communityDocs, setCommunityDocs] = useState([]);
   const [groupedServices, setGroupedServices] = useState([]);
   
+  // Estados para evidencias generales
+  const [generalNotes, setGeneralNotes] = useState('');
+  const [generalPhotos, setGeneralPhotos] = useState([]);
+  const [uploadingGeneralPhoto, setUploadingGeneralPhoto] = useState(false);
+  const [submittingGeneralEvidence, setSubmittingGeneralEvidence] = useState(false);
+  const [submittedGeneralEvidence, setSubmittedGeneralEvidence] = useState(false);
+  
   // Estados para fichaje manual y estimaciones
   const [estimatedIn, setEstimatedIn] = useState(null);
   const [estimatedOut, setEstimatedOut] = useState(null);
@@ -93,6 +100,8 @@ export default function ServiceDetailPage() {
       }
       const svcData = { id: snap.id, ...snap.data() };
       setService(svcData);
+      setGeneralNotes(svcData.generalNotes || '');
+      setGeneralPhotos(svcData.generalPhotoUrls || []);
 
       // Load static info if not already loaded
       if (!community) {
@@ -649,10 +658,17 @@ export default function ServiceDetailPage() {
       for (const s of currentGroup) {
         if (s.communityTaskId) {
           const exec = taskExecutions.find(e => e.communityTaskId === s.communityTaskId);
-          if (exec && exec.status === 'completed') {
+          
+          // Excepciones que se consideran completadas al finalizar el servicio
+          const specificTask = tasks.find(t => t.id === s.communityTaskId);
+          const sName = (s.taskName || specificTask?.taskName || '').toLowerCase();
+          const isException = sName.includes('escalera') || sName.includes('portal') || sName.includes('garaje');
+          const isGarage = sName.includes('garaje');
+
+          if ((exec && exec.status === 'completed') || isException) {
             await updateScheduledServiceStatus(s.id, 'completed');
           } else {
-            await updateScheduledServiceStatus(s.id, 'missed');
+            await passTaskToNextService(s, isGarage);
           }
         } else {
           await updateScheduledServiceStatus(s.id, 'completed');
@@ -716,6 +732,40 @@ export default function ServiceDetailPage() {
     } finally {
       setUploadingPhoto(false);
       if (e.target) e.target.value = ''; // Clear input
+    }
+  }
+
+  async function handleGeneralPhotoUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    if (file.size > 10 * 1024 * 1024) {
+      alert('La imagen es demasiado grande (máximo 10MB)');
+      return;
+    }
+
+    setUploadingGeneralPhoto(true);
+    try {
+      const url = await uploadPhoto(file, userProfile.uid, serviceId);
+      setGeneralPhotos(prev => [...prev, url]);
+    } catch (err) {
+      alert('Error al subir foto: ' + err.message);
+    } finally {
+      setUploadingGeneralPhoto(false);
+      if (e.target) e.target.value = '';
+    }
+  }
+
+  async function handleSubmitGeneralEvidence() {
+    setSubmittingGeneralEvidence(true);
+    try {
+      await updateScheduledServiceNotesAndPhotos(serviceId, generalNotes, generalPhotos);
+      setSubmittedGeneralEvidence(true);
+      setTimeout(() => setSubmittedGeneralEvidence(false), 3000);
+    } catch (error) {
+      alert('Error guardando evidencia: ' + error.message);
+    } finally {
+      setSubmittingGeneralEvidence(false);
     }
   }
 
@@ -1259,10 +1309,15 @@ export default function ServiceDetailPage() {
                         for (const s of currentGroup) {
                           if (s.communityTaskId) {
                             const exec = taskExecutions.find(e => e.communityTaskId === s.communityTaskId);
-                            if (exec && exec.status === 'completed') {
+                            const specificTask = tasks.find(t => t.id === s.communityTaskId);
+                            const sName = (s.taskName || specificTask?.taskName || '').toLowerCase();
+                            const isException = sName.includes('escalera') || sName.includes('portal') || sName.includes('garaje');
+                            const isGarage = sName.includes('garaje');
+
+                            if ((exec && exec.status === 'completed') || isException) {
                               await updateScheduledServiceStatus(s.id, 'completed');
                             } else {
-                              await updateScheduledServiceStatus(s.id, 'missed');
+                              await passTaskToNextService(s, isGarage);
                             }
                           } else {
                             await updateScheduledServiceStatus(s.id, 'completed');
@@ -1348,118 +1403,105 @@ export default function ServiceDetailPage() {
         ) : taskExecutions.length === 0 ? (
           <p className="text-muted text-sm">No hay tareas configuradas</p>
         ) : (
-          <div className="task-checklist">
+          <div className="flex flex-col gap-3">
             {taskExecutions.map(exec => {
               const task = tasks.find(t => t.id === exec.communityTaskId);
               const isDone = exec.status === 'completed';
               const isUrgent = task?.isUrgent || service?.isUrgent;
+              
+              const sName = (task?.taskName || '').toLowerCase();
+              const isException = sName.includes('escalera') || sName.includes('portal') || sName.includes('garaje');
+
               return (
-                <div key={exec.id} className={`task-item ${isDone ? 'completed' : ''} ${isUrgent ? 'urgent' : ''}`}>
-                  <div
-                    className={`task-checkbox ${isDone ? 'checked' : ''}`}
-                    onClick={() => canEdit && toggleTaskStatus(exec)}
-                  >
-                    {isDone && '✓'}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div className={`task-name ${isDone ? 'done' : ''}`}>
-                      {isUrgent && !isDone ? '🚨 ' : ''}{task?.taskName || 'Tarea'}
-                    </div>
-                    
-                    {/* Notes */}
-                    {canEdit && (
-                      <div className="mt-2">
-                        <textarea
-                          className="form-textarea"
-                          placeholder="Añadir notas..."
-                          style={{ minHeight: '50px', fontSize: 'var(--font-xs)' }}
-                          defaultValue={exec.notes || ''}
-                          onBlur={async (e) => {
-                            if (e.target.value !== exec.notes) {
-                              const val = e.target.value;
-                              await updateTaskExecution(exec.id, { notes: val });
-                              setTaskExecutions(prev => prev.map(ex => 
-                                ex.id === exec.id ? { ...ex, notes: val } : ex
-                              ));
-                            }
-                          }}
-                        />
-                      </div>
-                    )}
-                    {exec.notes && !canEdit && (
-                      <p className="text-xs text-muted mt-2">📝 {exec.notes}</p>
-                    )}
-
-                    {/* Photos */}
-                    <div className="photo-upload">
-                      {exec.photoUrls?.map((url, i) => (
-                        <img key={i} src={url} alt={`Evidencia ${i+1}`} className="photo-thumb" />
-                      ))}
-                      {canEdit && (
-                        <label className="photo-upload-btn">
-                          📷
-                          <span>Foto</span>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            capture="environment"
-                            style={{ display: 'none' }}
-                            onChange={(e) => handlePhotoUpload(e, exec.id)}
-                          />
-                        </label>
-                      )}
-                    </div>
-
-                    {/* Submit Evidence Button */}
-                    {canEdit && (exec.photoUrls?.length > 0 || (exec.notes && exec.notes.trim())) && (
-                      <div className="mt-3">
-                        {submittedEvidence[exec.id] ? (
-                          <div style={{
-                            padding: '8px 12px',
-                            borderRadius: 'var(--radius-md)',
-                            background: 'var(--color-success-light, #dcfce7)',
-                            color: 'var(--color-success, #16a34a)',
-                            fontSize: 'var(--font-xs)',
-                            fontWeight: 700,
-                            textAlign: 'center',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: '6px',
-                          }}>
-                            ✅ Evidencia enviada correctamente
-                          </div>
-                        ) : (
-                          <button
-                            className="btn btn-primary btn-sm w-full"
-                            onClick={() => handleSubmitEvidence(exec)}
-                            disabled={submittingEvidence[exec.id]}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: '6px',
-                              fontWeight: 700,
-                              fontSize: '0.8rem',
-                            }}
-                          >
-                            {submittingEvidence[exec.id] ? (
-                              <>⏳ Enviando...</>
-                            ) : (
-                              <>📤 Enviar evidencia</>
-                            )}
-                          </button>
-                        )}
-                      </div>
-                    )}
-                    {uploadingPhoto && <p className="text-xs text-muted mt-2">Subiendo foto...</p>}
-                  </div>
-                </div>
+                <button
+                  key={exec.id}
+                  className={`btn w-full flex flex-col items-center justify-center p-4 rounded-xl shadow-sm transition-all ${
+                    isDone 
+                      ? 'bg-success text-white border-success' 
+                      : 'bg-white text-dark border border-gray-200 hover:bg-gray-50'
+                  }`}
+                  onClick={() => canEdit && toggleTaskStatus(exec)}
+                  style={{ minHeight: '80px' }}
+                >
+                  <span className="font-bold text-lg mb-1" style={{ wordBreak: 'break-word', textAlign: 'center' }}>
+                    {isUrgent && !isDone ? '🚨 ' : ''}{task?.taskName || 'Tarea'}
+                  </span>
+                  {isDone ? (
+                    <span className="text-sm font-semibold opacity-90">✅ COMPLETADO</span>
+                  ) : isException ? (
+                    <span className="text-xs text-muted font-medium">Automático al finalizar</span>
+                  ) : (
+                    <span className="text-xs text-primary font-bold uppercase tracking-wide">Pulsar para completar</span>
+                  )}
+                </button>
               );
             })}
           </div>
         )}
       </div>
+
+      {/* General Evidences Card */}
+      {showTasks && canEdit && (
+        <div className="card mt-4">
+          <h3 className="card-title mb-4">📸 Evidencias y Notas Generales</h3>
+          <p className="text-xs text-muted mb-3">
+            Las fotos y notas que añadas aquí se registrarán a nombre de esta comunidad para este servicio.
+          </p>
+          
+          <textarea
+            className="form-textarea mb-3"
+            placeholder="Añadir notas sobre la comunidad..."
+            style={{ minHeight: '80px', fontSize: 'var(--font-sm)' }}
+            value={generalNotes}
+            onChange={(e) => setGeneralNotes(e.target.value)}
+          />
+
+          <div className="photo-upload mb-4">
+            {generalPhotos.map((url, i) => (
+              <img key={i} src={url} alt={`Evidencia ${i+1}`} className="photo-thumb" />
+            ))}
+            <label className="photo-upload-btn">
+              📷
+              <span>Foto</span>
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                style={{ display: 'none' }}
+                onChange={handleGeneralPhotoUpload}
+                disabled={uploadingGeneralPhoto}
+              />
+            </label>
+          </div>
+
+          {(generalPhotos.length > 0 || generalNotes.trim().length > 0) && (
+            <div>
+              {submittedGeneralEvidence ? (
+                <div style={{
+                  padding: '12px',
+                  borderRadius: 'var(--radius-md)',
+                  background: 'var(--color-success-light, #dcfce7)',
+                  color: 'var(--color-success, #16a34a)',
+                  fontSize: 'var(--font-sm)',
+                  fontWeight: 700,
+                  textAlign: 'center',
+                }}>
+                  ✅ Evidencia guardada correctamente
+                </div>
+              ) : (
+                <button
+                  className="btn btn-primary w-full p-3 text-sm font-bold"
+                  onClick={handleSubmitGeneralEvidence}
+                  disabled={submittingGeneralEvidence}
+                >
+                  {submittingGeneralEvidence ? '⏳ Guardando...' : '📤 Enviar Evidencias'}
+                </button>
+              )}
+            </div>
+          )}
+          {uploadingGeneralPhoto && <p className="text-xs text-muted mt-2">Subiendo foto...</p>}
+        </div>
+      )}
 
       {isTitular && (
         <div className="card mt-4">

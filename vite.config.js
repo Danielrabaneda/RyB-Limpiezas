@@ -11,7 +11,7 @@ export default defineConfig({
       strategies: 'injectManifest',
       srcDir: 'src',
       filename: 'custom-sw.js',
-      includeAssets: ['favicon.svg'],
+      includeAssets: ['favicon.svg', 'favicon.png', 'icons/icon-192.png', 'icons/icon-512.png'],
       manifest: {
         name: 'RyB Limpiezas',
         short_name: 'RyB',

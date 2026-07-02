@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getOperarios, toggleUserActive, resetPassword, deleteOperario } from '../../services/authService';
+import { getOperarios, toggleUserActive, resetPassword, deleteOperario, updateUserProfile } from '../../services/authService';
 import { useAuth } from '../../contexts/AuthContext';
 
 export default function OperariosPage() {
@@ -7,8 +7,13 @@ export default function OperariosPage() {
   const [operarios, setOperarios] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({ name: '', email: '', password: '', phone: '' });
+  const [form, setForm] = useState({ name: '', email: '', password: '', phone: '', allowDirectTransfers: false });
   const [saving, setSaving] = useState(false);
+  
+  // Edit modal state
+  const [editModal, setEditModal] = useState({ open: false, operario: null, name: '', phone: '', allowDirectTransfers: false });
+  const [updating, setUpdating] = useState(false);
+
   const [deleteConfirm, setDeleteConfirm] = useState({ 
     open: false, 
     operario: null, 
@@ -38,9 +43,9 @@ export default function OperariosPage() {
     e.preventDefault();
     setSaving(true);
     try {
-      await createOperario(form.email, form.password, form.name, form.phone);
+      await createOperario(form.email, form.password, form.name, form.phone, form.allowDirectTransfers);
       setShowModal(false);
-      setForm({ name: '', email: '', password: '', phone: '' });
+      setForm({ name: '', email: '', password: '', phone: '', allowDirectTransfers: false });
       // Note: creating user via client SDK logs us in as that user
       // In production, use Admin SDK Cloud Function
       alert('Operario creado. NOTA: Tendrás que re-iniciar sesión como admin.');
@@ -49,6 +54,36 @@ export default function OperariosPage() {
       alert('Error: ' + err.message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  function handleEditClick(op) {
+    setEditModal({
+      open: true,
+      operario: op,
+      name: op.name || '',
+      phone: op.phone || '',
+      allowDirectTransfers: !!op.allowDirectTransfers
+    });
+  }
+
+  async function handleUpdateOperario(e) {
+    e.preventDefault();
+    if (!editModal.operario) return;
+    setUpdating(true);
+    try {
+      await updateUserProfile(editModal.operario.uid, {
+        name: editModal.name,
+        phone: editModal.phone,
+        allowDirectTransfers: editModal.allowDirectTransfers
+      });
+      setEditModal({ open: false, operario: null, name: '', phone: '', allowDirectTransfers: false });
+      await loadOperarios();
+      alert('Operario actualizado con éxito.');
+    } catch (err) {
+      alert('Error al actualizar operario: ' + err.message);
+    } finally {
+      setUpdating(false);
     }
   }
 
@@ -141,6 +176,9 @@ export default function OperariosPage() {
                     <div className="flex flex-wrap gap-1">
                       {op.role !== 'admin' ? (
                         <>
+                          <button className="btn btn-secondary btn-sm" onClick={() => handleEditClick(op)}>
+                            ✏️ Editar
+                          </button>
                           <button className="btn btn-secondary btn-sm" onClick={() => handleToggleActive(op)}>
                             {op.active ? '⏸️' : '▶️'} {op.active ? 'Desactivar' : 'Activar'}
                           </button>
@@ -203,11 +241,62 @@ export default function OperariosPage() {
                   <label className="form-label">Teléfono</label>
                   <input className="form-input" value={form.phone} onChange={e => setForm(f => ({...f, phone: e.target.value}))} />
                 </div>
+                <div className="form-group flex items-center gap-2 mt-4">
+                  <input 
+                    type="checkbox" 
+                    id="allowDirectTransfers" 
+                    checked={form.allowDirectTransfers} 
+                    onChange={e => setForm(f => ({...f, allowDirectTransfers: e.target.checked}))} 
+                  />
+                  <label htmlFor="allowDirectTransfers" className="form-label mb-0 cursor-pointer" style={{ fontSize: '13px' }}>
+                    Autorizar traspasos/reprogramaciones directos sin validación
+                  </label>
+                </div>
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={() => setShowModal(false)}>Cancelar</button>
                 <button type="submit" className="btn btn-primary" disabled={saving}>
                   {saving ? 'Creando...' : 'Crear operario'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {editModal.open && editModal.operario && (
+        <div className="modal-overlay" onClick={() => setEditModal({ open: false, operario: null, name: '', phone: '', allowDirectTransfers: false })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">Editar operario</h3>
+              <button className="btn btn-ghost btn-sm" onClick={() => setEditModal({ open: false, operario: null, name: '', phone: '', allowDirectTransfers: false })}>✕</button>
+            </div>
+            <form onSubmit={handleUpdateOperario}>
+              <div className="modal-body">
+                <div className="form-group">
+                  <label className="form-label">Nombre completo</label>
+                  <input className="form-input" value={editModal.name} onChange={e => setEditModal(f => ({...f, name: e.target.value}))} required />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Teléfono</label>
+                  <input className="form-input" value={editModal.phone} onChange={e => setEditModal(f => ({...f, phone: e.target.value}))} />
+                </div>
+                <div className="form-group flex items-center gap-2 mt-4">
+                  <input 
+                    type="checkbox" 
+                    id="editAllowDirectTransfers" 
+                    checked={editModal.allowDirectTransfers} 
+                    onChange={e => setEditModal(f => ({...f, allowDirectTransfers: e.target.checked}))} 
+                  />
+                  <label htmlFor="editAllowDirectTransfers" className="form-label mb-0 cursor-pointer" style={{ fontSize: '13px' }}>
+                    Autorizar traspasos/reprogramaciones directos sin validación
+                  </label>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setEditModal({ open: false, operario: null, name: '', phone: '', allowDirectTransfers: false })}>Cancelar</button>
+                <button type="submit" className="btn btn-primary" disabled={updating}>
+                  {updating ? 'Guardando...' : 'Guardar cambios'}
                 </button>
               </div>
             </form>

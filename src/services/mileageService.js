@@ -11,6 +11,13 @@ import { startOfDay, endOfDay, format, differenceInMinutes, eachDayOfInterval, i
 const COLLECTION = 'dailyMileage';
 const ROAD_FACTOR = 1.3; // Factor de corrección línea recta → carretera
 
+function getTimestampMillis(ts) {
+  if (!ts) return Date.now();
+  if (typeof ts === 'number') return ts;
+  if (ts.toDate) return ts.toDate().getTime();
+  return new Date(ts).getTime();
+}
+
 /**
  * Calcula la distancia total recorrida sumando los puntos de migas de pan (breadcrumbs).
  */
@@ -97,11 +104,12 @@ export async function calculateDailyMileage(userId, date, userName = 'Operario',
       const firstSession = sortedSessions[0];
       const firstBread = firstSession.breadcrumbs?.[0];
       if (firstBread) {
+        const firstMillis = getTimestampMillis(firstBread.timestamp);
         virtualPoints.push({
           communityId: 'VIRTUAL_START',
           communityName: 'Inicio de trayecto (Coche)',
-          checkInTime: Timestamp.fromMillis(firstBread.timestamp),
-          checkOutTime: Timestamp.fromMillis(firstBread.timestamp),
+          checkInTime: Timestamp.fromMillis(firstMillis),
+          checkOutTime: Timestamp.fromMillis(firstMillis),
           lat: firstBread.lat,
           lng: firstBread.lng,
           isVirtual: true
@@ -112,11 +120,12 @@ export async function calculateDailyMileage(userId, date, userName = 'Operario',
       const lastSession = sortedSessions[sortedSessions.length - 1];
       const lastBread = lastSession.breadcrumbs?.[lastSession.breadcrumbs?.length - 1];
       if (lastBread && lastBread !== firstBread) {
+        const lastMillis = getTimestampMillis(lastBread.timestamp);
         virtualPoints.push({
           communityId: 'VIRTUAL_END',
           communityName: 'Fin de trayecto (Coche)',
-          checkInTime: Timestamp.fromMillis(lastBread.timestamp),
-          checkOutTime: Timestamp.fromMillis(lastBread.timestamp),
+          checkInTime: Timestamp.fromMillis(lastMillis),
+          checkOutTime: Timestamp.fromMillis(lastMillis),
           lat: lastBread.lat,
           lng: lastBread.lng,
           isVirtual: true
