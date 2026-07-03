@@ -255,6 +255,14 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------------------
+    // ADMINISTRADORES DE FINCAS
+    // -------------------------------------------------------------------------
+    match /administrators/{adminId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // -------------------------------------------------------------------------
     // OTHER / FUTURE COLLECTIONS
     // -------------------------------------------------------------------------
     // Add explicitly any other collections you use to avoid access denied
