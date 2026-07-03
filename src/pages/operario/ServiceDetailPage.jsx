@@ -29,7 +29,7 @@ import { format, startOfWeek, endOfWeek } from 'date-fns';
 export default function ServiceDetailPage() {
   const { serviceId } = useParams();
   const { userProfile } = useAuth();
-  const { getCurrentPosition, loading: geoLoading } = useGeolocation();
+  const { getCurrentPosition, getFilteredPosition, loading: geoLoading } = useGeolocation();
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
 
@@ -258,7 +258,7 @@ export default function ServiceDetailPage() {
 
     const updateDistance = async () => {
       try {
-        const pos = await getCurrentPosition();
+        const pos = await getFilteredPosition();
         if (!active) return;
         const commLat = community.location._lat || community.location.latitude || 0;
         const commLng = community.location._long || community.location.longitude || 0;
@@ -278,7 +278,7 @@ export default function ServiceDetailPage() {
       active = false;
       if (intervalId) clearInterval(intervalId);
     };
-  }, [community, getCurrentPosition]);
+  }, [community, getFilteredPosition]);
 
   // Función inteligente para estimar hora de llegada y salida basadas en la jornada
   const calculateEstimates = async (userId, currentSvc, workday) => {
@@ -458,7 +458,7 @@ export default function ServiceDetailPage() {
   async function handleCheckIn(manualTime = null) {
     setActionLoading(true);
     try {
-      const pos = await getCurrentPosition();
+      const pos = await getFilteredPosition();
       
       // Validate distance (solo si no es manual o para informar)
       if (community?.location) {
@@ -606,7 +606,7 @@ export default function ServiceDetailPage() {
     if (!activeCheckIn) return;
     setActionLoading(true);
     try {
-      const pos = await getCurrentPosition();
+      const pos = await getFilteredPosition();
       
       // Si no se proporcionó hora manual, verificar si el usuario está lejos
       // y hay una hora de salida detectada que debería ofrecerse
@@ -901,7 +901,7 @@ export default function ServiceDetailPage() {
                 onClick={async () => {
                   setSendingGPS(true);
                   try {
-                    const pos = await getCurrentPosition();
+                    const pos = await getFilteredPosition();
                     await createGPSSuggestion({
                       communityId: service.communityId,
                       communityName: community.name,
@@ -1159,7 +1159,7 @@ export default function ServiceDetailPage() {
                         return;
                       }
 
-                      const pos = await getCurrentPosition();
+                      const pos = await getFilteredPosition();
 
                       // 1. Crear el check-in con hora manual de entrada
                       const checkInId = await createCheckIn({

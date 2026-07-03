@@ -51,7 +51,6 @@ export default function MaterialRequestPage() {
       
       alert('Pedido enviado correctamente');
       setFormData({ productId: '', quantity: 1, notes: '' });
-      navigate('/operario');
     } catch (err) {
       console.error(err);
       alert('Error al enviar pedido');
