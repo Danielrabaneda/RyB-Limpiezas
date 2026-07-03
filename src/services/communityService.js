@@ -22,6 +22,9 @@ export async function createCommunity(data) {
     basePrice: parseFloat(data.basePrice) || 0,
     paymentMethod: data.paymentMethod || 'transferencia',
     billingEmail: data.billingEmail || '',
+    billingIban: data.billingIban || '',
+    billingMandateRef: data.billingMandateRef || '',
+    billingMandateDate: data.billingMandateDate || '',
     active: true,
     createdAt: serverTimestamp(),
   };

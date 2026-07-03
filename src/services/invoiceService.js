@@ -35,7 +35,8 @@ const DEFAULT_SETTINGS = {
   smtpEmail: '',
   smtpPassword: '',
   emailSubjectTemplate: 'Factura {numero} - RyB Limpiezas',
-  emailBodyTemplate: '<p>Hola,</p><p>Le adjuntamos la factura <strong>{numero}</strong> correspondiente al servicio de limpieza de la comunidad <strong>{comunidad}</strong>.</p><p>Atentamente,<br/>RyB Limpiezas</p>'
+  emailBodyTemplate: '<p>Hola,</p><p>Le adjuntamos la factura <strong>{numero}</strong> correspondiente al servicio de limpieza de la comunidad <strong>{comunidad}</strong>.</p><p>Atentamente,<br/>RyB Limpiezas</p>',
+  sepaSuffix: '000'
 };
 
 export async function getBillingSettings() {
@@ -209,7 +210,10 @@ export async function generateMonthlyDrafts(month, year) {
         name: comm.name,
         cif: comm.billingCif || "",
         billingAddress: comm.billingAddress || comm.address || "",
-        email: comm.billingEmail || comm.contactPhone || ""
+        email: comm.billingEmail || comm.contactPhone || "",
+        iban: comm.billingIban || "",
+        mandateRef: comm.billingMandateRef || "",
+        mandateDate: comm.billingMandateDate || ""
       },
       items: [
         {

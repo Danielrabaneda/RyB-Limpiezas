@@ -25,6 +25,7 @@ import { es } from 'date-fns/locale';
 import { useAuth } from '../../contexts/AuthContext';
 import jsPDF from 'jspdf';
 import JSZip from 'jszip';
+import { generateSepaXML, calculateSepaCreditorId, validateIBAN } from '../../services/sepaGenerator';
 
 const parseLocaleFloat = (val) => {
   if (val === undefined || val === null || val === '') return 0;
@@ -119,7 +120,17 @@ export default function InvoicesPage() {
     smtpEmail: '',
     smtpPassword: '',
     emailSubjectTemplate: 'Factura {numero} - RyB Limpiezas',
-    emailBodyTemplate: ''
+    emailBodyTemplate: '',
+    sepaSuffix: '000'
+  });
+
+  // SEPA Remittance modal state
+  const [sepaModal, setSepaModal] = useState({
+    open: false,
+    collectionDate: '',
+    eligibleInvoices: [],
+    warnings: [],
+    markAsPaid: false
   });
 
   useEffect(() => {
@@ -1370,6 +1381,140 @@ export default function InvoicesPage() {
     return { facturado, cobrado, pendiente };
   })();
 
+  // ==================== SEPA REMITTANCE HANDLERS ====================
+  const handleOpenSepaModal = () => {
+    // Filter pending invoices with 'recibo' payment method
+    const pendingInvoices = invoices.filter(inv => inv.status === 'pending');
+    const eligible = [];
+    const warnings = [];
+
+    pendingInvoices.forEach(inv => {
+      if (inv.paymentMethod !== 'recibo') return;
+
+      const clientIban = inv.client?.iban || '';
+      const mandateRef = inv.client?.mandateRef || '';
+      const mandateDate = inv.client?.mandateDate || '';
+
+      const ibanResult = clientIban ? validateIBAN(clientIban) : { valid: false, error: 'Sin IBAN' };
+
+      if (!clientIban) {
+        warnings.push(`⚠️ ${inv.client.name} (Factura ${inv.invoiceNumber}): No tiene IBAN configurado. Se excluirá de la remesa.`);
+        return;
+      }
+      if (!ibanResult.valid) {
+        warnings.push(`❌ ${inv.client.name} (Factura ${inv.invoiceNumber}): IBAN inválido (${ibanResult.error}). Se excluirá.`);
+        return;
+      }
+      if (!mandateRef) {
+        warnings.push(`⚠️ ${inv.client.name} (Factura ${inv.invoiceNumber}): Sin referencia de mandato SEPA. Se incluirá con referencia genérica.`);
+      }
+
+      eligible.push({
+        ...inv,
+        _cleanIban: ibanResult.iban,
+        _mandateRef: mandateRef || `MNDT-${inv.client.communityId?.substring(0, 8) || 'GEN'}`,
+        _mandateDate: mandateDate || '2020-01-01'
+      });
+    });
+
+    if (eligible.length === 0 && pendingInvoices.filter(i => i.paymentMethod === 'recibo').length === 0) {
+      alert('No hay facturas pendientes con método de pago "Recibo Domiciliado" para este periodo.');
+      return;
+    }
+
+    // Default collection date: 5 business days from now
+    const defaultDate = new Date();
+    defaultDate.setDate(defaultDate.getDate() + 5);
+    const defaultDateStr = format(defaultDate, 'yyyy-MM-dd');
+
+    setSepaModal({
+      open: true,
+      collectionDate: defaultDateStr,
+      eligibleInvoices: eligible,
+      warnings,
+      markAsPaid: false
+    });
+  };
+
+  const handleGenerateSepaXML = async () => {
+    if (!billingSettings) return;
+    const { eligibleInvoices, collectionDate, markAsPaid } = sepaModal;
+
+    if (eligibleInvoices.length === 0) {
+      alert('No hay facturas válidas para incluir en la remesa.');
+      return;
+    }
+
+    if (!collectionDate) {
+      alert('Debes indicar una fecha de cobro/adeudo.');
+      return;
+    }
+
+    // Validate creditor data
+    const creditorIbanResult = validateIBAN(billingSettings.bankAccount || '');
+    if (!creditorIbanResult.valid) {
+      alert('El IBAN de la empresa (cuenta bancaria en Ajustes de Factura) no es válido. Por favor, configúralo primero.');
+      return;
+    }
+
+    try {
+      const creditorId = calculateSepaCreditorId(
+        'ES',
+        billingSettings.nif || '',
+        billingSettings.sepaSuffix || '000'
+      );
+
+      const sepaInvoices = eligibleInvoices.map(inv => ({
+        id: inv.id,
+        invoiceNumber: inv.invoiceNumber || 'SN',
+        totalAmount: inv.totalAmount,
+        client: {
+          name: inv.client.name,
+          iban: inv._cleanIban,
+          mandateRef: inv._mandateRef,
+          mandateDate: inv._mandateDate
+        }
+      }));
+
+      const xml = generateSepaXML({
+        creditor: {
+          name: billingSettings.companyName || 'RyB Limpiezas',
+          nif: billingSettings.nif || '',
+          iban: creditorIbanResult.iban,
+          creditorId
+        },
+        invoices: sepaInvoices,
+        collectionDate
+      });
+
+      // Download the XML file
+      const blob = new Blob([xml], { type: 'application/xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const monthName = getMonthName(parseInt(filterMonth));
+      a.href = url;
+      a.download = `Remesa_SEPA_${monthName}_${filterYear}_${format(new Date(), 'yyyyMMdd')}.xml`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      // Optionally mark invoices as paid
+      if (markAsPaid) {
+        for (const inv of eligibleInvoices) {
+          await updateInvoiceStatus(inv.id, 'paid');
+        }
+        await loadInvoices();
+      }
+
+      setSepaModal(prev => ({ ...prev, open: false }));
+      alert(`✅ Remesa SEPA generada con éxito. Se han incluido ${eligibleInvoices.length} adeudos por un total de ${eligibleInvoices.reduce((sum, i) => sum + i.totalAmount, 0).toLocaleString('es-ES', { minimumFractionDigits: 2 })} €.`);
+    } catch (err) {
+      console.error('Error generating SEPA XML:', err);
+      alert('Error al generar la remesa SEPA: ' + err.message);
+    }
+  };
+
   return (
     <div className="page-container animate-fadeIn">
       {/* Header section */}
@@ -1819,6 +1964,46 @@ export default function InvoicesPage() {
                 />
               </div>
 
+              {/* SEPA Remittance Settings */}
+              <div className="form-group" style={{ gridColumn: 'span 2', padding: '16px', background: '#ecfdf5', borderRadius: 'var(--radius-md)', border: '1px solid #a7f3d0', marginTop: '10px' }}>
+                <h4 style={{ fontWeight: 'bold', fontSize: '0.875rem', marginBottom: '12px' }}>🏦 Remesas Bancarias SEPA (Cuaderno 19)</h4>
+                <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                  <div style={{ flex: '0 0 160px' }}>
+                    <label className="form-label" style={{ fontSize: '11px' }}>Sufijo Acreedor SEPA</label>
+                    <input 
+                      type="text" 
+                      className="form-input"
+                      maxLength={3}
+                      placeholder="000"
+                      value={settingsForm.sepaSuffix || '000'}
+                      onChange={e => setSettingsForm({...settingsForm, sepaSuffix: e.target.value.replace(/[^0-9]/g, '').substring(0, 3)})}
+                      style={{ fontFamily: 'monospace', textAlign: 'center', letterSpacing: '4px', fontSize: '1.1rem' }}
+                    />
+                    <p style={{ fontSize: '10px', color: '#64748b', marginTop: '4px' }}>
+                      Código de 3 dígitos asignado por tu banco. El valor por defecto suele ser 000.
+                    </p>
+                  </div>
+                  <div style={{ flex: 1, minWidth: '250px' }}>
+                    <label className="form-label" style={{ fontSize: '11px' }}>Identificador de Acreedor SEPA (calculado)</label>
+                    <div style={{ padding: '10px 14px', background: '#fff', borderRadius: '6px', border: '1px solid #d1d5db', fontFamily: 'monospace', fontSize: '1rem', letterSpacing: '1px', color: '#059669', fontWeight: 'bold' }}>
+                      {(() => {
+                        try {
+                          return calculateSepaCreditorId('ES', settingsForm.nif || '', settingsForm.sepaSuffix || '000');
+                        } catch {
+                          return 'ES??000' + (settingsForm.nif || '????????');
+                        }
+                      })()}
+                    </div>
+                    <p style={{ fontSize: '10px', color: '#64748b', marginTop: '4px' }}>
+                      Este es el identificador que te identifica como acreedor en las remesas. Se calcula a partir de tu NIF y el sufijo. Verifica que coincida con el que te ha proporcionado tu banco.
+                    </p>
+                  </div>
+                </div>
+                <div style={{ marginTop: '10px', padding: '8px 12px', background: '#f0fdf4', borderRadius: '6px', border: '1px solid #bbf7d0', fontSize: '11px', color: '#166534' }}>
+                  ℹ️ Para generar remesas, asegúrate de que la <strong>Cuenta Bancaria (IBAN)</strong> de la empresa esté configurada arriba y que las comunidades con método de pago "Recibo Domiciliado" tengan su IBAN y mandato SEPA configurado en su ficha.
+                </div>
+              </div>
+
               {/* SMTP Settings */}
               <div style={{ gridColumn: 'span 2', marginTop: '16px', borderTop: '1px solid #e2e8f0', paddingTop: '16px' }}>
                 <h4 className="text-sm font-bold mb-3 flex items-center gap-2" style={{ color: 'var(--color-primary)' }}>
@@ -1963,6 +2148,17 @@ export default function InvoicesPage() {
                   disabled={actionLoading}
                 >
                   ✉️ Enviar todas por Email ({filteredInvoices.length})
+                </button>
+              )}
+              {activeTab === 'pending' && filteredInvoices.some(i => i.paymentMethod === 'recibo') && (
+                <button 
+                  type="button"
+                  className="btn btn-sm"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: 'linear-gradient(135deg, #059669, #047857)', color: 'white', border: 'none', fontWeight: 'bold' }}
+                  onClick={handleOpenSepaModal}
+                  disabled={actionLoading}
+                >
+                  🏦 Generar Remesa SEPA
                 </button>
               )}
               {Object.keys(selectedInvoices).filter(id => selectedInvoices[id]).length > 0 && (
@@ -3095,6 +3291,121 @@ export default function InvoicesPage() {
                 onClick={() => setEmailProgressModal({ open: false, total: 0, current: 0, status: 'idle', log: [] })}
               >
                 Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: SEPA Remittance */}
+      {sepaModal.open && (
+        <div className="modal-overlay" onClick={() => setSepaModal(prev => ({ ...prev, open: false }))}>
+          <div className="modal" style={{ maxWidth: '750px', width: '95vw' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">🏦 Generar Remesa Bancaria SEPA</h3>
+              <button className="btn btn-ghost btn-sm" onClick={() => setSepaModal(prev => ({ ...prev, open: false }))}>✕</button>
+            </div>
+            <div className="modal-body" style={{ padding: '20px', maxHeight: '70vh', overflowY: 'auto' }}>
+              {/* Collection date */}
+              <div style={{ marginBottom: '16px' }}>
+                <label className="form-label" style={{ fontWeight: 'bold' }}>📅 Fecha de Cobro / Adeudo</label>
+                <input 
+                  type="date" 
+                  className="form-input"
+                  style={{ maxWidth: '220px' }}
+                  value={sepaModal.collectionDate}
+                  onChange={e => setSepaModal(prev => ({ ...prev, collectionDate: e.target.value }))}
+                />
+                <p style={{ fontSize: '10px', color: '#64748b', marginTop: '4px' }}>
+                  Fecha en la que el banco realizará el cargo en las cuentas de las comunidades. Debe ser al menos 2 días hábiles en el futuro.
+                </p>
+              </div>
+
+              {/* Eligible invoices summary */}
+              <div style={{ marginBottom: '16px' }}>
+                <h4 style={{ fontWeight: 'bold', fontSize: '0.85rem', marginBottom: '8px', color: '#059669' }}>
+                  ✅ Facturas incluidas en la remesa ({sepaModal.eligibleInvoices.length})
+                </h4>
+                {sepaModal.eligibleInvoices.length > 0 ? (
+                  <div style={{ border: '1px solid #d1fae5', borderRadius: '8px', overflow: 'hidden' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                      <thead>
+                        <tr style={{ background: '#ecfdf5' }}>
+                          <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 'bold', color: '#065f46' }}>Factura</th>
+                          <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 'bold', color: '#065f46' }}>Comunidad</th>
+                          <th style={{ padding: '8px 12px', textAlign: 'center', fontWeight: 'bold', color: '#065f46' }}>IBAN</th>
+                          <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 'bold', color: '#065f46' }}>Importe</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sepaModal.eligibleInvoices.map(inv => (
+                          <tr key={inv.id} style={{ borderTop: '1px solid #d1fae5' }}>
+                            <td style={{ padding: '6px 12px', fontWeight: 'bold' }}>{inv.invoiceNumber}</td>
+                            <td style={{ padding: '6px 12px' }}>{inv.client.name}</td>
+                            <td style={{ padding: '6px 12px', textAlign: 'center', fontFamily: 'monospace', fontSize: '0.7rem', color: '#475569' }}>
+                              {inv._cleanIban ? `${inv._cleanIban.substring(0, 4)}...${inv._cleanIban.substring(inv._cleanIban.length - 4)}` : '—'}
+                            </td>
+                            <td style={{ padding: '6px 12px', textAlign: 'right', fontWeight: 'bold' }}>
+                              {inv.totalAmount.toLocaleString('es-ES', { minimumFractionDigits: 2 })} €
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr style={{ borderTop: '2px solid #059669', background: '#ecfdf5' }}>
+                          <td colSpan="3" style={{ padding: '8px 12px', fontWeight: 'bold', color: '#065f46' }}>TOTAL REMESA</td>
+                          <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 'bold', fontSize: '1rem', color: '#059669' }}>
+                            {sepaModal.eligibleInvoices.reduce((sum, i) => sum + i.totalAmount, 0).toLocaleString('es-ES', { minimumFractionDigits: 2 })} €
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                ) : (
+                  <div style={{ padding: '16px', background: '#fef2f2', borderRadius: '8px', border: '1px solid #fecaca', color: '#991b1b', fontSize: '0.85rem' }}>
+                    ❌ No hay facturas válidas para incluir en la remesa. Revisa que las comunidades con método "Recibo Domiciliado" tengan su IBAN correctamente configurado.
+                  </div>
+                )}
+              </div>
+
+              {/* Warnings */}
+              {sepaModal.warnings.length > 0 && (
+                <div style={{ marginBottom: '16px', padding: '12px', background: '#fffbeb', borderRadius: '8px', border: '1px solid #fde68a' }}>
+                  <h4 style={{ fontWeight: 'bold', fontSize: '0.8rem', marginBottom: '6px', color: '#92400e' }}>⚠️ Advertencias</h4>
+                  {sepaModal.warnings.map((w, idx) => (
+                    <div key={idx} style={{ fontSize: '0.75rem', color: '#78350f', marginBottom: '3px' }}>{w}</div>
+                  ))}
+                </div>
+              )}
+
+              {/* Mark as paid checkbox */}
+              {sepaModal.eligibleInvoices.length > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', background: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                  <input 
+                    type="checkbox"
+                    id="sepaMarkAsPaid"
+                    checked={sepaModal.markAsPaid}
+                    onChange={e => setSepaModal(prev => ({ ...prev, markAsPaid: e.target.checked }))}
+                    style={{ width: '18px', height: '18px', accentColor: '#059669' }}
+                  />
+                  <label htmlFor="sepaMarkAsPaid" style={{ fontSize: '0.8125rem', cursor: 'pointer' }}>
+                    Marcar automáticamente las facturas remesadas como <strong>"Cobradas"</strong> tras generar el archivo
+                  </label>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-secondary" onClick={() => setSepaModal(prev => ({ ...prev, open: false }))}>
+                Cancelar
+              </button>
+              <button 
+                type="button" 
+                className="btn"
+                style={{ background: 'linear-gradient(135deg, #059669, #047857)', color: 'white', border: 'none', fontWeight: 'bold' }}
+                onClick={handleGenerateSepaXML}
+                disabled={sepaModal.eligibleInvoices.length === 0}
+              >
+                🏦 Descargar Remesa XML ({sepaModal.eligibleInvoices.length} adeudos)
               </button>
             </div>
           </div>

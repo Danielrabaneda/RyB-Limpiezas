@@ -47,7 +47,8 @@ export default function CommunitiesPage() {
     name: '', address: '', lat: '', lng: '', type: 'comunidad',
     contactPerson: '', contactPhone: '', individualTimeTracking: false,
     preferredTime: '',
-    billingCif: '', billingAddress: '', basePrice: '0', paymentMethod: 'transferencia', billingEmail: ''
+    billingCif: '', billingAddress: '', basePrice: '0', paymentMethod: 'transferencia', billingEmail: '',
+    billingIban: '', billingMandateRef: '', billingMandateDate: ''
   });
 
   const [taskForm, setTaskForm] = useState({
@@ -216,7 +217,8 @@ export default function CommunitiesPage() {
     setEditingCommunity(null);
     setForm({ 
       name: '', address: '', lat: '', lng: '', type: 'comunidad', contactPerson: '', contactPhone: '', individualTimeTracking: false, preferredTime: '',
-      billingCif: '', billingAddress: '', basePrice: '0', paymentMethod: 'transferencia', billingEmail: ''
+      billingCif: '', billingAddress: '', basePrice: '0', paymentMethod: 'transferencia', billingEmail: '',
+      billingIban: '', billingMandateRef: '', billingMandateDate: ''
     });
     setShowModal(true);
   }
@@ -238,6 +240,9 @@ export default function CommunitiesPage() {
       basePrice: String(comm.basePrice || 0),
       paymentMethod: comm.paymentMethod || 'transferencia',
       billingEmail: comm.billingEmail || '',
+      billingIban: comm.billingIban || '',
+      billingMandateRef: comm.billingMandateRef || '',
+      billingMandateDate: comm.billingMandateDate || '',
     });
     setShowModal(true);
     loadGPSSuggestions(comm.id);
@@ -355,6 +360,9 @@ export default function CommunitiesPage() {
         basePrice: parseFloat(form.basePrice) || 0,
         paymentMethod: form.paymentMethod || 'transferencia',
         billingEmail: finalBillingEmail,
+        billingIban: form.billingIban || '',
+        billingMandateRef: form.billingMandateRef || '',
+        billingMandateDate: form.billingMandateDate || '',
       };
 
       if (editingCommunity) {
@@ -840,6 +848,15 @@ export default function CommunitiesPage() {
                 <div><span className="text-xs text-muted">Mensualidad Base</span><p className="font-medium text-sm font-bold text-slate-800">{selectedCommunity.basePrice || 0} €</p></div>
                 <div><span className="text-xs text-muted">Email Facturación</span><p className="font-medium text-sm">{selectedCommunity.billingEmail || '—'}</p></div>
                 <div><span className="text-xs text-muted">Método Pago</span><p className="font-medium text-sm text-capitalize">{selectedCommunity.paymentMethod || 'transferencia'}</p></div>
+                {selectedCommunity.paymentMethod === 'recibo' && (
+                  <>
+                    <div><span className="text-xs text-muted">IBAN Domiciliación</span><p className="font-medium text-sm" style={{ fontFamily: 'monospace' }}>{selectedCommunity.billingIban || '⚠️ Sin configurar'}</p></div>
+                    <div><span className="text-xs text-muted">Ref. Mandato SEPA</span><p className="font-medium text-sm">{selectedCommunity.billingMandateRef || '⚠️ Sin configurar'}</p></div>
+                    {selectedCommunity.billingMandateDate && (
+                      <div><span className="text-xs text-muted">Fecha Mandato</span><p className="font-medium text-sm">{selectedCommunity.billingMandateDate}</p></div>
+                    )}
+                  </>
+                )}
                 {selectedCommunity.billingAddress && (
                   <div style={{ gridColumn: 'span 2' }}><span className="text-xs text-muted">Dirección Facturación</span><p className="font-medium text-sm">{selectedCommunity.billingAddress}</p></div>
                 )}
@@ -1479,6 +1496,47 @@ export default function CommunitiesPage() {
                       </select>
                     </div>
                   </div>
+
+                  {form.paymentMethod === 'recibo' && (
+                    <div style={{ gridColumn: 'span 2', padding: '12px 16px', background: '#eff6ff', borderRadius: '8px', border: '1px solid #bfdbfe', marginTop: '4px' }}>
+                      <h4 style={{ fontWeight: 'bold', fontSize: '0.8rem', marginBottom: '10px', color: '#1e40af' }}>🏦 Datos de Domiciliación Bancaria (SEPA)</h4>
+                      <div className="grid grid-2 gap-4">
+                        <div>
+                          <label className="form-label">IBAN de la Comunidad</label>
+                          <input 
+                            type="text" 
+                            className="form-input" 
+                            placeholder="ES00 0000 0000 0000 0000 0000"
+                            value={form.billingIban || ''}
+                            onChange={e => setForm(f => ({...f, billingIban: e.target.value.toUpperCase()}))}
+                            style={{ fontFamily: 'monospace', letterSpacing: '1px' }}
+                          />
+                        </div>
+                        <div>
+                          <label className="form-label">Referencia del Mandato SEPA</label>
+                          <input 
+                            type="text" 
+                            className="form-input" 
+                            placeholder="Ej: MANDATE-001"
+                            value={form.billingMandateRef || ''}
+                            onChange={e => setForm(f => ({...f, billingMandateRef: e.target.value}))}
+                          />
+                        </div>
+                        <div>
+                          <label className="form-label">Fecha de Firma del Mandato</label>
+                          <input 
+                            type="date" 
+                            className="form-input" 
+                            value={form.billingMandateDate || ''}
+                            onChange={e => setForm(f => ({...f, billingMandateDate: e.target.value}))}
+                          />
+                        </div>
+                      </div>
+                      <p style={{ fontSize: '10px', color: '#64748b', marginTop: '8px' }}>
+                        Estos datos son necesarios para generar las remesas bancarias SEPA (Cuaderno 19). El mandato debe estar firmado por la comunidad autorizando el cobro.
+                      </p>
+                    </div>
+                  )}
 
                   <div>
                     <label className="form-label">Dirección Fiscal / Facturación</label>
