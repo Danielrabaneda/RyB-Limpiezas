@@ -17,9 +17,11 @@ import {
   emitAllInvoices,
   getNextInvoiceNumber,
   uploadInvoicePDFToStorage,
-  sendInvoiceEmails
+  sendInvoiceEmails,
+  sendGroupedInvoiceEmails
 } from '../../services/invoiceService';
 import { getCommunities } from '../../services/communityService';
+import { getAdministrators } from '../../services/administratorService';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { useAuth } from '../../contexts/AuthContext';
@@ -45,10 +47,12 @@ export default function InvoicesPage() {
   // Tabs: 'drafts', 'pending', 'paid', 'settings'
   const [activeTab, setActiveTab] = useState('drafts');
   const [searchTerm, setSearchTerm] = useState('');
+  const [filterAdmin, setFilterAdmin] = useState('');
   
   // Data states
   const [invoices, setInvoices] = useState([]);
   const [communities, setCommunities] = useState([]);
+  const [administrators, setAdministrators] = useState([]);
   const [billingSettings, setBillingSettings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
@@ -148,11 +152,12 @@ export default function InvoicesPage() {
   const loadInitialData = async () => {
     setLoading(true);
     try {
-      const [settings, comms, tmpls, lastInv] = await Promise.all([
+      const [settings, comms, tmpls, lastInv, admins] = await Promise.all([
         getBillingSettings(),
         getCommunities(),
         getInvoiceTemplates(),
-        getLastEmittedInvoice()
+        getLastEmittedInvoice(),
+        getAdministrators()
       ]);
       
       const lastSeq = lastInv ? parseInt(lastInv.invoiceSeq) || 0 : 0;
@@ -167,6 +172,7 @@ export default function InvoicesPage() {
       setCommunities(comms);
       setTemplates(tmpls);
       setLastInvoice(lastInv);
+      setAdministrators(admins || []);
       await loadInvoices();
     } catch (err) {
       console.error("Error loading initial billing data:", err);
@@ -1200,27 +1206,20 @@ export default function InvoicesPage() {
     setActionLoading(true);
 
     try {
-      let sentCount = 0;
+      const processedIds = [];
+      
       for (let i = 0; i < invoicesList.length; i++) {
         const inv = invoicesList[i];
         
-        // Add log
         setEmailProgressModal(prev => ({
           ...prev,
-          log: [...prev.log, `Procesando factura ${inv.invoiceNumber || 'Borrador'} (${inv.client.name})...`]
+          log: [...prev.log, `Preparando PDF para factura ${inv.invoiceNumber || 'Borrador'} (${inv.client.name})...`]
         }));
 
-        const emails = (inv.client.email || '').split(/[,;]/).map(e => e.trim()).filter(Boolean);
-        if (emails.length === 0) {
-          setEmailProgressModal(prev => ({
-            ...prev,
-            log: [...prev.log, `⚠️ Advertencia: Factura ${inv.invoiceNumber || 'Borrador'} no tiene emails definidos. Saltando.`]
-          }));
-          continue;
-        }
-
         let pdfUrl = inv.pdfUrl;
-        if (!pdfUrl) {
+        let storagePath = inv.pdfStoragePath;
+        
+        if (!pdfUrl || !storagePath) {
           setEmailProgressModal(prev => ({
             ...prev,
             log: [...prev.log, `Generando PDF en segundo plano...`]
@@ -1240,48 +1239,60 @@ export default function InvoicesPage() {
             log: [...prev.log, `Subiendo PDF a almacenamiento de Firebase...`]
           }));
 
-          const storagePath = `invoices/${inv.id}/${pdfResult.filename}`;
+          storagePath = `invoices/${inv.id}/${pdfResult.filename}`;
           const storageUrl = await uploadInvoicePDFToStorage(inv.id, pdfResult.blob, pdfResult.filename);
           pdfUrl = storageUrl;
 
-          // Update in Firestore
           await updateInvoice(inv.id, { pdfUrl, pdfStoragePath: storagePath });
           
-          // Update in local state
           setInvoices(prev => prev.map(item => item.id === inv.id ? { ...item, pdfUrl, pdfStoragePath: storagePath } : item));
         }
 
+        processedIds.push(inv.id);
+      }
+
+      if (processedIds.length === 0) {
         setEmailProgressModal(prev => ({
           ...prev,
-          log: [...prev.log, `Llamando al servidor para enviar correo a: ${emails.join(', ')}...`]
+          status: 'completed',
+          log: [...prev.log, `Proceso finalizado. No se prepararon facturas válidas.`]
         }));
-
-        try {
-          await sendInvoiceEmails([inv.id]);
-          
-          // Update local status of invoice
-          const now = new Date();
-          setInvoices(prev => prev.map(item => item.id === inv.id ? { ...item, emailSent: true, emailSentAt: now } : item));
-          
-          sentCount++;
-          setEmailProgressModal(prev => ({
-            ...prev,
-            current: sentCount,
-            log: [...prev.log, `✅ Factura ${inv.invoiceNumber || 'Borrador'} enviada con éxito.`]
-          }));
-        } catch (err) {
-          console.error("Error sending invoice email:", err);
-          setEmailProgressModal(prev => ({
-            ...prev,
-            log: [...prev.log, `❌ Error al enviar factura ${inv.invoiceNumber || 'Borrador'}: ${err.message}`]
-          }));
-        }
+        return;
       }
 
       setEmailProgressModal(prev => ({
         ...prev,
+        log: [...prev.log, `Enviando petición de procesamiento agrupado al servidor para ${processedIds.length} facturas...`]
+      }));
+
+      const response = await sendGroupedInvoiceEmails(processedIds);
+      const results = response?.results || [];
+
+      let successCount = 0;
+      let errorCount = 0;
+
+      results.forEach(res => {
+        if (res.status === 'success') {
+          successCount++;
+          const now = new Date();
+          setInvoices(prev => prev.map(item => item.id === res.id ? { ...item, emailSent: true, emailSentAt: now } : item));
+        } else {
+          errorCount++;
+          setEmailProgressModal(prev => ({
+            ...prev,
+            log: [...prev.log, `❌ Error en factura ID ${res.id}: ${res.error || 'Fallo desconocido'}`]
+          }));
+        }
+      });
+
+      setEmailProgressModal(prev => ({
+        ...prev,
+        current: successCount,
         status: 'completed',
-        log: [...prev.log, `Proceso finalizado. Se enviaron ${sentCount} de ${invoicesList.length} facturas.`]
+        log: [
+          ...prev.log,
+          `Proceso finalizado. Facturas enviadas con éxito: ${successCount}. Fallidas: ${errorCount}.`
+        ]
       }));
 
     } catch (err) {
@@ -1350,6 +1361,13 @@ export default function InvoicesPage() {
     else if (activeTab === 'paid') matchesTab = inv.status === 'paid';
     
     if (!matchesTab) return false;
+    
+    if (filterAdmin) {
+      const communityId = inv.client?.communityId || "";
+      const comm = communities.find(c => c.id === communityId);
+      const adminId = inv.client?.administratorId || comm?.administratorId || "";
+      if (adminId !== filterAdmin) return false;
+    }
     
     if (!searchTerm) return true;
     const term = searchTerm.toLowerCase();
@@ -1567,6 +1585,19 @@ export default function InvoicesPage() {
                 >
                   {Array.from({ length: 12 }).map((_, i) => (
                     <option key={i} value={i}>{getMonthName(i)}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ minWidth: '180px' }}>
+                <label className="form-label" style={{ marginBottom: '4px' }}>Administrador de Fincas</label>
+                <select 
+                  className="form-select" 
+                  value={filterAdmin}
+                  onChange={e => setFilterAdmin(e.target.value)}
+                >
+                  <option value="">— Todos —</option>
+                  {administrators.map(admin => (
+                    <option key={admin.id} value={admin.id}>{admin.name}</option>
                   ))}
                 </select>
               </div>

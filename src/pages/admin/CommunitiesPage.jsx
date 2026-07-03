@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { getCommunities, createCommunity, updateCommunity, deleteCommunity } from '../../services/communityService';
+import { getAdministrators, createAdministrator, updateAdministrator, deleteAdministrator } from '../../services/administratorService';
 import { getPendingSuggestionsForCommunity, acceptSuggestion, rejectSuggestion } from '../../services/gpsSuggestionService';
 import { getCommunityTasks, createCommunityTask, updateCommunityTask, deleteCommunityTask } from '../../services/taskService';
 import { getAssignmentsForCommunity, createAssignment, deleteAssignment } from '../../services/taskService';
@@ -37,6 +38,17 @@ export default function CommunitiesPage() {
   const [showDocModal, setShowDocModal] = useState(false);
   const [docForm, setDocForm] = useState({ title: '', file: null });
   const [uploadingDoc, setUploadingDoc] = useState(false);
+
+  // Administrators states
+  const [administrators, setAdministrators] = useState([]);
+  const [showAdminModal, setShowAdminModal] = useState(false);
+  const [editingAdmin, setEditingAdmin] = useState(null);
+  const [adminForm, setAdminForm] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    contactPerson: ''
+  });
 
   // GPS notification state
   const [pendingGPSCommunityIds, setPendingGPSCommunityIds] = useState(new Set());
@@ -93,9 +105,10 @@ export default function CommunitiesPage() {
   async function loadData() {
     setLoading(true);
     try {
-      const [comms, ops] = await Promise.all([getCommunities(), getOperarios()]);
+      const [comms, ops, admins] = await Promise.all([getCommunities(), getOperarios(), getAdministrators()]);
       setCommunities(comms || []);
       setOperarios(ops || []);
+      setAdministrators(admins || []);
       setSelectedCommunity(current => {
         if (!current) return null;
         const fresh = comms.find(c => c.id === current.id);
@@ -218,7 +231,8 @@ export default function CommunitiesPage() {
     setForm({ 
       name: '', address: '', lat: '', lng: '', type: 'comunidad', contactPerson: '', contactPhone: '', individualTimeTracking: false, preferredTime: '',
       billingCif: '', billingAddress: '', basePrice: '0', paymentMethod: 'transferencia', billingEmail: '',
-      billingIban: '', billingMandateRef: '', billingMandateDate: ''
+      billingIban: '', billingMandateRef: '', billingMandateDate: '',
+      administratorId: ''
     });
     setShowModal(true);
   }
@@ -243,6 +257,7 @@ export default function CommunitiesPage() {
       billingIban: comm.billingIban || '',
       billingMandateRef: comm.billingMandateRef || '',
       billingMandateDate: comm.billingMandateDate || '',
+      administratorId: comm.administratorId || ''
     });
     setShowModal(true);
     loadGPSSuggestions(comm.id);
@@ -363,6 +378,7 @@ export default function CommunitiesPage() {
         billingIban: form.billingIban || '',
         billingMandateRef: form.billingMandateRef || '',
         billingMandateDate: form.billingMandateDate || '',
+        administratorId: form.administratorId || '',
       };
 
       if (editingCommunity) {
@@ -382,6 +398,59 @@ export default function CommunitiesPage() {
     await deleteCommunity(id);
     setSelectedCommunity(null);
     await loadData();
+  }
+
+  // ==================== ADMINISTRATORS CRUD HANDLERS ====================
+  function openCreateAdminModal() {
+    setEditingAdmin(null);
+    setAdminForm({ name: '', email: '', phone: '', contactPerson: '' });
+    setShowAdminModal(true);
+  }
+
+  function openEditAdminModal(admin) {
+    setEditingAdmin(admin);
+    setAdminForm({
+      name: admin.name || '',
+      email: admin.email || '',
+      phone: admin.phone || '',
+      contactPerson: admin.contactPerson || ''
+    });
+    setShowAdminModal(true);
+  }
+
+  async function handleSaveAdmin(e) {
+    e.preventDefault();
+    setActionLoading(true);
+    try {
+      if (editingAdmin) {
+        await updateAdministrator(editingAdmin.id, adminForm);
+      } else {
+        await createAdministrator(adminForm);
+      }
+      setShowAdminModal(false);
+      await loadData();
+      alert(editingAdmin ? 'Administrador actualizado correctamente.' : 'Administrador creado correctamente.');
+    } catch (err) {
+      console.error(err);
+      alert('Error al guardar administrador: ' + err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function handleDeleteAdmin(id) {
+    if (!confirm('¿Estás seguro de que deseas eliminar este Administrador de Fincas? Se desactivará de la lista.')) return;
+    setActionLoading(true);
+    try {
+      await deleteAdministrator(id);
+      await loadData();
+      alert('Administrador eliminado correctamente.');
+    } catch (err) {
+      console.error(err);
+      alert('Error al eliminar administrador: ' + err.message);
+    } finally {
+      setActionLoading(false);
+    }
   }
 
   function openEditTaskModal(task) {
@@ -626,11 +695,22 @@ export default function CommunitiesPage() {
             >
               🚗 Garajes
             </button>
+            <button 
+              className={`btn ${activeTab === 'administrators' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setActiveTab('administrators')}
+            >
+              💼 Administradores
+            </button>
           </div>
         </div>
         {activeTab === 'list' && (
           <button className="btn btn-primary" onClick={openCreateModal}>
             ➕ Nueva comunidad
+          </button>
+        )}
+        {activeTab === 'administrators' && (
+          <button className="btn btn-primary" onClick={openCreateAdminModal}>
+            ➕ Nuevo Administrador
           </button>
         )}
       </div>
@@ -848,6 +928,15 @@ export default function CommunitiesPage() {
                 <div><span className="text-xs text-muted">Mensualidad Base</span><p className="font-medium text-sm font-bold text-slate-800">{selectedCommunity.basePrice || 0} €</p></div>
                 <div><span className="text-xs text-muted">Email Facturación</span><p className="font-medium text-sm">{selectedCommunity.billingEmail || '—'}</p></div>
                 <div><span className="text-xs text-muted">Método Pago</span><p className="font-medium text-sm text-capitalize">{selectedCommunity.paymentMethod || 'transferencia'}</p></div>
+                <div>
+                   <span className="text-xs text-muted">Administrador de Fincas</span>
+                   <p className="font-medium text-sm">
+                     {(() => {
+                       const admin = administrators.find(a => a.id === selectedCommunity.administratorId);
+                       return admin ? `💼 ${admin.name}` : 'Directo (Sin administrador)';
+                     })()}
+                   </p>
+                 </div>
                 {selectedCommunity.paymentMethod === 'recibo' && (
                   <>
                     <div><span className="text-xs text-muted">IBAN Domiciliación</span><p className="font-medium text-sm" style={{ fontFamily: 'monospace' }}>{selectedCommunity.billingIban || '⚠️ Sin configurar'}</p></div>
@@ -1190,8 +1279,95 @@ export default function CommunitiesPage() {
           </div>
         )}
       </div>
-      ) : (
+      ) : activeTab === 'garages' ? (
         <GarageYearlyView />
+      ) : (
+        /* Administrators Management Tab */
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div style={{ padding: 'var(--space-4) var(--space-5)', borderBottom: '1px solid var(--color-border)', background: '#f8fafc' }}>
+            <h3 className="font-semibold" style={{ margin: 0, color: '#334155', fontSize: '0.95rem' }}>💼 Listado de Administradores de Fincas</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse min-w-[600px]">
+              <thead>
+                <tr className="bg-slate-50 text-xs uppercase font-bold text-muted border-b">
+                  <th className="p-3">Nombre Asesoría</th>
+                  <th className="p-3">Email Facturación</th>
+                  <th className="p-3 text-center">Teléfono</th>
+                  <th className="p-3 text-center">Persona Contacto</th>
+                  <th className="p-3 text-center">Comunidades</th>
+                  <th className="p-3 text-right">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {administrators.length === 0 ? (
+                  <tr>
+                    <td colSpan="6" className="p-6 text-center text-muted italic">
+                      No hay Administradores de Fincas registrados. Haz clic en "Nuevo Administrador" para añadir uno.
+                    </td>
+                  </tr>
+                ) : (
+                  administrators.map(admin => {
+                    const count = communities.filter(c => c.administratorId === admin.id).length;
+                    return (
+                      <tr key={admin.id} className="border-b last:border-0 hover:bg-slate-50 transition-colors">
+                        <td className="p-3 font-semibold text-slate-800">
+                          🏢 {admin.name}
+                        </td>
+                        <td className="p-3 text-sm" style={{ fontFamily: 'monospace' }}>
+                          {admin.email || '—'}
+                        </td>
+                        <td className="p-3 text-center text-sm text-slate-600">
+                          {admin.phone || '—'}
+                        </td>
+                        <td className="p-3 text-center text-sm text-slate-600">
+                          {admin.contactPerson || '—'}
+                        </td>
+                        <td className="p-3 text-center">
+                          <span style={{ 
+                            display: 'inline-flex', 
+                            alignItems: 'center', 
+                            justifyContent: 'center',
+                            background: '#eff6ff', 
+                            color: '#1d4ed8', 
+                            padding: '2px 8px', 
+                            borderRadius: '12px', 
+                            fontSize: '11px',
+                            fontWeight: 'bold',
+                            border: '1px solid #dbeafe'
+                          }}>
+                            {count} {count === 1 ? 'comunidad' : 'comunidades'}
+                          </span>
+                        </td>
+                        <td className="p-3 text-right">
+                          <div className="flex justify-end gap-2">
+                            <button 
+                              className="btn btn-xs btn-secondary"
+                              onClick={() => openEditAdminModal(admin)}
+                              title="Editar datos del administrador"
+                            >
+                              ✏️ Editar
+                            </button>
+                            <button 
+                              className="btn btn-xs btn-ghost text-danger"
+                              type="button"
+                              onClick={() => handleDeleteAdmin(admin.id)}
+                              disabled={count > 0}
+                              title={count > 0 ? "No se puede eliminar porque tiene comunidades asignadas" : "Eliminar administrador"}
+                              style={count > 0 ? { opacity: 0.4, cursor: 'not-allowed' } : {}}
+                            >
+                              🗑️
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
 
       {/* Modal: Create/Edit Community */}
@@ -1493,6 +1669,19 @@ export default function CommunitiesPage() {
                         <option value="transferencia">Transferencia Bancaria</option>
                         <option value="recibo">Recibo Domiciliado</option>
                         <option value="efectivo">Efectivo</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="form-label">Administrador de Fincas</label>
+                      <select 
+                        className="form-select"
+                        value={form.administratorId || ''}
+                        onChange={e => setForm(f => ({...f, administratorId: e.target.value}))}
+                      >
+                        <option value="">— Ninguno (Gestión directa) —</option>
+                        {administrators.map(admin => (
+                          <option key={admin.id} value={admin.id}>{admin.name}</option>
+                        ))}
                       </select>
                     </div>
                   </div>
@@ -1898,6 +2087,72 @@ export default function CommunitiesPage() {
                 <button type="button" className="btn btn-secondary" onClick={() => setShowDocModal(false)}>Cancelar</button>
                 <button type="submit" className="btn btn-primary" disabled={uploadingDoc}>
                   {uploadingDoc ? 'Subiendo...' : 'Subir Documento'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* Modal: Crear/Editar Administrador */}
+      {showAdminModal && (
+        <div className="modal-overlay" onClick={() => setShowAdminModal(false)}>
+          <div className="modal" style={{ maxWidth: '450px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">{editingAdmin ? 'Editar Administrador' : 'Nuevo Administrador'}</h3>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowAdminModal(false)}>✕</button>
+            </div>
+            <form onSubmit={handleSaveAdmin}>
+              <div className="modal-body">
+                <div className="form-group">
+                  <label className="form-label">Nombre de la Asesoría / Administrador</label>
+                  <input 
+                    type="text" 
+                    className="form-input" 
+                    placeholder="Ej. Fincas Gómez"
+                    value={adminForm.name}
+                    onChange={e => setAdminForm(f => ({ ...f, name: e.target.value }))}
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Email Principal de Facturación</label>
+                  <input 
+                    type="email" 
+                    className="form-input" 
+                    placeholder="Ej. administracion@fincasgomez.com"
+                    value={adminForm.email}
+                    onChange={e => setAdminForm(f => ({ ...f, email: e.target.value }))}
+                    required
+                  />
+                  <p style={{ fontSize: '10px', color: '#64748b', marginTop: '4px' }}>
+                    Las facturas de todas las comunidades asociadas se enviarán de forma agrupada a este correo.
+                  </p>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Teléfono de Contacto</label>
+                  <input 
+                    type="text" 
+                    className="form-input" 
+                    placeholder="Ej. 968123456"
+                    value={adminForm.phone}
+                    onChange={e => setAdminForm(f => ({ ...f, phone: e.target.value }))}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Persona de Contacto</label>
+                  <input 
+                    type="text" 
+                    className="form-input" 
+                    placeholder="Ej. María Gómez"
+                    value={adminForm.contactPerson}
+                    onChange={e => setAdminForm(f => ({ ...f, contactPerson: e.target.value }))}
+                  />
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowAdminModal(false)}>Cancelar</button>
+                <button type="submit" className="btn btn-primary" disabled={actionLoading}>
+                  {actionLoading ? 'Guardando...' : editingAdmin ? 'Guardar Cambios' : 'Crear Administrador'}
                 </button>
               </div>
             </form>

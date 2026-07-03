@@ -213,7 +213,8 @@ export async function generateMonthlyDrafts(month, year) {
         email: comm.billingEmail || comm.contactPhone || "",
         iban: comm.billingIban || "",
         mandateRef: comm.billingMandateRef || "",
-        mandateDate: comm.billingMandateDate || ""
+        mandateDate: comm.billingMandateDate || "",
+        administratorId: comm.administratorId || ""
       },
       items: [
         {
@@ -351,6 +352,12 @@ export async function uploadInvoicePDFToStorage(invoiceId, pdfBlob, filename) {
 
 export async function sendInvoiceEmails(invoiceIds) {
   const fn = httpsCallable(functions, 'sendInvoiceEmails');
+  const result = await fn({ invoiceIds });
+  return result.data;
+}
+
+export async function sendGroupedInvoiceEmails(invoiceIds) {
+  const fn = httpsCallable(functions, 'sendGroupedInvoiceEmails');
   const result = await fn({ invoiceIds });
   return result.data;
 }

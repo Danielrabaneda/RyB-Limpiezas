@@ -670,3 +670,262 @@ exports.sendInvoiceEmails = onCall(
   }
 );
 
+exports.sendGroupedInvoiceEmails = onCall(
+  {
+    region: "europe-west1",
+    memory: "512MiB",
+    timeoutSeconds: 240,
+  },
+  async (request) => {
+    // 1. Authenticate user
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión para realizar esta acción.");
+    }
+
+    const { invoiceIds } = request.data;
+    if (!invoiceIds || !Array.isArray(invoiceIds)) {
+      throw new HttpsError("invalid-argument", "El argumento 'invoiceIds' debe ser una lista.");
+    }
+
+    logger.info(`[sendGroupedInvoiceEmails] Iniciando proceso agrupado para ${invoiceIds.length} facturas. Solicitado por: ${request.auth.uid}`);
+
+    // Verify user role is admin
+    const userDoc = await db.collection("users").doc(request.auth.uid).get();
+    if (!userDoc.exists || userDoc.data().role !== "admin") {
+      throw new HttpsError("permission-denied", "No tienes permisos de administrador para realizar esta acción.");
+    }
+
+    // Load billing settings for SMTP configuration
+    const billingSettingsSnap = await db.collection("settings").doc("billing").get();
+    if (!billingSettingsSnap.exists) {
+      throw new HttpsError("failed-precondition", "La configuración de facturación no existe.");
+    }
+    const billingSettings = billingSettingsSnap.data();
+
+    if (!billingSettings.smtpHost || !billingSettings.smtpEmail || !billingSettings.smtpPassword) {
+      throw new HttpsError("failed-precondition", "La configuración SMTP está incompleta. Por favor configúrala en Ajustes.");
+    }
+
+    // Configure Nodemailer Transport
+    const transporter = nodemailer.createTransport({
+      host: billingSettings.smtpHost,
+      port: parseInt(billingSettings.smtpPort) || 587,
+      secure: billingSettings.smtpSecure || false,
+      auth: {
+        user: billingSettings.smtpEmail,
+        pass: billingSettings.smtpPassword,
+      },
+    });
+
+    const invoices = [];
+    // Load all invoice details from database
+    for (const invoiceId of invoiceIds) {
+      const invoiceDoc = await db.collection("invoices").doc(invoiceId).get();
+      if (invoiceDoc.exists) {
+        invoices.push({ id: invoiceDoc.id, ...invoiceDoc.data() });
+      }
+    }
+
+    if (invoices.length === 0) {
+      return { results: [], message: "No se encontraron facturas válidas." };
+    }
+
+    // Load all active administrators to resolve association names and emails
+    const adminsSnap = await db.collection("administrators").where("active", "==", true).get();
+    const administrators = {};
+    adminsSnap.forEach(doc => {
+      administrators[doc.id] = doc.data();
+    });
+
+    // Group invoices by target email destination
+    const emailGroups = {};
+
+    for (const inv of invoices) {
+      if (!inv.pdfStoragePath) {
+        logger.warn(`[sendGroupedInvoiceEmails] Factura ${inv.id} saltada por no tener PDF.`);
+        continue;
+      }
+
+      let targetEmails = "";
+      let groupName = "";
+      let isAdministrator = false;
+
+      // Check if client has administratorId
+      const adminId = inv.client?.administratorId || "";
+      if (adminId && administrators[adminId]) {
+        const admin = administrators[adminId];
+        targetEmails = admin.email || "";
+        groupName = admin.name || "Administrador";
+        isAdministrator = true;
+      }
+
+      // Fallback: If no administrator or administrator has no email, use community email
+      if (!targetEmails) {
+        targetEmails = inv.client?.email || inv.clientEmail || "";
+        groupName = inv.client?.name || "Comunidad";
+        isAdministrator = false;
+      }
+
+      if (!targetEmails) {
+        logger.warn(`[sendGroupedInvoiceEmails] Factura ${inv.id} saltada por no tener email de destino.`);
+        continue;
+      }
+
+      // Group by normalized email list
+      const normalizedEmailKey = targetEmails.split(/[,;]/).map(e => e.trim().toLowerCase()).filter(Boolean).sort().join(",");
+      
+      if (!normalizedEmailKey) continue;
+
+      if (!emailGroups[normalizedEmailKey]) {
+        emailGroups[normalizedEmailKey] = {
+          rawEmailsString: targetEmails,
+          name: groupName,
+          isAdministrator,
+          invoices: []
+        };
+      }
+      emailGroups[normalizedEmailKey].invoices.push(inv);
+    }
+
+    const results = [];
+    const bucket = getStorage().bucket();
+
+    // Process each grouped destination
+    for (const emailKey of Object.keys(emailGroups)) {
+      const group = emailGroups[emailKey];
+      const emailList = group.rawEmailsString.split(/[,;]/).map(e => e.trim()).filter(Boolean);
+
+      try {
+        const attachments = [];
+        let summaryRowsHtml = "";
+
+        // Download all PDFs for this group
+        for (const inv of group.invoices) {
+          logger.info(`[sendGroupedInvoiceEmails] Descargando PDF: ${inv.pdfStoragePath}`);
+          const file = bucket.file(inv.pdfStoragePath);
+          const [pdfBuffer] = await file.download();
+          const filename = inv.pdfStoragePath.split("/").pop() || `Factura_${inv.invoiceNumber || 'SN'}.pdf`;
+
+          attachments.push({
+            filename: filename,
+            content: pdfBuffer,
+            contentType: "application/pdf"
+          });
+
+          const amountFormatted = Number(inv.totalAmount || 0).toLocaleString('es-ES', { minimumFractionDigits: 2 }) + ' €';
+          summaryRowsHtml += `
+            <tr style="border-bottom: 1px solid #e2e8f0;">
+              <td style="padding: 10px 12px; font-weight: bold; color: #1e293b;">${inv.client?.name || "Comunidad"}</td>
+              <td style="padding: 10px 12px; text-align: center; color: #475569;">${inv.invoiceNumber || "SN"}</td>
+              <td style="padding: 10px 12px; text-align: right; font-weight: bold; color: #0f172a;">${amountFormatted}</td>
+            </tr>
+          `;
+        }
+
+        // Prepare email subject and body
+        let subject = "";
+        let bodyHtml = "";
+
+        const pdfMonthNames = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+        const firstInv = group.invoices[0];
+        const mesName = pdfMonthNames[firstInv.month] || "";
+        const anio = String(firstInv.year || new Date().getFullYear());
+
+        if (group.invoices.length === 1) {
+          // If only 1 invoice, use standard single-invoice subject and body
+          const inv = group.invoices[0];
+          const numFact = inv.invoiceNumber || "Borrador";
+          const communityName = inv.client?.name || "Comunidad";
+
+          const replaceTemplates = (text) => {
+            if (!text) return "";
+            return text
+              .replace(/{numero}/g, numFact)
+              .replace(/{comunidad}/g, communityName)
+              .replace(/{mes}/g, mesName)
+              .replace(/{año}/g, anio)
+              .replace(/{a\u00f1o}/g, anio);
+          };
+
+          subject = replaceTemplates(billingSettings.emailSubjectTemplate || "Factura {numero} - RyB Limpiezas");
+          bodyHtml = replaceTemplates(billingSettings.emailBodyTemplate || `<p>Hola,</p><p>Le adjuntamos la factura <strong>{numero}</strong> correspondiente al servicio de la comunidad <strong>{comunidad}</strong>.</p>`);
+        } else {
+          // Grouped email layout
+          subject = `Facturas Consolidadas de RyB Limpiezas - Periodo ${mesName} de ${anio}`;
+          
+          bodyHtml = `
+            <div style="font-family: Arial, sans-serif; color: #334155; line-height: 1.5; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; borderRadius: 8px;">
+              <h2 style="color: #2563eb; margin-top: 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px;">RyB Limpiezas</h2>
+              <p>Estimado/a <strong>${group.name}</strong>,</p>
+              <p>Le adjuntamos en este correo las facturas correspondientes a los servicios de limpieza prestados en el periodo de <strong>${mesName} de ${anio}</strong> para las comunidades bajo su administración:</p>
+              
+              <table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px;">
+                <thead>
+                  <tr style="background-color: #f8fafc; border-bottom: 2px solid #cbd5e1;">
+                    <th style="padding: 10px 12px; text-align: left; font-weight: bold; color: #475569;">Comunidad</th>
+                    <th style="padding: 10px 12px; text-align: center; font-weight: bold; color: #475569;">Nº Factura</th>
+                    <th style="padding: 10px 12px; text-align: right; font-weight: bold; color: #475569;">Importe</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${summaryRowsHtml}
+                </tbody>
+                <tfoot>
+                  <tr style="background-color: #f8fafc; border-top: 2px solid #94a3b8; font-weight: bold;">
+                    <td colspan="2" style="padding: 12px; color: #1e293b;">TOTAL CONSOLIDADO</td>
+                    <td style="padding: 12px; text-align: right; color: #2563eb; font-size: 16px;">
+                      ${group.invoices.reduce((sum, i) => sum + Number(i.totalAmount || 0), 0).toLocaleString('es-ES', { minimumFractionDigits: 2 })} €
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+              
+              <p>Quedamos a su disposición para cualquier aclaración o consulta que pueda surgir. Agradecemos su confianza en nuestros servicios.</p>
+              <br/>
+              <p>Atentamente,</p>
+              <p><strong>RyB Limpiezas</strong><br/>
+              Contacto: ${billingSettings.contactPerson || "Daniel Rabaneda"}<br/>
+              Teléfono: ${billingSettings.phone || "687983162"}</p>
+            </div>
+          `;
+        }
+
+        // Send Email
+        logger.info(`[sendGroupedInvoiceEmails] Enviando correo consolidado a: ${emailList.join(", ")} con ${attachments.length} archivos.`);
+        await transporter.sendMail({
+          from: `"${billingSettings.companyName || "RyB Limpiezas"}" <${billingSettings.smtpEmail}>`,
+          to: emailList,
+          subject: subject,
+          html: bodyHtml,
+          attachments: attachments,
+        });
+
+        // Update sent status in Firestore for all invoices in the group
+        for (const inv of group.invoices) {
+          await db.collection("invoices").doc(inv.id).update({
+            emailSent: true,
+            emailSentAt: FieldValue.serverTimestamp(),
+            emailSentError: null,
+          });
+          results.push({ id: inv.id, status: "success" });
+        }
+
+      } catch (err) {
+        logger.error(`[sendGroupedInvoiceEmails] Error enviando grupo de facturas a ${emailKey}:`, err);
+        for (const inv of group.invoices) {
+          try {
+            await db.collection("invoices").doc(inv.id).update({
+              emailSentError: err.message || String(err),
+            });
+          } catch (dbErr) {
+            logger.error(`[sendGroupedInvoiceEmails] Error actualizando error de envío en DB para ${inv.id}:`, dbErr);
+          }
+          results.push({ id: inv.id, status: "error", error: err.message || String(err) });
+        }
+      }
+    }
+
+    return { results };
+  }
+);
+

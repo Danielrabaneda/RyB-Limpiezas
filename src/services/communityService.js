@@ -25,6 +25,7 @@ export async function createCommunity(data) {
     billingIban: data.billingIban || '',
     billingMandateRef: data.billingMandateRef || '',
     billingMandateDate: data.billingMandateDate || '',
+    administratorId: data.administratorId || '',
     active: true,
     createdAt: serverTimestamp(),
   };
