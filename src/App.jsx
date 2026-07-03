@@ -63,6 +63,7 @@ const EvidenceReportsPage = lazy(() => import('./pages/admin/EvidenceReportsPage
 const AbsencesPage = lazy(() => import('./pages/operario/AbsencesPage'));
 const AbsencesAdminPage = lazy(() => import('./pages/admin/AbsencesAdminPage'));
 const ClientPortalPage = lazy(() => import('./pages/cliente/ClientPortalPage'));
+const CompanyRequestsPage = lazy(() => import('./pages/admin/CompanyRequestsPage'));
 
 // Components
 const GeolocationTracker = lazy(() => import('./components/operario/GeolocationTracker'));
@@ -149,6 +150,7 @@ function AdminLayout() {
   const [pendingValidations, setPendingValidations] = useState(0);
   const [pendingGPS, setPendingGPS] = useState(0);
   const [pendingOrders, setPendingOrders] = useState(0);
+  const [pendingLeads, setPendingLeads] = useState(0);
 
   useEffect(() => {
     const unsub = onSnapshot(doc(db, 'settings', 'global'), (docSnap) => {
@@ -183,6 +185,14 @@ function AdminLayout() {
     return () => unsub();
   }, []);
 
+  useEffect(() => {
+    const q = query(collection(db, 'companyRequests'), where('status', '==', 'pending'));
+    const unsub = onSnapshot(q, (snap) => {
+      setPendingLeads(snap.size);
+    });
+    return () => unsub();
+  }, []);
+
   async function handleLogout() {
     await logout();
     navigate('/login');
@@ -199,6 +209,7 @@ function AdminLayout() {
     { path: '/admin/evidencias', icon: '📸', label: 'Evidencias' },
     { path: '/admin/kilometraje', icon: '🚗', label: 'Kilometraje' },
     { path: '/admin/inventory', icon: '📦', label: 'Materiales' },
+    { path: '/admin/solicitudes', icon: '📩', label: 'Solicitudes' },
     { path: '/admin/ajustes', icon: '⚙️', label: 'Ajustes' },
   ];
 
@@ -255,6 +266,11 @@ function AdminLayout() {
               {item.path === '/admin/inventory' && pendingOrders > 0 && (
                 <span className="badge bg-red-500 text-white border-0 text-xs px-2 py-0.5 shadow-sm animate-pulse" title="Pedidos pendientes">
                   {pendingOrders}
+                </span>
+              )}
+              {item.path === '/admin/solicitudes' && pendingLeads > 0 && (
+                <span className="badge bg-emerald-500 text-white border-0 text-xs px-2 py-0.5 shadow-sm animate-pulse" title="Solicitudes de empresa pendientes">
+                  {pendingLeads}
                 </span>
               )}
             </NavLink>
@@ -532,6 +548,7 @@ export default function App() {
                   <Route path="inventory" element={<InventoryPage />} />
                   <Route path="ajustes" element={<SettingsPage />} />
                   <Route path="ausencias" element={<AbsencesAdminPage />} />
+                  <Route path="solicitudes" element={<CompanyRequestsPage />} />
                 </Route>
 
                 {/* Operario */}

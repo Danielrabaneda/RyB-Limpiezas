@@ -1,279 +1,975 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '../config/firebase';
 
-export default function LandingPage() {
-  const emailContact = "limpiezasrayba@gmail.com";
-  const demoSubject = encodeURIComponent("Solicitud de Demo - LimpiaGest");
-  const demoBody = encodeURIComponent("Hola, me interesa conocer más sobre LimpiaGest para mi empresa de limpieza. Me gustaría solicitar una demostración y conocer los planes de precios.\n\nNombre de la empresa:\nContacto:\nTeléfono:");
-  const demoMailto = `mailto:${emailContact}?subject=${demoSubject}&body=${demoBody}`;
+// ─────────────────────────────────────────────────────────────────────────────
+// DATA
+// ─────────────────────────────────────────────────────────────────────────────
+const features = [
+  {
+    icon: "⏱️",
+    title: "Control Horario & GPS",
+    desc: "Fichaje geolocalizado en tiempo real. Registro automático de inicio y fin de jornada con cálculo de kilometraje.",
+    color: "#2563eb"
+  },
+  {
+    icon: "📸",
+    title: "Evidencias Fotográficas",
+    desc: "Certifica cada servicio con fotos del antes y después. Marca de agua con GPS y hora para garantizar la veracidad.",
+    color: "#7c3aed"
+  },
+  {
+    icon: "📋",
+    title: "Tareas Inteligentes",
+    desc: "Crea plantillas de tareas por comunidad o portal. Automatiza asignaciones diarias y ahorra horas de planificación.",
+    color: "#0891b2"
+  },
+  {
+    icon: "🚗",
+    title: "Registro de Kilometraje",
+    desc: "Control exacto de desplazamientos. Reportes mensuales validados listos para compensación de gastos.",
+    color: "#059669"
+  },
+  {
+    icon: "📦",
+    title: "Gestión de Materiales",
+    desc: "Solicitudes de consumibles desde el móvil del operario. Inventario centralizado con alertas de stock mínimo.",
+    color: "#d97706"
+  },
+  {
+    icon: "🔄",
+    title: "Traspasos al Instante",
+    desc: "Reasigna servicios en segundos cuando un operario no puede acudir. Sin llamadas, sin caos.",
+    color: "#dc2626"
+  }
+];
 
-  const features = [
-    {
-      icon: "⏱️",
-      title: "Control Horario & GPS",
-      desc: "Fichaje geolocalizado en tiempo real para operarios. Registro inteligente de inicio y fin de jornada con cálculo de kilometraje automático."
-    },
-    {
-      icon: "📸",
-      title: "Evidencias Fotográficas",
-      desc: "Asegura la calidad del servicio. Los operarios suben fotos del antes y después de cada tarea con marcas de agua de geolocalización."
-    },
-    {
-      icon: "📋",
-      title: "Tareas Inteligentes",
-      desc: "Crea plantillas de tareas repetitivas por comunidad o portal. Automatiza las asignaciones diarias y ahorra horas de planificación."
-    },
-    {
-      icon: "🚗",
-      title: "Registro de Kilometraje",
-      desc: "Control exacto de los desplazamientos del personal. Los operarios registran los kilómetros recorridos con validación y reportes mensuales."
-    },
-    {
-      icon: "📦",
-      title: "Gestión de Materiales",
-      desc: "Los operarios pueden solicitar consumibles y materiales directamente desde su móvil. Controla el inventario de forma centralizada."
-    },
-    {
-      icon: "🔄",
-      title: "Traspasos al Instante",
-      desc: "Reasigna servicios o jornadas sobre la marcha con un par de clics si un operario se reporta enfermo o hay un imprevisto."
+const stats = [
+  { value: "500+", label: "Operarios gestionados" },
+  { value: "98%", label: "Servicios certificados" },
+  { value: "4h", label: "Ahorro semanal por admin" },
+  { value: "0€", label: "Coste de setup" },
+];
+
+const testimonials = [
+  {
+    quote: "LimpiaGest nos ha permitido eliminar completamente los partes en papel. Ahora sabemos en tiempo real qué está pasando en cada comunidad.",
+    author: "Raúl B.",
+    role: "Director de Operaciones",
+    company: "Limpiezas RyB"
+  },
+  {
+    quote: "La app de los operarios es tan sencilla que no necesitamos formación. En dos días estaba todo el equipo funcionando.",
+    author: "Mª Carmen G.",
+    role: "Responsable de RRHH",
+    company: "Servicios de Limpieza García"
+  },
+  {
+    quote: "Mis clientes ahora reciben evidencias fotográficas de cada trabajo. Eso ha reducido las reclamaciones a cero.",
+    author: "Javier M.",
+    role: "Gerente",
+    company: "Multiservicio Martínez"
+  }
+];
+
+const pricingPlans = [
+  {
+    name: "Pyme",
+    monthlyPrice: 49,
+    desc: "Para pequeñas empresas locales.",
+    features: [
+      "Hasta 10 operarios",
+      "Control horario con GPS",
+      "Gestión de comunidades",
+      "Evidencias fotográficas",
+      "Soporte por email",
+    ],
+    featured: false,
+    cta: "Solicitar Acceso"
+  },
+  {
+    name: "Empresa",
+    monthlyPrice: 99,
+    desc: "La solución más completa para crecer.",
+    features: [
+      "Hasta 50 operarios",
+      "Evidencias ilimitadas con GPS",
+      "Control de kilometraje",
+      "Traspasos en tiempo real",
+      "Gestión de materiales",
+      "Soporte prioritario 24/7",
+    ],
+    featured: true,
+    cta: "Empezar Ahora"
+  },
+  {
+    name: "Enterprise",
+    monthlyPrice: null,
+    desc: "Para grandes corporaciones.",
+    features: [
+      "Operarios ilimitados",
+      "API personalizada",
+      "White-label con tu logo",
+      "Servidor cloud dedicado",
+      "Gerente de cuenta dedicado",
+    ],
+    featured: false,
+    cta: "Contactar Ventas"
+  }
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REQUEST MODAL
+// ─────────────────────────────────────────────────────────────────────────────
+function RequestModal({ isOpen, onClose, defaultPlan = '' }) {
+  const [form, setForm] = useState({
+    companyName: '',
+    contactName: '',
+    email: '',
+    phone: '',
+    operariosCount: '',
+    plan: defaultPlan,
+    message: ''
+  });
+  const [status, setStatus] = useState('idle'); // idle | loading | success | error
+  const [errorMsg, setErrorMsg] = useState('');
+
+  if (!isOpen) return null;
+
+  function handleChange(e) {
+    setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setStatus('loading');
+    setErrorMsg('');
+    try {
+      await addDoc(collection(db, 'companyRequests'), {
+        ...form,
+        status: 'pending',
+        createdAt: serverTimestamp()
+      });
+      setStatus('success');
+    } catch (err) {
+      console.error('Error saving request:', err);
+      setErrorMsg('No se pudo enviar la solicitud. Inténtalo de nuevo o escríbenos a limpiezasrayba@gmail.com');
+      setStatus('error');
     }
-  ];
-
-  const pricingPlans = [
-    {
-      name: "Pyme",
-      price: "49€",
-      period: "/mes",
-      desc: "Perfecto para pequeñas empresas locales.",
-      features: [
-        "Hasta 10 operarios",
-        "Control horario básico",
-        "Gestión de comunidades",
-        "Soporte por email"
-      ],
-      featured: false
-    },
-    {
-      name: "Empresa",
-      price: "99€",
-      period: "/mes",
-      desc: "La solución más completa para crecer.",
-      features: [
-        "Hasta 50 operarios",
-        "Evidencias fotográficas (ilimitadas)",
-        "Control por GPS y kilometraje",
-        "Traspasos en tiempo real",
-        "Soporte prioritario 24/7"
-      ],
-      featured: true
-    },
-    {
-      name: "Enterprise",
-      price: "Personalizado",
-      period: "",
-      desc: "Para grandes corporaciones de limpieza.",
-      features: [
-        "Operarios ilimitados",
-        "Integración con API personalizada",
-        "Dominio y logo propio (White-label)",
-        "Servidor cloud dedicado",
-        "Gerente de cuenta dedicado"
-      ],
-      featured: false
-    }
-  ];
+  }
 
   return (
-    <div className="landing-page-wrapper">
-      <div className="container">
-        {/* Navigation Bar */}
-        <header className="landing-nav">
-          <div className="landing-logo-container">
-            <div className="landing-logo-icon">🧹</div>
-            <span className="landing-brand">LimpiaGest</span>
-          </div>
-          <Link to="/login" className="btn btn-primary btn-sm" style={{ boxShadow: '0 0 15px rgba(37, 99, 235, 0.3)' }}>
-            🔑 Acceso Clientes
-          </Link>
-        </header>
-
-        {/* Hero Section */}
-        <section className="landing-hero animate-slide-up">
-          <div className="hero-content">
-            <div className="hero-tag">
-              ✨ Nuevo: Fichajes PWA con Geoposicionamiento
-            </div>
-            <h1 className="hero-title">
-              La revolución en la gestión de <span>servicios de limpieza</span>.
-            </h1>
-            <p className="hero-subtitle">
-              LimpiaGest es el software SaaS todo en uno diseñado específicamente para empresas de limpieza. Controla operarios, automatiza tareas en comunidades, certifica trabajos con evidencias fotográficas y optimiza tus costes en tiempo real.
+    <div
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1000,
+        background: 'rgba(0,0,0,0.75)',
+        backdropFilter: 'blur(8px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: '16px',
+        animation: 'fadeIn 0.2s ease'
+      }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div style={{
+        background: 'linear-gradient(145deg, #0f172a, #1e293b)',
+        border: '1px solid rgba(255,255,255,0.1)',
+        borderRadius: '20px',
+        padding: '32px',
+        width: '100%',
+        maxWidth: '520px',
+        maxHeight: '90vh',
+        overflowY: 'auto',
+        boxShadow: '0 25px 60px rgba(0,0,0,0.5)',
+        animation: 'slideUp 0.3s ease'
+      }}>
+        {status === 'success' ? (
+          <div style={{ textAlign: 'center', padding: '20px 0' }}>
+            <div style={{ fontSize: '4rem', marginBottom: '16px' }}>🎉</div>
+            <h2 style={{ color: 'white', fontSize: '1.5rem', fontWeight: 800, marginBottom: '12px' }}>
+              ¡Solicitud recibida!
+            </h2>
+            <p style={{ color: '#94a3b8', marginBottom: '24px', lineHeight: 1.6 }}>
+              Nos pondremos en contacto contigo en menos de 24 horas para configurar tu cuenta.
             </p>
-            <div className="hero-ctas">
-              <a href={demoMailto} className="btn btn-success btn-lg">
-                🚀 Solicitar Demo Gratis
-              </a>
-              <Link to="/login" className="btn btn-secondary btn-lg" style={{ background: 'rgba(255,255,255,0.05)', color: 'white', borderColor: 'rgba(255,255,255,0.1)' }}>
-                Entrar a la App
-              </Link>
-            </div>
+            <button onClick={onClose} className="btn btn-primary btn-lg w-full">
+              Cerrar
+            </button>
           </div>
-
-          <div className="mockup-container">
-            {/* Admin Dashboard Mockup */}
-            <div className="dashboard-mockup">
-              <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444' }}></span>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#eab308' }}></span>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#22c55e' }}></span>
+        ) : (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
+              <div>
+                <h2 style={{ color: 'white', fontSize: '1.4rem', fontWeight: 800, marginBottom: '4px' }}>
+                  Solicitar Acceso a LimpiaGest
+                </h2>
+                <p style={{ color: '#94a3b8', fontSize: '0.85rem' }}>
+                  Te contactamos en menos de 24 horas para configurar tu empresa.
+                </p>
               </div>
-              <div style={{ background: '#0b0f19', borderRadius: '6px', padding: '12px', fontSize: '10px', color: '#94a3b8' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px', marginBottom: '6px' }}>
-                  <strong>📊 LimpiaGest Admin Panel</strong>
-                  <span style={{ color: '#22c55e' }}>● En línea</span>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', marginBottom: '8px' }}>
-                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: '6px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                    <div>Activos Hoy</div>
-                    <div style={{ fontSize: '12px', fontWeight: 'bold', color: 'white', marginTop: '2px' }}>12 Operarios</div>
-                  </div>
-                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: '6px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                    <div>Servicios Completados</div>
-                    <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#10b981', marginTop: '2px' }}>85% (34/40)</div>
-                  </div>
-                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: '6px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                    <div>Incidencias</div>
-                    <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#ef4444', marginTop: '2px' }}>0 Pendientes</div>
-                  </div>
-                </div>
-                <div style={{ fontSize: '9px', background: 'rgba(37,99,235,0.05)', border: '1px solid rgba(37,99,235,0.1)', padding: '6px', borderRadius: '4px' }}>
-                  🔔 <strong>Última actividad:</strong> Operaria Agustina A. completó la limpieza en Portal B de Comunidad 'El Huerto'. Evidencia fotográfica subida correctamente.
-                </div>
-              </div>
+              <button
+                onClick={onClose}
+                style={{ background: 'rgba(255,255,255,0.05)', border: 'none', color: '#94a3b8', cursor: 'pointer', borderRadius: '8px', padding: '6px 10px', fontSize: '1rem' }}
+              >
+                ✕
+              </button>
             </div>
 
-            {/* Mobile App Mockup */}
-            <div className="phone-mockup">
-              <div style={{ background: '#1e293b', padding: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '9px' }}>
-                <span>📶 5G</span>
-                <strong>LimpiaGest App</strong>
-                <span>🔋 90%</span>
+            {status === 'error' && (
+              <div style={{ background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.3)', borderRadius: '10px', padding: '12px', marginBottom: '16px', color: '#fca5a5', fontSize: '0.85rem' }}>
+                {errorMsg}
               </div>
-              <div style={{ padding: '12px', flexGrow: 1, display: 'flex', flexDirection: 'column', gap: '8px', background: '#0b0f19' }}>
-                <div style={{ fontSize: '11px', fontWeight: 'bold', color: 'white' }}>📋 Tareas de Hoy</div>
-                <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '6px', padding: '8px', fontSize: '9px' }}>
-                  <div style={{ fontWeight: 'bold', color: '#93c5fd' }}>🏢 Comunidad El Huerto</div>
-                  <div style={{ margin: '4px 0', color: '#cbd5e1' }}>• Fregar portal y escaleras</div>
-                  <div style={{ color: '#10b981', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                    <span>✓</span> Completada
-                  </div>
+            )}
+
+            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label">Empresa *</label>
+                  <input
+                    name="companyName"
+                    className="form-input"
+                    placeholder="Limpiezas García SL"
+                    value={form.companyName}
+                    onChange={handleChange}
+                    required
+                  />
                 </div>
-                
-                <div style={{ background: 'rgba(37,99,235,0.1)', border: '1px solid rgba(37,99,235,0.2)', borderRadius: '6px', padding: '8px', fontSize: '9px', textAlign: 'center', marginTop: 'auto' }}>
-                  <span style={{ fontSize: '14px' }}>📸</span>
-                  <div style={{ fontWeight: 'bold', color: 'white', marginTop: '4px' }}>Cargar Foto Evidencia</div>
-                  <div style={{ fontSize: '7px', color: '#94a3b8' }}>Geolocalización GPS activa</div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label">Contacto *</label>
+                  <input
+                    name="contactName"
+                    className="form-input"
+                    placeholder="Manuel García"
+                    value={form.contactName}
+                    onChange={handleChange}
+                    required
+                  />
                 </div>
               </div>
-            </div>
-          </div>
-        </section>
 
-        {/* Features Section */}
-        <section className="landing-section">
-          <h2 className="landing-section-title">Diseñado exclusivamente para el sector</h2>
-          <p className="landing-section-subtitle">
-            LimpiaGest elimina el papeleo, las llamadas constantes y la incertidumbre de los servicios de limpieza externos.
-          </p>
-
-          <div className="features-grid">
-            {features.map((feat, i) => (
-              <div key={i} className="feature-card">
-                <div className="feature-icon-wrapper">
-                  {feat.icon}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label">Email *</label>
+                  <input
+                    name="email"
+                    type="email"
+                    className="form-input"
+                    placeholder="tu@empresa.com"
+                    value={form.email}
+                    onChange={handleChange}
+                    required
+                  />
                 </div>
-                <h3>{feat.title}</h3>
-                <p>{feat.desc}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* How It Works Section */}
-        <section className="landing-section" style={{ background: 'rgba(255,255,255,0.01)', borderRadius: 'var(--radius-xl)', padding: 'var(--space-12) var(--space-8)', border: '1px solid rgba(255,255,255,0.03)' }}>
-          <h2 className="landing-section-title">¿Cómo funciona LimpiaGest?</h2>
-          <p className="landing-section-subtitle">Implementa la app en tu empresa en solo 3 sencillos pasos.</p>
-
-          <div className="steps-container">
-            <div className="step-item">
-              <div className="step-number">1</div>
-              <h3>Configura tus comunidades</h3>
-              <p>Importa portales, comunidades y asigna sus plantillas de tareas recurrentes desde tu panel web.</p>
-            </div>
-            <div className="step-item">
-              <div className="step-number">2</div>
-              <h3>Asigna operarios</h3>
-              <p>Tus limpiadores instalan la PWA en su móvil en 5 segundos y ven su cuadrante diario al instante.</p>
-            </div>
-            <div className="step-item">
-              <div className="step-number">3</div>
-              <h3>Controla en tiempo real</h3>
-              <p>Recibe notificaciones de fichaje, valida evidencias de limpieza y mantén informados a tus clientes.</p>
-            </div>
-          </div>
-        </section>
-
-        {/* Pricing Section */}
-        <section className="landing-section">
-          <h2 className="landing-section-title">Planes flexibles para cada empresa</h2>
-          <p className="landing-section-subtitle">Sin contratos abusivos ni costes ocultos. Elige el plan que mejor se adapte a tu plantilla.</p>
-
-          <div className="pricing-grid">
-            {pricingPlans.map((plan, i) => (
-              <div key={i} className={`pricing-card ${plan.featured ? 'featured' : ''}`}>
-                {plan.featured && <div className="pricing-badge">Recomendado</div>}
-                <h3 style={{ fontSize: 'var(--font-xl)', fontWeight: 'bold', color: 'white' }}>{plan.name}</h3>
-                <p style={{ color: '#94a3b8', fontSize: 'var(--font-xs)', marginTop: '4px' }}>{plan.desc}</p>
-                <div className="pricing-price">
-                  {plan.price}<span>{plan.period}</span>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label">Teléfono</label>
+                  <input
+                    name="phone"
+                    type="tel"
+                    className="form-input"
+                    placeholder="666 123 456"
+                    value={form.phone}
+                    onChange={handleChange}
+                  />
                 </div>
-                <ul className="pricing-features">
-                  {plan.features.map((feat, idx) => (
-                    <li key={idx}>
-                      <span className="pricing-check">✓</span>
-                      {feat}
-                    </li>
-                  ))}
-                </ul>
-                <a 
-                  href={demoMailto} 
-                  className={`btn w-full mt-6 ${plan.featured ? 'btn-success' : 'btn-secondary'}`}
-                  style={!plan.featured ? { background: 'rgba(255,255,255,0.05)', color: 'white', border: '1px solid rgba(255,255,255,0.1)' } : {}}
-                >
-                  {plan.price === "Personalizado" ? "Contactar Ventas" : "Comenzar Prueba"}
-                </a>
               </div>
-            ))}
-          </div>
-        </section>
 
-        {/* CTA Footer */}
-        <section className="landing-section text-center" style={{ padding: 'var(--space-12) 0', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-          <h2 style={{ fontSize: '2.5rem', fontWeight: '800', color: 'white', marginBottom: 'var(--space-4)' }}>
-            ¿Listo para digitalizar tu negocio?
-          </h2>
-          <p style={{ color: '#94a3b8', maxWidth: '600px', margin: '0 auto var(--space-8) auto', fontSize: 'var(--font-base)' }}>
-            Únete a las empresas que ya han optimizado su tiempo y certificado el 100% de sus servicios de limpieza con LimpiaGest.
-          </p>
-          <a href={demoMailto} className="btn btn-success btn-lg">
-            🚀 Solicitar Demostración Comercial
-          </a>
-          <p style={{ marginTop: 'var(--space-4)', fontSize: 'var(--font-xs)', color: 'var(--color-text-muted)' }}>
-            O envíanos un correo directamente a <strong style={{ color: 'white' }}>limpiezasrayba@gmail.com</strong>
-          </p>
-        </section>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label">Nº de operarios</label>
+                  <select
+                    name="operariosCount"
+                    className="form-input"
+                    value={form.operariosCount}
+                    onChange={handleChange}
+                  >
+                    <option value="">Seleccionar...</option>
+                    <option value="1-5">1 – 5</option>
+                    <option value="6-10">6 – 10</option>
+                    <option value="11-25">11 – 25</option>
+                    <option value="26-50">26 – 50</option>
+                    <option value="50+">Más de 50</option>
+                  </select>
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label">Plan de interés</label>
+                  <select
+                    name="plan"
+                    className="form-input"
+                    value={form.plan}
+                    onChange={handleChange}
+                  >
+                    <option value="">Seleccionar...</option>
+                    <option value="Pyme">Pyme — 49€/mes</option>
+                    <option value="Empresa">Empresa — 99€/mes</option>
+                    <option value="Enterprise">Enterprise — Personalizado</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">Mensaje (opcional)</label>
+                <textarea
+                  name="message"
+                  className="form-input"
+                  placeholder="Cuéntanos brevemente tu situación actual..."
+                  value={form.message}
+                  onChange={handleChange}
+                  rows={3}
+                  style={{ resize: 'vertical', minHeight: '80px' }}
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="btn btn-success btn-lg w-full"
+                disabled={status === 'loading'}
+                style={{ marginTop: '4px' }}
+              >
+                {status === 'loading' ? '⏳ Enviando solicitud...' : '🚀 Solicitar Acceso Gratuito'}
+              </button>
+
+              <p style={{ textAlign: 'center', fontSize: '0.75rem', color: '#64748b' }}>
+                Sin tarjeta de crédito. Sin compromiso. Te llamamos nosotros.
+              </p>
+            </form>
+          </>
+        )}
       </div>
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN LANDING
+// ─────────────────────────────────────────────────────────────────────────────
+export default function LandingPage() {
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalPlan, setModalPlan] = useState('');
+  const [billingAnnual, setBillingAnnual] = useState(false);
+
+  function openModal(plan = '') {
+    setModalPlan(plan);
+    setModalOpen(true);
+  }
+
+  return (
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+        .landing-root {
+          font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+          background: #060b18;
+          color: #e2e8f0;
+          min-height: 100vh;
+          overflow-x: hidden;
+        }
+
+        /* ── Gradient background orbs ── */
+        .landing-bg {
+          position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden;
+        }
+        .orb {
+          position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.18;
+          animation: orbFloat 8s ease-in-out infinite;
+        }
+        .orb-1 { width: 600px; height: 600px; background: #2563eb; top: -200px; left: -200px; animation-delay: 0s; }
+        .orb-2 { width: 400px; height: 400px; background: #7c3aed; top: 30%; right: -100px; animation-delay: -3s; }
+        .orb-3 { width: 350px; height: 350px; background: #0891b2; bottom: 10%; left: 20%; animation-delay: -5s; }
+        @keyframes orbFloat {
+          0%, 100% { transform: translate(0, 0) scale(1); }
+          50% { transform: translate(30px, -30px) scale(1.05); }
+        }
+
+        .lp-container {
+          max-width: 1140px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1;
+        }
+
+        /* ── NAV ── */
+        .lp-nav {
+          display: flex; align-items: center; justify-content: space-between;
+          padding: 20px 0;
+          border-bottom: 1px solid rgba(255,255,255,0.06);
+          position: sticky; top: 0; z-index: 100;
+          background: rgba(6,11,24,0.85);
+          backdrop-filter: blur(16px);
+          margin: 0 -24px; padding: 16px 24px;
+        }
+        .lp-logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+        .lp-logo-icon {
+          width: 38px; height: 38px; border-radius: 10px;
+          background: linear-gradient(135deg, #2563eb, #06b6d4);
+          display: flex; align-items: center; justify-content: center;
+          font-size: 1.2rem; box-shadow: 0 0 20px rgba(37,99,235,0.4);
+        }
+        .lp-logo-name { font-size: 1.15rem; font-weight: 800; color: white; }
+        .lp-nav-actions { display: flex; gap: 10px; align-items: center; }
+
+        /* ── HERO ── */
+        .lp-hero {
+          display: grid; grid-template-columns: 1fr 1fr; gap: 60px;
+          align-items: center; padding: 90px 0 80px;
+        }
+        @media (max-width: 768px) {
+          .lp-hero { grid-template-columns: 1fr; padding: 60px 0 50px; gap: 40px; }
+          .hero-mockups { display: none; }
+        }
+
+        .hero-badge {
+          display: inline-flex; align-items: center; gap: 8px;
+          background: rgba(37,99,235,0.15); border: 1px solid rgba(37,99,235,0.35);
+          border-radius: 100px; padding: 6px 14px;
+          font-size: 0.78rem; font-weight: 600; color: #93c5fd;
+          margin-bottom: 22px; width: fit-content;
+        }
+        .hero-badge-dot { width: 6px; height: 6px; border-radius: 50%; background: #3b82f6; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.6;transform:scale(1.3)} }
+
+        .hero-title {
+          font-size: clamp(2.2rem, 5vw, 3.6rem);
+          font-weight: 900; line-height: 1.1; color: white;
+          margin-bottom: 20px; letter-spacing: -0.03em;
+        }
+        .hero-title-gradient {
+          background: linear-gradient(135deg, #3b82f6, #06b6d4, #818cf8);
+          -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+          background-clip: text;
+        }
+        .hero-subtitle {
+          font-size: 1.05rem; color: #94a3b8; line-height: 1.7;
+          margin-bottom: 36px; max-width: 520px;
+        }
+        .hero-ctas { display: flex; gap: 12px; flex-wrap: wrap; }
+        .btn-hero-primary {
+          background: linear-gradient(135deg, #2563eb, #06b6d4);
+          color: white; border: none; padding: 14px 28px;
+          border-radius: 12px; font-size: 1rem; font-weight: 700;
+          cursor: pointer; transition: all 0.2s; box-shadow: 0 0 30px rgba(37,99,235,0.4);
+          text-decoration: none; display: inline-flex; align-items: center; gap: 8px;
+        }
+        .btn-hero-primary:hover { transform: translateY(-2px); box-shadow: 0 0 40px rgba(37,99,235,0.6); }
+        .btn-hero-secondary {
+          background: rgba(255,255,255,0.05); color: white;
+          border: 1px solid rgba(255,255,255,0.12); padding: 14px 28px;
+          border-radius: 12px; font-size: 1rem; font-weight: 600;
+          cursor: pointer; transition: all 0.2s; text-decoration: none;
+          display: inline-flex; align-items: center; gap: 8px;
+        }
+        .btn-hero-secondary:hover { background: rgba(255,255,255,0.09); border-color: rgba(255,255,255,0.2); }
+
+        /* ── MOCKUPS ── */
+        .hero-mockups { position: relative; height: 420px; }
+        .mockup-dashboard {
+          position: absolute; top: 0; left: 0; right: 0;
+          background: linear-gradient(145deg, #1e293b, #0f172a);
+          border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 16px;
+          font-size: 11px; color: #94a3b8;
+          box-shadow: 0 30px 80px rgba(0,0,0,0.5);
+        }
+        .mockup-phone {
+          position: absolute; bottom: 0; right: 0; width: 170px;
+          background: linear-gradient(145deg, #1e293b, #0f172a);
+          border: 1px solid rgba(255,255,255,0.1); border-radius: 20px;
+          overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+          font-size: 10px; color: #94a3b8;
+        }
+
+        /* ── STATS ── */
+        .lp-stats {
+          display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px;
+          background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06);
+          border-radius: 16px; overflow: hidden; margin: 0 0 80px;
+        }
+        @media (max-width: 640px) { .lp-stats { grid-template-columns: repeat(2,1fr); } }
+        .stat-item {
+          padding: 28px 24px; text-align: center;
+          background: rgba(6,11,24,0.6);
+          transition: background 0.2s;
+        }
+        .stat-item:hover { background: rgba(37,99,235,0.08); }
+        .stat-value { font-size: 2.2rem; font-weight: 900; color: white; letter-spacing: -0.03em; }
+        .stat-label { font-size: 0.8rem; color: #64748b; margin-top: 4px; font-weight: 500; }
+
+        /* ── SECTION ── */
+        .lp-section { margin-bottom: 90px; }
+        .lp-section-label {
+          font-size: 0.75rem; font-weight: 700; letter-spacing: 0.12em;
+          text-transform: uppercase; color: #3b82f6; margin-bottom: 12px;
+        }
+        .lp-section-title {
+          font-size: clamp(1.8rem, 4vw, 2.6rem); font-weight: 900; color: white;
+          letter-spacing: -0.03em; line-height: 1.15; margin-bottom: 14px;
+        }
+        .lp-section-sub {
+          font-size: 1rem; color: #64748b; max-width: 600px; line-height: 1.7;
+          margin-bottom: 50px;
+        }
+
+        /* ── FEATURES GRID ── */
+        .features-grid {
+          display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+        }
+        @media (max-width: 900px) { .features-grid { grid-template-columns: repeat(2,1fr); } }
+        @media (max-width: 580px) { .features-grid { grid-template-columns: 1fr; } }
+        .feature-card {
+          background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06);
+          border-radius: 16px; padding: 24px; transition: all 0.25s;
+        }
+        .feature-card:hover {
+          background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.12);
+          transform: translateY(-3px);
+        }
+        .feature-icon {
+          width: 48px; height: 48px; border-radius: 12px;
+          display: flex; align-items: center; justify-content: center;
+          font-size: 1.4rem; margin-bottom: 16px;
+        }
+        .feature-card h3 { font-size: 1rem; font-weight: 700; color: white; margin-bottom: 8px; }
+        .feature-card p { font-size: 0.875rem; color: #64748b; line-height: 1.65; }
+
+        /* ── HOW IT WORKS ── */
+        .steps-grid {
+          display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px;
+          position: relative;
+        }
+        @media (max-width: 720px) { .steps-grid { grid-template-columns: 1fr; } }
+        .steps-grid::before {
+          content: ''; position: absolute; top: 28px; left: calc(16.6% + 20px); right: calc(16.6% + 20px);
+          height: 2px; background: linear-gradient(90deg, #2563eb, #06b6d4);
+          opacity: 0.3;
+        }
+        @media (max-width: 720px) { .steps-grid::before { display: none; } }
+        .step-card {
+          background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06);
+          border-radius: 16px; padding: 28px 24px; text-align: center;
+        }
+        .step-number {
+          width: 56px; height: 56px; border-radius: 50%;
+          background: linear-gradient(135deg, #2563eb, #06b6d4);
+          display: flex; align-items: center; justify-content: center;
+          font-size: 1.3rem; font-weight: 900; color: white;
+          margin: 0 auto 20px; box-shadow: 0 0 20px rgba(37,99,235,0.4);
+        }
+        .step-card h3 { font-size: 1rem; font-weight: 700; color: white; margin-bottom: 8px; }
+        .step-card p { font-size: 0.875rem; color: #64748b; line-height: 1.6; }
+
+        /* ── TESTIMONIALS ── */
+        .testimonials-grid {
+          display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+        }
+        @media (max-width: 900px) { .testimonials-grid { grid-template-columns: repeat(2,1fr); } }
+        @media (max-width: 580px) { .testimonials-grid { grid-template-columns: 1fr; } }
+        .testimonial-card {
+          background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06);
+          border-radius: 16px; padding: 24px;
+        }
+        .testimonial-stars { color: #fbbf24; font-size: 0.85rem; margin-bottom: 14px; }
+        .testimonial-quote { font-size: 0.9rem; color: #cbd5e1; line-height: 1.65; margin-bottom: 20px; font-style: italic; }
+        .testimonial-author { display: flex; align-items: center; gap: 12px; }
+        .testimonial-avatar {
+          width: 38px; height: 38px; border-radius: 50%;
+          background: linear-gradient(135deg, #2563eb, #7c3aed);
+          display: flex; align-items: center; justify-content: center;
+          font-weight: 800; color: white; font-size: 0.9rem; flex-shrink: 0;
+        }
+        .testimonial-name { font-size: 0.85rem; font-weight: 700; color: white; }
+        .testimonial-role { font-size: 0.75rem; color: #64748b; }
+
+        /* ── PRICING ── */
+        .billing-toggle {
+          display: inline-flex; align-items: center; gap: 12px;
+          background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+          border-radius: 100px; padding: 6px 6px 6px 16px; margin-bottom: 50px; cursor: pointer;
+        }
+        .billing-toggle span { font-size: 0.85rem; color: #94a3b8; font-weight: 500; }
+        .billing-toggle .active-label { color: white; font-weight: 700; }
+        .toggle-switch {
+          width: 44px; height: 24px; background: rgba(255,255,255,0.1);
+          border-radius: 100px; position: relative; transition: background 0.2s; cursor: pointer;
+          border: none;
+        }
+        .toggle-switch.on { background: linear-gradient(90deg, #2563eb, #06b6d4); }
+        .toggle-knob {
+          width: 18px; height: 18px; border-radius: 50%; background: white;
+          position: absolute; top: 3px; left: 3px; transition: transform 0.2s;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+        .toggle-switch.on .toggle-knob { transform: translateX(20px); }
+        .annual-badge {
+          background: rgba(16,185,129,0.15); border: 1px solid rgba(16,185,129,0.3);
+          color: #6ee7b7; font-size: 0.72rem; font-weight: 700;
+          padding: 3px 10px; border-radius: 100px;
+        }
+
+        .pricing-grid {
+          display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; align-items: start;
+        }
+        @media (max-width: 900px) { .pricing-grid { grid-template-columns: 1fr; max-width: 420px; margin: 0 auto; } }
+        .pricing-card {
+          background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.07);
+          border-radius: 20px; padding: 28px; position: relative; transition: all 0.25s;
+        }
+        .pricing-card.featured {
+          background: linear-gradient(145deg, rgba(37,99,235,0.12), rgba(6,182,212,0.08));
+          border-color: rgba(37,99,235,0.35);
+          box-shadow: 0 0 50px rgba(37,99,235,0.15);
+        }
+        .pricing-card:not(.featured):hover { border-color: rgba(255,255,255,0.14); }
+        .pricing-badge-pill {
+          position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
+          background: linear-gradient(90deg, #2563eb, #06b6d4); color: white;
+          font-size: 0.72rem; font-weight: 800; padding: 4px 14px; border-radius: 100px;
+          white-space: nowrap; letter-spacing: 0.05em;
+        }
+        .pricing-name { font-size: 1rem; font-weight: 800; color: white; margin-bottom: 4px; }
+        .pricing-desc { font-size: 0.8rem; color: #64748b; margin-bottom: 20px; }
+        .pricing-price { margin-bottom: 24px; }
+        .pricing-amount { font-size: 2.8rem; font-weight: 900; color: white; letter-spacing: -0.05em; line-height: 1; }
+        .pricing-period { font-size: 0.85rem; color: #64748b; }
+        .pricing-save { font-size: 0.75rem; color: #6ee7b7; margin-top: 4px; }
+        .pricing-features-list { list-style: none; padding: 0; margin: 0 0 24px; display: flex; flex-direction: column; gap: 10px; }
+        .pricing-features-list li { display: flex; align-items: flex-start; gap: 10px; font-size: 0.875rem; color: #cbd5e1; }
+        .pricing-check { color: #10b981; flex-shrink: 0; font-size: 0.9rem; margin-top: 1px; }
+        .btn-pricing-primary {
+          width: 100%; padding: 13px; border-radius: 10px; font-size: 0.95rem; font-weight: 700;
+          cursor: pointer; border: none; transition: all 0.2s;
+          background: linear-gradient(135deg, #2563eb, #06b6d4); color: white;
+          box-shadow: 0 0 20px rgba(37,99,235,0.3);
+        }
+        .btn-pricing-primary:hover { transform: translateY(-2px); box-shadow: 0 0 30px rgba(37,99,235,0.5); }
+        .btn-pricing-secondary {
+          width: 100%; padding: 13px; border-radius: 10px; font-size: 0.95rem; font-weight: 600;
+          cursor: pointer; transition: all 0.2s;
+          background: rgba(255,255,255,0.04); color: #94a3b8;
+          border: 1px solid rgba(255,255,255,0.08);
+        }
+        .btn-pricing-secondary:hover { background: rgba(255,255,255,0.08); color: white; }
+
+        /* ── CTA BOTTOM ── */
+        .lp-cta-bottom {
+          text-align: center; padding: 70px 0;
+          border-top: 1px solid rgba(255,255,255,0.05);
+          border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .cta-bottom-title { font-size: clamp(1.8rem, 4vw, 2.8rem); font-weight: 900; color: white; margin-bottom: 14px; letter-spacing: -0.03em; }
+        .cta-bottom-sub { font-size: 1rem; color: #64748b; margin-bottom: 36px; }
+
+        /* ── FOOTER ── */
+        .lp-footer {
+          padding: 32px 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: gap;
+          gap: 16px;
+        }
+        .lp-footer-copy { font-size: 0.8rem; color: #475569; }
+        .lp-footer-links { display: flex; gap: 20px; }
+        .lp-footer-links a { font-size: 0.8rem; color: #475569; text-decoration: none; transition: color 0.2s; }
+        .lp-footer-links a:hover { color: #94a3b8; }
+
+        @keyframes fadeIn { from{opacity:0} to{opacity:1} }
+        @keyframes slideUp { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
+      `}</style>
+
+      <div className="landing-root">
+        {/* Background orbs */}
+        <div className="landing-bg">
+          <div className="orb orb-1" />
+          <div className="orb orb-2" />
+          <div className="orb orb-3" />
+        </div>
+
+        {/* ── NAV ── */}
+        <div className="lp-container">
+          <nav className="lp-nav">
+            <a href="/" className="lp-logo">
+              <div className="lp-logo-icon">🧹</div>
+              <span className="lp-logo-name">LimpiaGest</span>
+            </a>
+            <div className="lp-nav-actions">
+              <button
+                onClick={() => openModal()}
+                style={{
+                  background: 'rgba(255,255,255,0.06)', color: '#94a3b8',
+                  border: '1px solid rgba(255,255,255,0.1)', padding: '8px 16px',
+                  borderRadius: '10px', fontWeight: 600, fontSize: '0.85rem',
+                  cursor: 'pointer', transition: 'all 0.2s'
+                }}
+                onMouseOver={e => { e.currentTarget.style.color = 'white'; e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; }}
+                onMouseOut={e => { e.currentTarget.style.color = '#94a3b8'; e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
+              >
+                Solicitar Demo
+              </button>
+              <Link to="/login" className="btn-hero-primary" style={{ padding: '8px 18px', fontSize: '0.875rem', borderRadius: '10px' }}>
+                🔑 Acceso Clientes
+              </Link>
+            </div>
+          </nav>
+        </div>
+
+        {/* ── HERO ── */}
+        <div className="lp-container">
+          <section className="lp-hero">
+            <div>
+              <div className="hero-badge">
+                <span className="hero-badge-dot" />
+                Nuevo: Fichajes PWA con GPS en tiempo real
+              </div>
+              <h1 className="hero-title">
+                La revolución en la gestión de{' '}
+                <span className="hero-title-gradient">servicios de limpieza</span>.
+              </h1>
+              <p className="hero-subtitle">
+                LimpiaGest es el software SaaS todo en uno diseñado para empresas de limpieza. Controla operarios, automatiza tareas, certifica trabajos con evidencias fotográficas y optimiza tus costes.
+              </p>
+              <div className="hero-ctas">
+                <button className="btn-hero-primary" onClick={() => openModal()}>
+                  🚀 Solicitar Demo Gratis
+                </button>
+                <Link to="/login" className="btn-hero-secondary">
+                  Entrar a la App →
+                </Link>
+              </div>
+            </div>
+
+            {/* Mockups */}
+            <div className="hero-mockups">
+              <div className="mockup-dashboard">
+                <div style={{ display: 'flex', gap: '5px', marginBottom: '10px' }}>
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444', display: 'block' }} />
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#eab308', display: 'block' }} />
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#22c55e', display: 'block' }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '8px', marginBottom: '10px' }}>
+                  <strong style={{ color: '#e2e8f0', fontSize: '10px' }}>📊 LimpiaGest Admin Panel</strong>
+                  <span style={{ color: '#22c55e', fontSize: '9px' }}>● En línea</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginBottom: '12px' }}>
+                  {[
+                    { label: 'Activos Hoy', value: '12 Operarios', color: 'white' },
+                    { label: 'Completados', value: '85% (34/40)', color: '#10b981' },
+                    { label: 'Incidencias', value: '0 Pendientes', color: '#ef4444' },
+                  ].map((s, i) => (
+                    <div key={i} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', padding: '8px' }}>
+                      <div style={{ fontSize: '9px' }}>{s.label}</div>
+                      <div style={{ fontSize: '11px', fontWeight: 700, color: s.color, marginTop: '3px' }}>{s.value}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ background: 'rgba(37,99,235,0.06)', border: '1px solid rgba(37,99,235,0.12)', borderRadius: '8px', padding: '8px', fontSize: '9px' }}>
+                  🔔 <strong style={{ color: '#93c5fd' }}>Última actividad:</strong>{' '}
+                  <span>Operaria Agustina A. completó Portal B · Evidencia fotográfica subida ✓</span>
+                </div>
+                <div style={{ marginTop: '10px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                  {['Comunidad El Huerto', 'Residencial Las Palmas', 'C. Los Olivos', 'Edificio Torresol'].map((c, i) => (
+                    <div key={i} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', padding: '6px 8px', fontSize: '9px', display: 'flex', justifyContent: 'space-between' }}>
+                      <span>{c}</span>
+                      <span style={{ color: '#10b981' }}>✓</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mockup-phone">
+                <div style={{ background: '#1e293b', padding: '8px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '8px' }}>
+                  <span>📶 5G</span>
+                  <strong style={{ color: 'white' }}>LimpiaGest</strong>
+                  <span>🔋 90%</span>
+                </div>
+                <div style={{ padding: '12px', background: '#0b0f19', minHeight: '240px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 700, color: 'white' }}>📋 Tareas de Hoy</div>
+                  {[
+                    { com: '🏢 El Huerto', task: 'Fregar portal y escaleras', done: true },
+                    { com: '🏢 Las Palmas', task: 'Limpieza garaje', done: false },
+                  ].map((t, i) => (
+                    <div key={i} style={{ background: 'rgba(255,255,255,0.03)', border: `1px solid ${t.done ? 'rgba(16,185,129,0.2)' : 'rgba(255,255,255,0.06)'}`, borderRadius: '8px', padding: '8px', fontSize: '9px' }}>
+                      <div style={{ fontWeight: 700, color: '#93c5fd' }}>{t.com}</div>
+                      <div style={{ color: '#cbd5e1', margin: '3px 0' }}>• {t.task}</div>
+                      <div style={{ color: t.done ? '#10b981' : '#fbbf24' }}>{t.done ? '✓ Completada' : '⏳ En progreso'}</div>
+                    </div>
+                  ))}
+                  <div style={{ background: 'rgba(37,99,235,0.12)', border: '1px solid rgba(37,99,235,0.25)', borderRadius: '8px', padding: '8px', fontSize: '9px', textAlign: 'center', marginTop: 'auto' }}>
+                    <div style={{ fontSize: '16px' }}>📸</div>
+                    <div style={{ fontWeight: 700, color: 'white', marginTop: '3px' }}>Cargar Foto Evidencia</div>
+                    <div style={{ fontSize: '8px', color: '#64748b' }}>GPS activo · Marca de agua automática</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* ── STATS ── */}
+          <div className="lp-stats">
+            {stats.map((s, i) => (
+              <div key={i} className="stat-item">
+                <div className="stat-value">{s.value}</div>
+                <div className="stat-label">{s.label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* ── FEATURES ── */}
+          <section className="lp-section">
+            <div className="lp-section-label">Funcionalidades</div>
+            <h2 className="lp-section-title">Todo lo que necesita tu empresa,<br />en una sola app.</h2>
+            <p className="lp-section-sub">
+              Diseñado específicamente para el sector de la limpieza. Sin funciones innecesarias, sin curva de aprendizaje.
+            </p>
+            <div className="features-grid">
+              {features.map((feat, i) => (
+                <div key={i} className="feature-card">
+                  <div className="feature-icon" style={{ background: `${feat.color}18`, border: `1px solid ${feat.color}30` }}>
+                    {feat.icon}
+                  </div>
+                  <h3>{feat.title}</h3>
+                  <p>{feat.desc}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* ── HOW IT WORKS ── */}
+          <section className="lp-section">
+            <div className="lp-section-label">Implementación</div>
+            <h2 className="lp-section-title">En marcha en menos de 24 horas.</h2>
+            <p className="lp-section-sub">
+              Sin migraciones complejas. Sin formación técnica. Tus operarios instalan la app en el móvil en segundos.
+            </p>
+            <div className="steps-grid">
+              {[
+                { n: '1', title: 'Solicita el acceso', desc: 'Rellena el formulario. En menos de 24h te configuramos la cuenta con tus datos de empresa.' },
+                { n: '2', title: 'Configura tus comunidades', desc: 'Importa portales, comunidades y plantillas de tareas recurrentes desde tu panel web.' },
+                { n: '3', title: 'Controla en tiempo real', desc: 'Tus operarios entran con su móvil, tú ves todo desde el dashboard. Así de sencillo.' },
+              ].map((s, i) => (
+                <div key={i} className="step-card">
+                  <div className="step-number">{s.n}</div>
+                  <h3>{s.title}</h3>
+                  <p>{s.desc}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* ── TESTIMONIALS ── */}
+          <section className="lp-section">
+            <div className="lp-section-label">Testimonios</div>
+            <h2 className="lp-section-title">Lo que dicen nuestros clientes.</h2>
+            <p className="lp-section-sub">
+              Empresas como la tuya ya optimizan su gestión diaria con LimpiaGest.
+            </p>
+            <div className="testimonials-grid">
+              {testimonials.map((t, i) => (
+                <div key={i} className="testimonial-card">
+                  <div className="testimonial-stars">★★★★★</div>
+                  <p className="testimonial-quote">"{t.quote}"</p>
+                  <div className="testimonial-author">
+                    <div className="testimonial-avatar">{t.author.charAt(0)}</div>
+                    <div>
+                      <div className="testimonial-name">{t.author}</div>
+                      <div className="testimonial-role">{t.role} · {t.company}</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* ── PRICING ── */}
+          <section className="lp-section" id="pricing">
+            <div className="lp-section-label">Precios</div>
+            <h2 className="lp-section-title">Sin contratos. Sin sorpresas.</h2>
+            <p className="lp-section-sub">
+              Elige el plan que mejor se adapta a tu plantilla. Cancela cuando quieras.
+            </p>
+
+            {/* Billing toggle */}
+            <div
+              className="billing-toggle"
+              onClick={() => setBillingAnnual(prev => !prev)}
+              role="button"
+              aria-label="Cambiar facturación anual/mensual"
+            >
+              <span className={!billingAnnual ? 'active-label' : ''}>Mensual</span>
+              <button className={`toggle-switch ${billingAnnual ? 'on' : ''}`} aria-hidden="true">
+                <span className="toggle-knob" />
+              </button>
+              <span className={billingAnnual ? 'active-label' : ''}>Anual</span>
+              {billingAnnual && <span className="annual-badge">−20%</span>}
+            </div>
+
+            <div className="pricing-grid">
+              {pricingPlans.map((plan, i) => {
+                const price = plan.monthlyPrice
+                  ? (billingAnnual ? Math.round(plan.monthlyPrice * 0.8) : plan.monthlyPrice)
+                  : null;
+                return (
+                  <div key={i} className={`pricing-card ${plan.featured ? 'featured' : ''}`}>
+                    {plan.featured && <div className="pricing-badge-pill">⭐ Más Popular</div>}
+                    <div className="pricing-name">{plan.name}</div>
+                    <div className="pricing-desc">{plan.desc}</div>
+                    <div className="pricing-price">
+                      {price !== null ? (
+                        <>
+                          <span className="pricing-amount">{price}€</span>
+                          <span className="pricing-period"> /mes</span>
+                          {billingAnnual && (
+                            <div className="pricing-save">Ahorras {plan.monthlyPrice * 12 - price * 12}€ al año</div>
+                          )}
+                        </>
+                      ) : (
+                        <span className="pricing-amount" style={{ fontSize: '1.8rem' }}>Personalizado</span>
+                      )}
+                    </div>
+                    <ul className="pricing-features-list">
+                      {plan.features.map((f, j) => (
+                        <li key={j}>
+                          <span className="pricing-check">✓</span>
+                          {f}
+                        </li>
+                      ))}
+                    </ul>
+                    <button
+                      onClick={() => openModal(plan.name)}
+                      className={plan.featured ? 'btn-pricing-primary' : 'btn-pricing-secondary'}
+                    >
+                      {plan.cta}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          {/* ── CTA BOTTOM ── */}
+          <section className="lp-cta-bottom">
+            <h2 className="cta-bottom-title">¿Listo para digitalizar tu negocio?</h2>
+            <p className="cta-bottom-sub">
+              Únete a las empresas que ya han optimizado su tiempo y certificado el 100% de sus servicios.
+            </p>
+            <button className="btn-hero-primary" onClick={() => openModal()} style={{ fontSize: '1.05rem', padding: '15px 34px' }}>
+              🚀 Solicitar Demo Gratuita
+            </button>
+            <p style={{ marginTop: '16px', fontSize: '0.8rem', color: '#475569' }}>
+              O escríbenos directamente a <strong style={{ color: '#94a3b8' }}>limpiezasrayba@gmail.com</strong>
+            </p>
+          </section>
+
+          {/* ── FOOTER ── */}
+          <footer className="lp-footer">
+            <div className="lp-footer-copy">
+              © {new Date().getFullYear()} LimpiaGest · RyB Limpiezas · Todos los derechos reservados
+            </div>
+            <div className="lp-footer-links">
+              <a href="mailto:limpiezasrayba@gmail.com">Contacto</a>
+              <Link to="/login">Acceso clientes</Link>
+            </div>
+          </footer>
+        </div>
+      </div>
+
+      {/* ── MODAL ── */}
+      <RequestModal
+        isOpen={modalOpen}
+        onClose={() => setModalOpen(false)}
+        defaultPlan={modalPlan}
+      />
+    </>
   );
 }

@@ -263,6 +263,16 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------------------
+    // COMPANY REQUESTS (Leads de la Landing Page — escritura pública)
+    // -------------------------------------------------------------------------
+    match /companyRequests/{requestId} {
+      // Cualquier visitante puede enviar una solicitud desde la landing (sin autenticar)
+      allow create: if true;
+      // Solo admins pueden ver, actualizar o borrar solicitudes
+      allow read, update, delete: if isAdmin();
+    }
+
+    // -------------------------------------------------------------------------
     // OTHER / FUTURE COLLECTIONS
     // -------------------------------------------------------------------------
     // Add explicitly any other collections you use to avoid access denied
