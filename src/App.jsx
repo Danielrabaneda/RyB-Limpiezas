@@ -195,7 +195,7 @@ function AdminLayout() {
     { path: '/admin/control-horario', icon: '⏱️', label: 'Control Horario' },
     { path: '/admin/ausencias', icon: '🌴', label: 'Ausencias' },
     { path: '/admin/informes', icon: '📈', label: 'Informes' },
-    { path: '/admin/facturas', icon: '📄', label: 'Facturas' },
+    { path: '/admin/facturas', icon: '📄', label: 'Facturación' },
     { path: '/admin/evidencias', icon: '📸', label: 'Evidencias' },
     { path: '/admin/kilometraje', icon: '🚗', label: 'Kilometraje' },
     { path: '/admin/inventory', icon: '📦', label: 'Materiales' },
