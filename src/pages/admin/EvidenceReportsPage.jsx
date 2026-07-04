@@ -83,6 +83,7 @@ export default function EvidenceReportsPage() {
 
   const totalReports = reports.length;
   const pendingReports = reports.filter(r => r.status === 'submitted').length;
+  const reviewedReports = reports.filter(r => r.status === 'reviewed').length;
   const totalPhotos = reports.reduce((acc, r) => acc + (r.photoUrls?.length || 0), 0);
 
   function renderReportCard(report) {
