@@ -114,12 +114,11 @@ export async function deleteCheckIn(id) {
 export async function getAllOpenCheckIns(userId) {
   const q = query(
     collection(db, 'checkIns'),
-    where('userId', '==', userId)
+    where('userId', '==', userId),
+    where('checkOutTime', '==', null)
   );
   const snap = await getDocs(q);
-  return snap.docs
-    .map(d => ({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }))
-    .filter(c => c.checkOutTime === null);
+  return snap.docs.map(d => ({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }));
 }
 
 export async function getActiveCheckIn(userId) {

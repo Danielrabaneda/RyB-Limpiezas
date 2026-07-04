@@ -22,6 +22,11 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    // Helper to check if a community's client portal is active
+    function isCommunityPortalActive(communityId) {
+      return get(/databases/$(database)/documents/communities/$(communityId)).data.portalToken != null;
+    }
+
 
 
     // =========================================================================
@@ -79,8 +84,7 @@ service cloud.firestore {
     }
 
     match /communityTasks/{taskId} {
-      allow list: if true;
-      allow get: if true;
+      allow read: if isAuthenticated();
       allow write: if isAdmin();
     }
 
@@ -135,8 +139,9 @@ service cloud.firestore {
     }
 
     match /checkIns/{checkInId} {
-      allow get: if true;
-      allow list: if true;
+      allow read: if isAdmin() || 
+                  isOwner(resource.data.userId) || 
+                  (isAuthenticated() && isCommunityPortalActive(resource.data.communityId));
       allow create: if isAuthenticated() && isOwner(request.resource.data.userId);
       allow update: if isAuthenticated() && (isAdmin() || isOwner(resource.data.userId));
       allow delete: if isAuthenticated() && isAdmin();
@@ -208,7 +213,7 @@ service cloud.firestore {
     }
 
     match /settings/{settingId} {
-      allow read: if isAuthenticated();
+      allow read: if settingId == 'global' ? isAuthenticated() : isAdmin();
       allow write: if isAdmin();
     }
 
@@ -243,8 +248,11 @@ service cloud.firestore {
     }
 
     match /evidenceReports/{reportId} {
-      allow list: if true;
-      allow get: if true;
+      allow read: if isAdmin() || 
+                  (isAuthenticated() && (
+                    resource.data.userId == request.auth.uid || 
+                    isCommunityPortalActive(resource.data.communityId)
+                  ));
       allow create: if isAuthenticated();
       allow update, delete: if isAdmin();
     }
@@ -267,7 +275,12 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     match /companyRequests/{requestId} {
       // Cualquier visitante puede enviar una solicitud desde la landing (sin autenticar)
-      allow create: if true;
+      allow create: if request.resource.data.keys().hasAll(['companyName', 'contactName', 'email', 'phone']) 
+                    && request.resource.data.keys().size() <= 10
+                    && request.resource.data.companyName is string && request.resource.data.companyName.size() < 200
+                    && request.resource.data.contactName is string && request.resource.data.contactName.size() < 200
+                    && request.resource.data.email is string && request.resource.data.email.size() < 200
+                    && request.resource.data.phone is string && request.resource.data.phone.size() < 50;
       // Solo admins pueden ver, actualizar o borrar solicitudes
       allow read, update, delete: if isAdmin();
     }

@@ -1,6 +1,6 @@
 import { 
   collection, doc, addDoc, updateDoc, getDocs, getDoc, deleteDoc,
-  query, where, orderBy, serverTimestamp, Timestamp, writeBatch
+  query, where, orderBy, serverTimestamp, Timestamp, writeBatch, arrayUnion
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { 
@@ -48,12 +48,14 @@ export async function deleteFutureServicesForTask(taskId) {
     const toDelete = snap.docs.filter(d => !d.data().isRescheduled);
     if (toDelete.length === 0) return 0;
     
-    const batch = writeBatch(db);
-    toDelete.forEach(d => {
-      batch.delete(d.ref);
-    });
+    const CHUNK_SIZE = 400;
+    for (let i = 0; i < toDelete.length; i += CHUNK_SIZE) {
+      const chunk = toDelete.slice(i, i + CHUNK_SIZE);
+      const batch = writeBatch(db);
+      chunk.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+    }
     
-    await batch.commit();
     console.log(`[Schedule] Eliminados ${toDelete.length} servicios futuros pendientes para la tarea ${taskId} (${snap.size - toDelete.length} reprogramados preservados)`);
     return toDelete.length;
   } catch (error) {
@@ -364,9 +366,13 @@ export async function deleteScheduledServicesByCommunity(communityId) {
   const snap = await getDocs(q);
   if (snap.empty) return 0;
   
-  const batch = writeBatch(db);
-  snap.docs.forEach(d => batch.delete(d.ref));
-  await batch.commit();
+  const CHUNK_SIZE = 400;
+  for (let i = 0; i < snap.docs.length; i += CHUNK_SIZE) {
+    const chunk = snap.docs.slice(i, i + CHUNK_SIZE);
+    const batch = writeBatch(db);
+    chunk.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }
   return snap.size;
 }
 
@@ -384,9 +390,13 @@ export async function deleteFutureServicesForUserInCommunity(userId, communityId
     const snap = await getDocs(q);
     if (snap.empty) return 0;
     
-    const batch = writeBatch(db);
-    snap.docs.forEach(d => batch.delete(d.ref));
-    await batch.commit();
+    const CHUNK_SIZE = 400;
+    for (let i = 0; i < snap.docs.length; i += CHUNK_SIZE) {
+      const chunk = snap.docs.slice(i, i + CHUNK_SIZE);
+      const batch = writeBatch(db);
+      chunk.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+    }
     console.log(`[Schedule] Eliminados ${snap.size} servicios futuros para el usuario ${userId} en comunidad ${communityId}`);
     return snap.size;
   } catch (error) {
@@ -397,7 +407,9 @@ export async function deleteFutureServicesForUserInCommunity(userId, communityId
 export async function updateScheduledServiceNotesAndPhotos(id, notes, photoUrls) {
   const dataToUpdate = { updatedAt: serverTimestamp() };
   if (notes !== undefined) dataToUpdate.generalNotes = notes;
-  if (photoUrls !== undefined) dataToUpdate.generalPhotoUrls = arrayUnion(...photoUrls);
+  if (photoUrls !== undefined && photoUrls.length > 0) {
+    dataToUpdate.generalPhotoUrls = arrayUnion(...photoUrls);
+  }
   
   await updateDoc(doc(db, 'scheduledServices', id), dataToUpdate);
 }

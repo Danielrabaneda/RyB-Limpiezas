@@ -53,15 +53,20 @@ export async function deleteCommunity(id) {
   // 3. Inactivar tareas de esta comunidad (para que el generador no las use)
   const tasksQ = query(collection(db, 'communityTasks'), where('communityId', '==', id));
   const tasksSnap = await getDocs(tasksQ);
-  const batch = writeBatch(db);
-  tasksSnap.docs.forEach(d => batch.update(d.ref, { active: false }));
   
   // 4. Inactivar asignaciones de esta comunidad
   const assignQ = query(collection(db, 'assignments'), where('communityId', '==', id));
   const assignSnap = await getDocs(assignQ);
-  assignSnap.docs.forEach(d => batch.update(d.ref, { active: false }));
 
-  await batch.commit();
+  // Actualizar todo en lotes de 400 para evitar los límites de Firestore writeBatch
+  const allDocs = [...tasksSnap.docs, ...assignSnap.docs];
+  const CHUNK_SIZE = 400;
+  for (let i = 0; i < allDocs.length; i += CHUNK_SIZE) {
+    const chunk = allDocs.slice(i, i + CHUNK_SIZE);
+    const batch = writeBatch(db);
+    chunk.forEach(d => batch.update(d.ref, { active: false }));
+    await batch.commit();
+  }
 }
 
 export async function getCommunities() {

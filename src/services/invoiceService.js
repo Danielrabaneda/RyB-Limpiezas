@@ -90,11 +90,15 @@ export async function deleteInvoice(id) {
 
 export async function deleteMultipleInvoices(ids) {
   if (!ids || ids.length === 0) return;
-  const batch = writeBatch(db);
-  for (const id of ids) {
-    batch.delete(doc(db, COLLECTION, id));
+  const CHUNK_SIZE = 400;
+  for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+    const chunk = ids.slice(i, i + CHUNK_SIZE);
+    const batch = writeBatch(db);
+    for (const id of chunk) {
+      batch.delete(doc(db, COLLECTION, id));
+    }
+    await batch.commit();
   }
-  await batch.commit();
 }
 
 // Get the next invoice number for display/preview purposes

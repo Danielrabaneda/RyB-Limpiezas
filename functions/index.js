@@ -44,13 +44,18 @@ const FCM_TOKEN_MAX_AGE_DAYS = 60;
 // ============================================================================
 
 /**
- * Obtiene la fecha actual en zona horaria Europe/Madrid como objeto Date
- * @returns {Date} Fecha actual en Madrid
+ * Escapa caracteres especiales de HTML para prevenir vulnerabilidades XSS.
+ * @param {string} text
+ * @returns {string}
  */
-function getNowInMadrid() {
-  // Usamos Intl para obtener la hora local de Madrid
-  const now = new Date();
-  return now;
+function escapeHtml(text) {
+  if (!text) return "";
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 /**
@@ -86,17 +91,44 @@ function getTodayBoundsMadrid() {
 }
 
 /**
- * Calcula el offset de Europe/Madrid respecto a UTC en milisegundos.
+ * Calcula el offset de Europe/Madrid respecto a UTC en milisegundos de forma robusta.
  * @param {Date} date - Fecha de referencia
  * @returns {number} Offset en milisegundos (positivo = Madrid adelantado)
  */
 function getMadridOffsetMs(date) {
-  // Obtener la representación en Madrid
-  const madridStr = date.toLocaleString("en-US", { timeZone: "Europe/Madrid" });
-  const utcStr = date.toLocaleString("en-US", { timeZone: "UTC" });
-  const madridDate = new Date(madridStr);
-  const utcDate = new Date(utcStr);
-  return madridDate.getTime() - utcDate.getTime();
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Europe/Madrid",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric",
+    hour12: false,
+  }).formatToParts(date);
+
+  const map = new Map(parts.map((p) => [p.type, p.value]));
+
+  const year = parseInt(map.get("year"), 10);
+  const month = parseInt(map.get("month"), 10) - 1;
+  const day = parseInt(map.get("day"), 10);
+  let hour = parseInt(map.get("hour"), 10);
+  const minute = parseInt(map.get("minute"), 10);
+  const second = parseInt(map.get("second"), 10);
+
+  if (hour === 24) hour = 0;
+
+  const madridUtc = Date.UTC(year, month, day, hour, minute, second);
+  const localUtc = Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate(),
+    date.getUTCHours(),
+    date.getUTCMinutes(),
+    date.getUTCSeconds()
+  );
+
+  return madridUtc - localUtc;
 }
 
 /**
@@ -538,6 +570,16 @@ exports.sendInvoiceEmails = onCall(
       throw new HttpsError("invalid-argument", "El argumento 'invoiceIds' debe ser una lista.");
     }
 
+    if (invoiceIds.length > 50) {
+      throw new HttpsError("invalid-argument", "No se pueden enviar más de 50 facturas por llamada.");
+    }
+
+    for (const id of invoiceIds) {
+      if (typeof id !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(id)) {
+        throw new HttpsError("invalid-argument", "ID de factura no válido.");
+      }
+    }
+
     logger.info(`[sendInvoiceEmails] Iniciando proceso de envío de correos para ${invoiceIds.length} facturas. Solicitado por: ${request.auth.uid}`);
 
     // Verify user role is admin
@@ -607,19 +649,28 @@ exports.sendInvoiceEmails = onCall(
         const mesName = pdfMonthNames[inv.month] || "";
         const anio = String(inv.year || new Date().getFullYear());
 
-        // Template replacement helper
-        const replaceTemplates = (text) => {
+        // Escapar variables de usuario antes de reemplazar en plantillas para evitar XSS
+        const numFactEscaped = escapeHtml(numFact);
+        const communityNameEscaped = escapeHtml(communityName);
+        const mesNameEscaped = escapeHtml(mesName);
+        const anioEscaped = escapeHtml(anio);
+
+        const replaceTemplates = (text, isHtml = false) => {
           if (!text) return "";
+          const num = isHtml ? numFactEscaped : numFact;
+          const comm = isHtml ? communityNameEscaped : communityName;
+          const mes = isHtml ? mesNameEscaped : mesName;
+          const an = isHtml ? anioEscaped : anio;
           return text
-            .replace(/{numero}/g, numFact)
-            .replace(/{comunidad}/g, communityName)
-            .replace(/{mes}/g, mesName)
-            .replace(/{año}/g, anio)
-            .replace(/{a\u00f1o}/g, anio);
+            .replace(/{numero}/g, num)
+            .replace(/{comunidad}/g, comm)
+            .replace(/{mes}/g, mes)
+            .replace(/{año}/g, an)
+            .replace(/{a\u00f1o}/g, an);
         };
 
-        const subject = replaceTemplates(billingSettings.emailSubjectTemplate || "Factura {numero} - RyB Limpiezas");
-        const bodyHtml = replaceTemplates(billingSettings.emailBodyTemplate || `<p>Hola,</p><p>Le adjuntamos la factura <strong>{numero}</strong> de la comunidad <strong>{comunidad}</strong>.</p>`);
+        const subject = replaceTemplates(billingSettings.emailSubjectTemplate || "Factura {numero} - RyB Limpiezas", false);
+        const bodyHtml = replaceTemplates(billingSettings.emailBodyTemplate || `<p>Hola,</p><p>Le adjuntamos la factura <strong>{numero}</strong> de la comunidad <strong>{comunidad}</strong>.</p>`, true);
 
         // Filename format (same as browser or simple fallback)
         const filename = inv.pdfStoragePath.split("/").pop() || `Factura_${numFact}.pdf`;
@@ -685,6 +736,16 @@ exports.sendGroupedInvoiceEmails = onCall(
     const { invoiceIds } = request.data;
     if (!invoiceIds || !Array.isArray(invoiceIds)) {
       throw new HttpsError("invalid-argument", "El argumento 'invoiceIds' debe ser una lista.");
+    }
+
+    if (invoiceIds.length > 50) {
+      throw new HttpsError("invalid-argument", "No se pueden enviar más de 50 facturas por llamada.");
+    }
+
+    for (const id of invoiceIds) {
+      if (typeof id !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(id)) {
+        throw new HttpsError("invalid-argument", "ID de factura no válido.");
+      }
     }
 
     logger.info(`[sendGroupedInvoiceEmails] Iniciando proceso agrupado para ${invoiceIds.length} facturas. Solicitado por: ${request.auth.uid}`);
@@ -815,9 +876,9 @@ exports.sendGroupedInvoiceEmails = onCall(
           const amountFormatted = Number(inv.totalAmount || 0).toLocaleString('es-ES', { minimumFractionDigits: 2 }) + ' €';
           summaryRowsHtml += `
             <tr style="border-bottom: 1px solid #e2e8f0;">
-              <td style="padding: 10px 12px; font-weight: bold; color: #1e293b;">${inv.client?.name || "Comunidad"}</td>
-              <td style="padding: 10px 12px; text-align: center; color: #475569;">${inv.invoiceNumber || "SN"}</td>
-              <td style="padding: 10px 12px; text-align: right; font-weight: bold; color: #0f172a;">${amountFormatted}</td>
+              <td style="padding: 10px 12px; font-weight: bold; color: #1e293b;">${escapeHtml(inv.client?.name || "Comunidad")}</td>
+              <td style="padding: 10px 12px; text-align: center; color: #475569;">${escapeHtml(inv.invoiceNumber || "SN")}</td>
+              <td style="padding: 10px 12px; text-align: right; font-weight: bold; color: #0f172a;">${escapeHtml(amountFormatted)}</td>
             </tr>
           `;
         }
@@ -837,27 +898,36 @@ exports.sendGroupedInvoiceEmails = onCall(
           const numFact = inv.invoiceNumber || "Borrador";
           const communityName = inv.client?.name || "Comunidad";
 
-          const replaceTemplates = (text) => {
+          const numFactEscaped = escapeHtml(numFact);
+          const communityNameEscaped = escapeHtml(communityName);
+          const mesNameEscaped = escapeHtml(mesName);
+          const anioEscaped = escapeHtml(anio);
+
+          const replaceTemplates = (text, isHtml = false) => {
             if (!text) return "";
+            const num = isHtml ? numFactEscaped : numFact;
+            const comm = isHtml ? communityNameEscaped : communityName;
+            const mes = isHtml ? mesNameEscaped : mesName;
+            const an = isHtml ? anioEscaped : anio;
             return text
-              .replace(/{numero}/g, numFact)
-              .replace(/{comunidad}/g, communityName)
-              .replace(/{mes}/g, mesName)
-              .replace(/{año}/g, anio)
-              .replace(/{a\u00f1o}/g, anio);
+              .replace(/{numero}/g, num)
+              .replace(/{comunidad}/g, comm)
+              .replace(/{mes}/g, mes)
+              .replace(/{año}/g, an)
+              .replace(/{a\u00f1o}/g, an);
           };
 
-          subject = replaceTemplates(billingSettings.emailSubjectTemplate || "Factura {numero} - RyB Limpiezas");
-          bodyHtml = replaceTemplates(billingSettings.emailBodyTemplate || `<p>Hola,</p><p>Le adjuntamos la factura <strong>{numero}</strong> correspondiente al servicio de la comunidad <strong>{comunidad}</strong>.</p>`);
+          subject = replaceTemplates(billingSettings.emailSubjectTemplate || "Factura {numero} - RyB Limpiezas", false);
+          bodyHtml = replaceTemplates(billingSettings.emailBodyTemplate || `<p>Hola,</p><p>Le adjuntamos la factura <strong>{numero}</strong> correspondiente al servicio de la comunidad <strong>{comunidad}</strong>.</p>`, true);
         } else {
           // Grouped email layout
-          subject = `Facturas Consolidadas de RyB Limpiezas - Periodo ${mesName} de ${anio}`;
+          subject = `Facturas Consolidadas de RyB Limpiezas - Periodo ${escapeHtml(mesName)} de ${escapeHtml(anio)}`;
           
           bodyHtml = `
-            <div style="font-family: Arial, sans-serif; color: #334155; line-height: 1.5; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; borderRadius: 8px;">
+            <div style="font-family: Arial, sans-serif; color: #334155; line-height: 1.5; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
               <h2 style="color: #2563eb; margin-top: 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px;">RyB Limpiezas</h2>
-              <p>Estimado/a <strong>${group.name}</strong>,</p>
-              <p>Le adjuntamos en este correo las facturas correspondientes a los servicios de limpieza prestados en el periodo de <strong>${mesName} de ${anio}</strong> para las comunidades bajo su administración:</p>
+              <p>Estimado/a <strong>${escapeHtml(group.name)}</strong>,</p>
+              <p>Le adjuntamos en este correo las facturas correspondientes a los servicios de limpieza prestados en el periodo de <strong>${escapeHtml(mesName)} de ${escapeHtml(anio)}</strong> para las comunidades bajo su administración:</p>
               
               <table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px;">
                 <thead>
@@ -884,8 +954,8 @@ exports.sendGroupedInvoiceEmails = onCall(
               <br/>
               <p>Atentamente,</p>
               <p><strong>RyB Limpiezas</strong><br/>
-              Contacto: ${billingSettings.contactPerson || "Daniel Rabaneda"}<br/>
-              Teléfono: ${billingSettings.phone || "687983162"}</p>
+              Contacto: ${escapeHtml(billingSettings.contactPerson || "Daniel Rabaneda")}<br/>
+              Teléfono: ${escapeHtml(billingSettings.phone || "687983162")}</p>
             </div>
           `;
         }

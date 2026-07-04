@@ -42,8 +42,9 @@ export async function rescheduleService({ serviceId, newDate, requesterRole, use
     });
 
     if (requesterRole !== 'admin') {
-      // Registrar log aprobado para auditoría
-      await addDoc(collection(db, 'transfers'), {
+      // Registrar log aprobado para auditoría de forma atómica en el mismo lote
+      const logRef = doc(collection(db, 'transfers'));
+      batch.set(logRef, {
         serviceId,
         userId,
         newDate: Timestamp.fromDate(startOfNewDate),
@@ -55,6 +56,7 @@ export async function rescheduleService({ serviceId, newDate, requesterRole, use
       });
     }
   } else {
+    const logRef = doc(collection(db, 'transfers'));
     const transferData = {
       serviceId,
       userId,
@@ -65,11 +67,11 @@ export async function rescheduleService({ serviceId, newDate, requesterRole, use
       requestedBy: requesterRole,
       createdAt: serverTimestamp(),
     };
-    const transferRef = await addDoc(collection(db, 'transfers'), transferData);
+    batch.set(logRef, transferData);
     
     batch.update(serviceRef, {
       // Mantenemos la fecha original del servicio
-      rescheduleId: transferRef.id,
+      rescheduleId: logRef.id,
       rescheduleValidated: false,
       updatedAt: serverTimestamp()
     });
@@ -99,6 +101,7 @@ export async function transferService({ serviceId, fromUserId, toUserId, request
     }
   }
 
+  const transferRef = doc(collection(db, 'transfers'));
   const batch = writeBatch(db);
   const transferData = {
     serviceId,
@@ -110,7 +113,7 @@ export async function transferService({ serviceId, fromUserId, toUserId, request
     createdAt: serverTimestamp(),
   };
 
-  const transferRef = await addDoc(collection(db, 'transfers'), transferData);
+  batch.set(transferRef, transferData);
 
   if (isAuthorized) {
     batch.update(serviceRef, {
@@ -180,7 +183,7 @@ export async function transferDay({ date, fromUserId, toUserId, requesterRole })
     throw new Error('No hay servicios pendientes asignados a este operario para el día seleccionado.');
   }
 
-  const batch = writeBatch(db);
+  const transferRef = doc(collection(db, 'transfers'));
   const transferData = {
     date: Timestamp.fromDate(date),
     fromUserId,
@@ -192,28 +195,39 @@ export async function transferDay({ date, fromUserId, toUserId, requesterRole })
     createdAt: serverTimestamp(),
   };
 
-  const transferRef = await addDoc(collection(db, 'transfers'), transferData);
-
-  pendingServices.forEach(d => {
-    if (isAuthorized) {
-      batch.update(d.ref, {
-        assignedUserId: toUserId,
-        isTransferred: true,
-        originalAssignedUserId: fromUserId,
-        transferId: transferRef.id,
-        transferValidated: true,
-        updatedAt: serverTimestamp()
-      });
-    } else {
-      batch.update(d.ref, {
-        transferId: transferRef.id,
-        transferValidated: false,
-        updatedAt: serverTimestamp()
-      });
+  // Procesamos en lotes de 400 y garantizamos la creación atómica de la transferencia
+  const CHUNK_SIZE = 400;
+  let isFirst = true;
+  for (let i = 0; i < pendingServices.length; i += CHUNK_SIZE) {
+    const chunk = pendingServices.slice(i, i + CHUNK_SIZE);
+    const batch = writeBatch(db);
+    
+    if (isFirst) {
+      batch.set(transferRef, transferData);
+      isFirst = false;
     }
-  });
-
-  await batch.commit();
+    
+    chunk.forEach(d => {
+      if (isAuthorized) {
+        batch.update(d.ref, {
+          assignedUserId: toUserId,
+          isTransferred: true,
+          originalAssignedUserId: fromUserId,
+          transferId: transferRef.id,
+          transferValidated: true,
+          updatedAt: serverTimestamp()
+        });
+      } else {
+        batch.update(d.ref, {
+          transferId: transferRef.id,
+          transferValidated: false,
+          updatedAt: serverTimestamp()
+        });
+      }
+    });
+    
+    await batch.commit();
+  }
   return transferRef.id;
 }
 
@@ -265,7 +279,7 @@ export async function transferWeek({ dateInWeek, fromUserId, toUserId, requester
     throw new Error('No hay servicios pendientes asignados a este operario para la semana seleccionada.');
   }
 
-  const batch = writeBatch(db);
+  const transferRef = doc(collection(db, 'transfers'));
   const transferData = {
     startDate: Timestamp.fromDate(weekStart),
     endDate: Timestamp.fromDate(weekEnd),
@@ -278,28 +292,39 @@ export async function transferWeek({ dateInWeek, fromUserId, toUserId, requester
     createdAt: serverTimestamp(),
   };
 
-  const transferRef = await addDoc(collection(db, 'transfers'), transferData);
-
-  pendingServices.forEach(d => {
-    if (isAuthorized) {
-      batch.update(d.ref, {
-        assignedUserId: toUserId,
-        isTransferred: true,
-        originalAssignedUserId: fromUserId,
-        transferId: transferRef.id,
-        transferValidated: true,
-        updatedAt: serverTimestamp()
-      });
-    } else {
-      batch.update(d.ref, {
-        transferId: transferRef.id,
-        transferValidated: false,
-        updatedAt: serverTimestamp()
-      });
+  // Procesamos en lotes de 400 y garantizamos la creación atómica de la transferencia
+  const CHUNK_SIZE = 400;
+  let isFirst = true;
+  for (let i = 0; i < pendingServices.length; i += CHUNK_SIZE) {
+    const chunk = pendingServices.slice(i, i + CHUNK_SIZE);
+    const batch = writeBatch(db);
+    
+    if (isFirst) {
+      batch.set(transferRef, transferData);
+      isFirst = false;
     }
-  });
-
-  await batch.commit();
+    
+    chunk.forEach(d => {
+      if (isAuthorized) {
+        batch.update(d.ref, {
+          assignedUserId: toUserId,
+          isTransferred: true,
+          originalAssignedUserId: fromUserId,
+          transferId: transferRef.id,
+          transferValidated: true,
+          updatedAt: serverTimestamp()
+        });
+      } else {
+        batch.update(d.ref, {
+          transferId: transferRef.id,
+          transferValidated: false,
+          updatedAt: serverTimestamp()
+        });
+      }
+    });
+    
+    await batch.commit();
+  }
   return transferRef.id;
 }
 

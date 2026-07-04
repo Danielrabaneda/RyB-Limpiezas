@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword,
@@ -20,23 +20,28 @@ export function AuthProvider({ children }) {
   const [userProfile, setUserProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  async function login(email, password) {
+  const login = useCallback(async (email, password) => {
     const cred = await signInWithEmailAndPassword(auth, email, password);
-    const profile = await fetchUserProfile(cred.user.uid);
+    const snap = await getDoc(doc(db, 'users', cred.user.uid));
+    let profile = null;
+    if (snap.exists()) {
+      profile = { uid: cred.user.uid, ...snap.data() };
+      setUserProfile(profile);
+    }
     if (!profile || profile.active === false) {
       await signOut(auth);
       setUserProfile(null);
       throw new Error('Su cuenta está inactiva o ha sido dada de baja.');
     }
     return { user: cred.user, profile };
-  }
+  }, []);
 
-  async function logout() {
+  const logout = useCallback(async () => {
     setUserProfile(null);
     return signOut(auth);
-  }
+  }, []);
 
-  async function createOperario(email, password, name, phone, allowDirectTransfers = false) {
+  const createOperario = useCallback(async (email, password, name, phone, allowDirectTransfers = false) => {
     // We create the user via secondary app to avoid logging out the admin
     const user = await createUserWithoutLogout(email, password);
     const profile = {
@@ -51,9 +56,9 @@ export function AuthProvider({ children }) {
     };
     await setDoc(doc(db, 'users', user.uid), profile);
     return profile;
-  }
+  }, []);
 
-  async function signup(email, password, name) {
+  const signup = useCallback(async (email, password, name) => {
     const cred = await createUserWithEmailAndPassword(auth, email, password);
     const profile = {
       uid: cred.user.uid,
@@ -67,41 +72,53 @@ export function AuthProvider({ children }) {
     await setDoc(doc(db, 'users', cred.user.uid), profile);
     setUserProfile(profile);
     return { user: cred.user, profile };
-  }
-
-  async function fetchUserProfile(uid) {
-    const snap = await getDoc(doc(db, 'users', uid));
-    if (snap.exists()) {
-      const profile = { uid, ...snap.data() };
-      setUserProfile(profile);
-      return profile;
-    }
-    return null;
-  }
+  }, []);
 
   useEffect(() => {
+    let active = true;
+
     // Safety timeout to prevent startup hangs
     const safetyTimer = setTimeout(() => {
-      setLoading(prev => {
-        if (prev) {
-          console.warn('AuthContext safety timeout reached - forcing loading to false');
-          return false;
-        }
-        return prev;
-      });
+      if (active) {
+        setLoading(prev => {
+          if (prev) {
+            console.warn('AuthContext safety timeout reached - forcing loading to false');
+            return false;
+          }
+          return prev;
+        });
+      }
     }, 10000); // 10 seconds
 
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       console.log('Auth state changed:', user ? 'Logged in' : 'Logged out');
+      if (!active) return;
+
       setCurrentUser(user);
       if (user) {
         try {
-          const profile = await fetchUserProfile(user.uid);
-          if (!profile || profile.active === false) {
-            console.warn('AuthContext: User profile not found or inactive. Forcing logout.');
+          const snap = await getDoc(doc(db, 'users', user.uid));
+          if (!active) return;
+
+          if (snap.exists()) {
+            const profile = { uid: user.uid, ...snap.data() };
+            if (profile.active === false) {
+              console.warn('AuthContext: User profile inactive. Forcing logout.');
+              await signOut(auth);
+              if (active) {
+                setUserProfile(null);
+                setCurrentUser(null);
+              }
+            } else {
+              setUserProfile(profile);
+            }
+          } else {
+            console.warn('AuthContext: User profile not found. Forcing logout.');
             await signOut(auth);
-            setUserProfile(null);
-            setCurrentUser(null);
+            if (active) {
+              setUserProfile(null);
+              setCurrentUser(null);
+            }
           }
         } catch (err) {
           console.error('Error fetching user profile during init:', err);
@@ -109,16 +126,21 @@ export function AuthProvider({ children }) {
       } else {
         setUserProfile(null);
       }
-      setLoading(false);
-      clearTimeout(safetyTimer);
+      
+      if (active) {
+        setLoading(false);
+        clearTimeout(safetyTimer);
+      }
     });
+
     return () => {
+      active = false;
       unsubscribe();
       clearTimeout(safetyTimer);
     };
   }, []);
 
-  const value = {
+  const value = useMemo(() => ({
     currentUser,
     userProfile,
     loading,
@@ -128,7 +150,7 @@ export function AuthProvider({ children }) {
     createOperario,
     isAdmin: userProfile?.role === 'admin',
     isOperario: userProfile?.role === 'operario' || userProfile?.isOperario === true,
-  };
+  }), [currentUser, userProfile, loading, login, logout, signup, createOperario]);
 
   return (
     <AuthContext.Provider value={value}>

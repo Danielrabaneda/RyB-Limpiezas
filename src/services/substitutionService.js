@@ -3,6 +3,7 @@ import { db } from '../config/firebase';
 import { getOperarios } from './authService';
 import { checkUserAbsenceForDate } from './absenceService';
 import { getDistance } from '../utils/geolocation';
+import { getAllOpenCheckIns } from './checkInService';
 
 /**
  * Busca y sugiere operarios sustitutos disponibles para un servicio afectado en una fecha.
@@ -85,15 +86,10 @@ export async function findSubstitutesForService({ serviceId, date }) {
     let opLat = null;
     let opLng = null;
 
-    const activeCheckInQuery = query(
-      collection(db, 'checkIns'),
-      where('userId', '==', op.uid),
-      where('status', '==', 'active')
-    );
-    const activeCheckInSnap = await getDocs(activeCheckInQuery);
+    const activeCheckIns = await getAllOpenCheckIns(op.uid);
 
-    if (!activeCheckInSnap.empty) {
-      const activeCheckIn = activeCheckInSnap.docs[0].data();
+    if (activeCheckIns.length > 0) {
+      const activeCheckIn = activeCheckIns[0];
       const activeCommSnap = await getDoc(doc(db, 'communities', activeCheckIn.communityId));
       if (activeCommSnap.exists() && activeCommSnap.data().location) {
         const loc = activeCommSnap.data().location;
