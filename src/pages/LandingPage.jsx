@@ -134,6 +134,13 @@ function RequestModal({ isOpen, onClose, defaultPlan = '' }) {
   });
   const [status, setStatus] = useState('idle'); // idle | loading | success | error
   const [errorMsg, setErrorMsg] = useState('');
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
+
+  React.useEffect(() => {
+    if (isOpen) {
+      setPrivacyAccepted(false);
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -317,6 +324,50 @@ function RequestModal({ isOpen, onClose, defaultPlan = '' }) {
                   rows={3}
                   style={{ resize: 'vertical', minHeight: '80px' }}
                 />
+              </div>
+
+              {/* GDPR Compliance Layer 1 */}
+              <div className="gdpr-info-table-container">
+                <table className="gdpr-info-table">
+                  <tbody>
+                    <tr>
+                      <td className="gdpr-info-label">Responsable:</td>
+                      <td className="gdpr-info-value">Daniel Rabaneda / RyB Limpiezas</td>
+                    </tr>
+                    <tr>
+                      <td className="gdpr-info-label">Finalidad:</td>
+                      <td className="gdpr-info-value">Gestionar su solicitud de demostración del software y contacto comercial.</td>
+                    </tr>
+                    <tr>
+                      <td className="gdpr-info-label">Legitimación:</td>
+                      <td className="gdpr-info-value">Consentimiento del interesado al enviar el formulario.</td>
+                    </tr>
+                    <tr>
+                      <td className="gdpr-info-label">Destinatarios:</td>
+                      <td className="gdpr-info-value">No se cederán datos a terceros salvo obligación legal o proveedores tecnológicos autorizados.</td>
+                    </tr>
+                    <tr>
+                      <td className="gdpr-info-label">Derechos:</td>
+                      <td className="gdpr-info-value">Acceso, rectificación, supresión y otros detallados en la Info Adicional.</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div className="gdpr-info-link-container">
+                  Información Adicional: Puedes consultar la información detallada en nuestra <Link to="/politica-de-privacidad" target="_blank" rel="noopener noreferrer">Política de Privacidad</Link>.
+                </div>
+              </div>
+
+              <div className="gdpr-checkbox-container">
+                <input
+                  type="checkbox"
+                  id="landing-privacy-checkbox"
+                  checked={privacyAccepted}
+                  onChange={(e) => setPrivacyAccepted(e.target.checked)}
+                  required
+                />
+                <label htmlFor="landing-privacy-checkbox" style={{ fontSize: '0.8rem', cursor: 'pointer' }}>
+                  Acepto la <Link to="/politica-de-privacidad" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-primary-light)', textDecoration: 'underline' }}>Política de Privacidad</Link> y el tratamiento de mis datos.*
+                </label>
               </div>
 
               <button
@@ -901,9 +952,12 @@ export default function LandingPage() {
             <div className="lp-footer-copy">
               © {new Date().getFullYear()} LimpiaGest · RyB Limpiezas · Todos los derechos reservados
             </div>
-            <div className="lp-footer-links">
+            <div className="lp-footer-links" style={{ flexWrap: 'wrap', justifyContent: 'center' }}>
               <a href="mailto:limpiezasrayba@gmail.com">Contacto</a>
               <Link to="/login">Acceso clientes</Link>
+              <Link to="/aviso-legal">Aviso Legal</Link>
+              <Link to="/politica-de-privacidad">Política de Privacidad</Link>
+              <Link to="/politica-de-cookies">Política de Cookies</Link>
             </div>
           </footer>
         </div>

@@ -65,7 +65,13 @@ const AbsencesAdminPage = lazy(() => import('./pages/admin/AbsencesAdminPage'));
 const ClientPortalPage = lazy(() => import('./pages/cliente/ClientPortalPage'));
 const CompanyRequestsPage = lazy(() => import('./pages/admin/CompanyRequestsPage'));
 
+// Legal pages
+const AvisoLegalPage = lazy(() => import('./pages/legal/AvisoLegalPage'));
+const PoliticaPrivacidadPage = lazy(() => import('./pages/legal/PoliticaPrivacidadPage'));
+const PoliticaCookiesPage = lazy(() => import('./pages/legal/PoliticaCookiesPage'));
+
 // Components
+import CookieBanner from './components/CookieBanner';
 const GeolocationTracker = lazy(() => import('./components/operario/GeolocationTracker'));
 const PermissionsCheck = lazy(() => import('./components/operario/PermissionsCheck'));
 
@@ -524,6 +530,11 @@ export default function App() {
                 <Route path="/register" element={<RegisterPage />} />
                 <Route path="/setup" element={<SetupPage />} />
                 <Route path="/portal/:token" element={<ClientPortalPage />} />
+                
+                {/* Legal Pages */}
+                <Route path="/aviso-legal" element={<AvisoLegalPage />} />
+                <Route path="/politica-de-privacidad" element={<PoliticaPrivacidadPage />} />
+                <Route path="/politica-de-cookies" element={<PoliticaCookiesPage />} />
 
                 {/* Root */}
                 <Route path="/" element={<RootRedirect />} />
@@ -570,6 +581,7 @@ export default function App() {
                 {/* Catch-all */}
                 <Route path="*" element={<Navigate to="/" />} />
               </Routes>
+              <CookieBanner />
             </Suspense>
           </NotificationProvider>
         </AuthProvider>

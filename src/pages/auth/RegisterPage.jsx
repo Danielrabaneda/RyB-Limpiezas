@@ -12,6 +12,7 @@ export default function RegisterPage() {
   const [accessCode, setAccessCode] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const { signup } = useAuth();
   const navigate = useNavigate();
 
@@ -138,6 +139,51 @@ export default function RegisterPage() {
               autoComplete="new-password"
             />
           </div>
+
+          {/* GDPR Compliance Layer 1 */}
+          <div className="gdpr-info-table-container">
+            <table className="gdpr-info-table">
+              <tbody>
+                <tr>
+                  <td className="gdpr-info-label">Responsable:</td>
+                  <td className="gdpr-info-value">Daniel Rabaneda / RyB Limpiezas</td>
+                </tr>
+                <tr>
+                  <td className="gdpr-info-label">Finalidad:</td>
+                  <td className="gdpr-info-value">Crear y gestionar su cuenta de usuario operario para el registro de jornada.</td>
+                </tr>
+                <tr>
+                  <td className="gdpr-info-label">Legitimación:</td>
+                  <td className="gdpr-info-value">Relación contractual / laboral y cumplimiento de obligación legal (registro de jornada).</td>
+                </tr>
+                <tr>
+                  <td className="gdpr-info-label">Destinatarios:</td>
+                  <td className="gdpr-info-value">No se cederán datos a terceros salvo obligación legal o proveedores tecnológicos autorizados.</td>
+                </tr>
+                <tr>
+                  <td className="gdpr-info-label">Derechos:</td>
+                  <td className="gdpr-info-value">Acceso, rectificación, supresión y otros detallados en la Info Adicional.</td>
+                </tr>
+              </tbody>
+            </table>
+            <div className="gdpr-info-link-container">
+              Información Adicional: Puedes consultar la información detallada en nuestra <Link to="/politica-de-privacidad" target="_blank" rel="noopener noreferrer">Política de Privacidad</Link>.
+            </div>
+          </div>
+
+          <div className="gdpr-checkbox-container">
+            <input
+              type="checkbox"
+              id="register-privacy-checkbox"
+              checked={privacyAccepted}
+              onChange={(e) => setPrivacyAccepted(e.target.checked)}
+              required
+            />
+            <label htmlFor="register-privacy-checkbox" style={{ fontSize: '0.8rem', cursor: 'pointer' }}>
+              He leído y acepto la <Link to="/politica-de-privacidad" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-primary-light)', textDecoration: 'underline' }}>Política de Privacidad</Link>.*
+            </label>
+          </div>
+
           <button
             type="submit"
             className="btn btn-primary btn-lg w-full mt-4"
