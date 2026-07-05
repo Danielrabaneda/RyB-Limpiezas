@@ -412,7 +412,6 @@ export default function LandingPage() {
         }
         @media (max-width: 768px) {
           .lp-hero { grid-template-columns: 1fr; padding: 60px 0 50px; gap: 40px; }
-          .hero-mockups { display: none; }
         }
 
         .hero-badge {
@@ -458,20 +457,23 @@ export default function LandingPage() {
         .btn-hero-secondary:hover { background: rgba(255,255,255,0.09); border-color: rgba(255,255,255,0.2); }
 
         /* ── MOCKUPS ── */
-        .hero-mockups { position: relative; height: 420px; }
-        .mockup-dashboard {
-          position: absolute; top: 0; left: 0; right: 0;
-          background: linear-gradient(145deg, #1e293b, #0f172a);
-          border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 16px;
-          font-size: 11px; color: #94a3b8;
-          box-shadow: 0 30px 80px rgba(0,0,0,0.5);
+        .hero-mockups {
+          position: relative;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 100%;
         }
-        .mockup-phone {
-          position: absolute; bottom: 0; right: 0; width: 170px;
-          background: linear-gradient(145deg, #1e293b, #0f172a);
-          border: 1px solid rgba(255,255,255,0.1); border-radius: 20px;
-          overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.6);
-          font-size: 10px; color: #94a3b8;
+        .hero-mockup-img {
+          width: 100%;
+          height: auto;
+          border-radius: 16px;
+          border: 1px solid rgba(255,255,255,0.08);
+          box-shadow: 0 20px 50px rgba(0,0,0,0.4);
+          transition: transform 0.3s ease;
+        }
+        .hero-mockup-img:hover {
+          transform: scale(1.02);
         }
 
         /* ── STATS ── */
@@ -713,8 +715,7 @@ export default function LandingPage() {
                 Nuevo: Fichajes PWA con GPS en tiempo real
               </div>
               <h1 className="hero-title">
-                La revolución en la gestión de{' '}
-                <span className="hero-title-gradient">servicios de limpieza</span>.
+                El software para <span className="hero-title-gradient">empresas de limpieza</span> definitivo.
               </h1>
               <p className="hero-subtitle">
                 LimpiaGest es el software SaaS todo en uno diseñado para empresas de limpieza. Controla operarios, automatiza tareas, certifica trabajos con evidencias fotográficas y optimiza tus costes.
@@ -731,67 +732,11 @@ export default function LandingPage() {
 
             {/* Mockups */}
             <div className="hero-mockups">
-              <div className="mockup-dashboard">
-                <div style={{ display: 'flex', gap: '5px', marginBottom: '10px' }}>
-                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444', display: 'block' }} />
-                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#eab308', display: 'block' }} />
-                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#22c55e', display: 'block' }} />
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '8px', marginBottom: '10px' }}>
-                  <strong style={{ color: '#e2e8f0', fontSize: '10px' }}>📊 LimpiaGest Admin Panel</strong>
-                  <span style={{ color: '#22c55e', fontSize: '9px' }}>● En línea</span>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginBottom: '12px' }}>
-                  {[
-                    { label: 'Activos Hoy', value: '12 Operarios', color: 'white' },
-                    { label: 'Completados', value: '85% (34/40)', color: '#10b981' },
-                    { label: 'Incidencias', value: '0 Pendientes', color: '#ef4444' },
-                  ].map((s, i) => (
-                    <div key={i} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', padding: '8px' }}>
-                      <div style={{ fontSize: '9px' }}>{s.label}</div>
-                      <div style={{ fontSize: '11px', fontWeight: 700, color: s.color, marginTop: '3px' }}>{s.value}</div>
-                    </div>
-                  ))}
-                </div>
-                <div style={{ background: 'rgba(37,99,235,0.06)', border: '1px solid rgba(37,99,235,0.12)', borderRadius: '8px', padding: '8px', fontSize: '9px' }}>
-                  🔔 <strong style={{ color: '#93c5fd' }}>Última actividad:</strong>{' '}
-                  <span>Operaria Agustina A. completó Portal B · Evidencia fotográfica subida ✓</span>
-                </div>
-                <div style={{ marginTop: '10px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
-                  {['Comunidad El Huerto', 'Residencial Las Palmas', 'C. Los Olivos', 'Edificio Torresol'].map((c, i) => (
-                    <div key={i} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', padding: '6px 8px', fontSize: '9px', display: 'flex', justifyContent: 'space-between' }}>
-                      <span>{c}</span>
-                      <span style={{ color: '#10b981' }}>✓</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="mockup-phone">
-                <div style={{ background: '#1e293b', padding: '8px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '8px' }}>
-                  <span>📶 5G</span>
-                  <strong style={{ color: 'white' }}>LimpiaGest</strong>
-                  <span>🔋 90%</span>
-                </div>
-                <div style={{ padding: '12px', background: '#0b0f19', minHeight: '240px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <div style={{ fontSize: '10px', fontWeight: 700, color: 'white' }}>📋 Tareas de Hoy</div>
-                  {[
-                    { com: '🏢 El Huerto', task: 'Fregar portal y escaleras', done: true },
-                    { com: '🏢 Las Palmas', task: 'Limpieza garaje', done: false },
-                  ].map((t, i) => (
-                    <div key={i} style={{ background: 'rgba(255,255,255,0.03)', border: `1px solid ${t.done ? 'rgba(16,185,129,0.2)' : 'rgba(255,255,255,0.06)'}`, borderRadius: '8px', padding: '8px', fontSize: '9px' }}>
-                      <div style={{ fontWeight: 700, color: '#93c5fd' }}>{t.com}</div>
-                      <div style={{ color: '#cbd5e1', margin: '3px 0' }}>• {t.task}</div>
-                      <div style={{ color: t.done ? '#10b981' : '#fbbf24' }}>{t.done ? '✓ Completada' : '⏳ En progreso'}</div>
-                    </div>
-                  ))}
-                  <div style={{ background: 'rgba(37,99,235,0.12)', border: '1px solid rgba(37,99,235,0.25)', borderRadius: '8px', padding: '8px', fontSize: '9px', textAlign: 'center', marginTop: 'auto' }}>
-                    <div style={{ fontSize: '16px' }}>📸</div>
-                    <div style={{ fontWeight: 700, color: 'white', marginTop: '3px' }}>Cargar Foto Evidencia</div>
-                    <div style={{ fontSize: '8px', color: '#64748b' }}>GPS activo · Marca de agua automática</div>
-                  </div>
-                </div>
-              </div>
+              <img
+                src="/images/og-image.png"
+                alt="LimpiaGest - Panel de gestión de RyB Limpiezas y aplicación móvil para operarios"
+                className="hero-mockup-img"
+              />
             </div>
           </section>
 

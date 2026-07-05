@@ -1,5 +1,4 @@
 User-agent: *
 Allow: /
 
-# Descomenta y cambia el dominio cuando lo tengas:
-# Sitemap: https://tudominio.com/sitemap.xml
+Sitemap: https://limpiagest.es/sitemap.xml

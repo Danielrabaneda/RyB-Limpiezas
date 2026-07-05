@@ -53,18 +53,26 @@ service cloud.firestore {
       allow delete: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
     }
 
-    // -------------------------------------------------------------------------
-    // USERS
-    // -------------------------------------------------------------------------
     match /users/{userId} {
       // Admins can do anything
       // Operarios need to read the list of other operarios to select companions
       allow read: if isAuthenticated(); 
-      // Only Admins can create or delete users
-      allow create, delete: if isAdmin();
+      // Permitir la creación de perfiles si el usuario se registra a sí mismo como operario
+      allow create: if isAuthenticated() && isOwner(userId) && request.resource.data.role == 'operario';
+      allow delete: if isAdmin();
       // Users can update their own profile (e.g. push tokens, active status), 
       // but preventing role escalation would require checking request.resource.data.role
       allow update: if isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role);
+    }
+
+    // -------------------------------------------------------------------------
+    // ACCESS CODES (Invitaciones para registro)
+    // -------------------------------------------------------------------------
+    match /accessCodes/{code} {
+      // Permitir a cualquiera comprobar si un código específico es válido (get)
+      // pero no listar todos los códigos (list) ni modificarlos (write)
+      allow get: if true;
+      allow list, write: if isAdmin();
     }
 
     // -------------------------------------------------------------------------

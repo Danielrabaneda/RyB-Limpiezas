@@ -1,12 +1,15 @@
 import { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate, Link } from 'react-router-dom';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../config/firebase';
 
 export default function RegisterPage() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [accessCode, setAccessCode] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { signup } = useAuth();
@@ -23,6 +26,31 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
+      // 1. Validar código de invitación en Firestore
+      const normalizedCode = accessCode.trim().toUpperCase();
+      if (!normalizedCode) {
+        setError('Por favor, introduce un código de invitación');
+        setLoading(false);
+        return;
+      }
+
+      const codeRef = doc(db, 'accessCodes', normalizedCode);
+      const codeSnap = await getDoc(codeRef);
+
+      if (!codeSnap.exists()) {
+        setError('El código de invitación no es válido');
+        setLoading(false);
+        return;
+      }
+
+      const codeData = codeSnap.data();
+      if (!codeData.active) {
+        setError('El código de invitación ha expirado o no está activo');
+        setLoading(false);
+        return;
+      }
+
+      // 2. Si es válido, proceder con el registro
       await signup(email, password, name);
       navigate('/operario');
     } catch (err) {
@@ -51,6 +79,18 @@ export default function RegisterPage() {
         {error && <div className="login-error">{error}</div>}
 
         <form onSubmit={handleSubmit}>
+          <div className="form-group">
+            <label className="form-label">Código de Invitación</label>
+            <input
+              type="text"
+              className="form-input"
+              placeholder="PRUEBA30DIAS"
+              value={accessCode}
+              onChange={(e) => setAccessCode(e.target.value)}
+              required
+              style={{ textTransform: 'uppercase' }}
+            />
+          </div>
           <div className="form-group">
             <label className="form-label">Nombre Completo</label>
             <input
