@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { getConsent, setConsent, acceptAll, rejectAll, initializeConsent } from '../utils/cookieConsent';
 
 export default function CookieBanner() {
@@ -9,6 +9,9 @@ export default function CookieBanner() {
     analytical: false,
     marketing: false
   });
+  
+  const location = useLocation();
+  const isAdminOrOperario = location.pathname.startsWith('/admin') || location.pathname.startsWith('/operario');
 
   // Inicializar al montar
   useEffect(() => {
@@ -32,9 +35,18 @@ export default function CookieBanner() {
       });
     };
 
+    // Escuchar evento personalizado para abrir la configuración de cookies
+    const handleOpenSettings = () => {
+      setIsVisible(true);
+      setShowConfig(true);
+    };
+
     window.addEventListener('ryb-cookie-consent-changed', handleConsentChange);
+    window.addEventListener('ryb-open-cookie-settings', handleOpenSettings);
+    
     return () => {
       window.removeEventListener('ryb-cookie-consent-changed', handleConsentChange);
+      window.removeEventListener('ryb-open-cookie-settings', handleOpenSettings);
     };
   }, []);
 
@@ -66,8 +78,10 @@ export default function CookieBanner() {
     }));
   };
 
-  // Si el banner no es visible, mostramos el disparador flotante de revocación permanente
+  // Si el banner no es visible, mostramos el disparador flotante de revocación permanente (solo en la parte pública)
   if (!isVisible) {
+    if (isAdminOrOperario) return null; // No mostrar botón flotante dentro de los paneles privados
+
     return (
       <button
         onClick={() => {

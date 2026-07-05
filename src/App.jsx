@@ -239,6 +239,28 @@ function AdminLayout() {
             <div className="sidebar-brand-text truncate">{globalSettings?.companyName || 'RyB Limpiezas'}</div>
             <div className="sidebar-brand-sub">Panel de gestión</div>
           </div>
+          <button 
+            onClick={() => window.dispatchEvent(new CustomEvent('ryb-open-cookie-settings'))}
+            className="btn btn-ghost btn-sm"
+            title="Configuración de privacidad y cookies"
+            style={{ 
+              color: 'rgba(255,255,255,0.6)', 
+              padding: '6px 8px', 
+              borderRadius: 'var(--radius-sm)',
+              fontSize: '1.05rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'all 0.2s',
+              background: 'rgba(255,255,255,0.03)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              cursor: 'pointer'
+            }}
+            onMouseOver={(e) => { e.currentTarget.style.color = '#fff'; e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; }}
+            onMouseOut={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.6)'; e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
+          >
+            🍪
+          </button>
         </div>
 
         <nav className="sidebar-nav">
@@ -425,6 +447,14 @@ function OperarioLayout() {
         </div>
         <div className="flex items-center gap-3">
           <span style={{ fontSize: 'var(--font-xs)', opacity: 0.8 }}>{userProfile?.name}</span>
+          <button 
+            onClick={() => window.dispatchEvent(new CustomEvent('ryb-open-cookie-settings'))}
+            className="btn btn-ghost btn-sm"
+            title="Configuración de privacidad y cookies"
+            style={{ color: 'white', padding: '4px 8px', fontSize: '1rem', cursor: 'pointer' }}
+          >
+            🍪
+          </button>
           <button className="btn btn-ghost btn-sm" onClick={handleLogout} style={{ color: 'white', padding: '4px 8px' }}>
             🚪
           </button>
