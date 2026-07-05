@@ -145,6 +145,15 @@ function ProtectedRoute({ children, requiredRole }) {
   return children;
 }
 
+function SuperAdminRoute({ children }) {
+  const { userProfile, loading } = useAuth();
+  if (loading) return null;
+  if (userProfile?.email !== 'admin@ryblimpiezas.com') {
+    return <Navigate to="/admin" />;
+  }
+  return children;
+}
+
 // ==================== ADMIN LAYOUT ====================
 function AdminLayout() {
   const { userProfile, logout } = useAuth();
@@ -223,6 +232,8 @@ function AdminLayout() {
     navigate('/login');
   }
 
+  const isMasterAdmin = userProfile?.email === 'admin@ryblimpiezas.com';
+
   const navItems = [
     { path: '/admin', icon: '📊', label: 'Dashboard', exact: true },
     { path: '/admin/comunidades', icon: '🏢', label: 'Comunidades' },
@@ -234,7 +245,7 @@ function AdminLayout() {
     { path: '/admin/evidencias', icon: '📸', label: 'Evidencias' },
     { path: '/admin/kilometraje', icon: '🚗', label: 'Kilometraje' },
     { path: '/admin/inventory', icon: '📦', label: 'Materiales' },
-    { path: '/admin/solicitudes', icon: '📩', label: 'Solicitudes' },
+    ...(isMasterAdmin ? [{ path: '/admin/solicitudes', icon: '📩', label: 'Solicitudes' }] : []),
     { path: '/admin/ajustes', icon: '⚙️', label: 'Ajustes' },
   ];
 
@@ -624,7 +635,14 @@ export default function App() {
                   <Route path="inventory" element={<InventoryPage />} />
                   <Route path="ajustes" element={<SettingsPage />} />
                   <Route path="ausencias" element={<AbsencesAdminPage />} />
-                  <Route path="solicitudes" element={<CompanyRequestsPage />} />
+                  <Route 
+                    path="solicitudes" 
+                    element={
+                      <SuperAdminRoute>
+                        <CompanyRequestsPage />
+                      </SuperAdminRoute>
+                    } 
+                  />
                 </Route>
 
                 {/* Operario */}
