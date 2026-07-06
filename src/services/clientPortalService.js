@@ -2,7 +2,8 @@ import {
   collection, doc, getDoc, getDocs, query, where, orderBy, limit,
   writeBatch, serverTimestamp, deleteDoc, setDoc, updateDoc, Timestamp
 } from 'firebase/firestore';
-import { db } from '../config/firebase';
+import { db, functions } from '../config/firebase';
+import { httpsCallable } from 'firebase/functions';
 
 /**
  * Genera un token aleatorio seguro de 32 caracteres alfanuméricos.
@@ -211,3 +212,14 @@ export async function getClientEvidence(communityIds) {
 
   return filteredEvidences;
 }
+
+/**
+ * Llama a la Cloud Function getClientPortalData de forma segura para obtener
+ * toda la información consolidada del portal público.
+ */
+export async function getClientPortalDataCallable(token) {
+  const getPortalData = httpsCallable(functions, 'getClientPortalData');
+  const res = await getPortalData({ token });
+  return res.data;
+}
+

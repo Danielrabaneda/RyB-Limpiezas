@@ -1,12 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { getCommunityByPortalToken, getClientReports, getClientEvidence } from '../../services/clientPortalService';
-import { getCommunityTasks } from '../../services/taskService';
-import { getOperarios } from '../../services/authService';
+import { getClientPortalDataCallable } from '../../services/clientPortalService';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { signInAnonymously } from 'firebase/auth';
-import { auth } from '../../config/firebase';
 
 export default function ClientPortalPage() {
   const { token } = useParams();
@@ -17,7 +13,7 @@ export default function ClientPortalPage() {
   const [reports, setReports] = useState([]);
   const [evidence, setEvidence] = useState([]);
   const [tasks, setTasks] = useState([]);
-  const [operarios, setOperarios] = useState([]);
+  const [operariosMap, setOperariosMap] = useState({});
   
   const [activeTab, setActiveTab] = useState('visits'); // 'visits', 'evidence', 'tasks'
   const [showInstallModal, setShowInstallModal] = useState(false);
@@ -29,51 +25,22 @@ export default function ClientPortalPage() {
       setLoading(true);
       setError(null);
       try {
-        // Asegurar autenticación anónima para evitar límites de lectura de reglas de Firestore
-        try {
-          if (!auth.currentUser) {
-            await signInAnonymously(auth);
-          }
-        } catch (authErr) {
-          console.warn('Advertencia: No se pudo iniciar sesión de forma anónima. Intentando cargar datos de forma pública.', authErr);
-        }
-
-        // 1. Validar el token y obtener la comunidad
-        const commData = await getCommunityByPortalToken(token);
-        if (!commData) {
+        // Cargar todos los datos consolidados y de forma segura desde la Cloud Function
+        const portalData = await getClientPortalDataCallable(token);
+        if (!portalData || !portalData.community) {
           setError('El enlace de acceso ha expirado, fue revocado o no es válido.');
           setLoading(false);
           return;
         }
-        setCommunity(commData);
 
-        // 2. Cargar reportes, evidencias, tareas y operarios en paralelo
-        const [repsData, evsData, tsksData, opsData] = await Promise.all([
-          getClientReports([commData.id]).catch(err => {
-            console.error('Error cargando reportes:', err);
-            return [];
-          }),
-          getClientEvidence([commData.id]).catch(err => {
-            console.error('Error cargando evidencias:', err);
-            return [];
-          }),
-          getCommunityTasks(commData.id).catch(err => {
-            console.error('Error cargando tareas:', err);
-            return [];
-          }),
-          getOperarios().catch(err => {
-            console.warn('No se pudieron cargar los operarios:', err);
-            return [];
-          })
-        ]);
-
-        setReports(repsData || []);
-        setEvidence(evsData || []);
-        setTasks(tsksData || []);
-        setOperarios(opsData || []);
+        setCommunity(portalData.community);
+        setReports(portalData.reports || []);
+        setEvidence(portalData.evidence || []);
+        setTasks(portalData.tasks || []);
+        setOperariosMap(portalData.operariosMap || {});
       } catch (err) {
         console.error('Error cargando portal:', err);
-        setError('Ocurrió un error al cargar la información del portal. Inténtalo de nuevo.');
+        setError('El enlace de acceso ha expirado, fue revocado o no es válido.');
       } finally {
         setLoading(false);
       }
@@ -88,8 +55,7 @@ export default function ClientPortalPage() {
   }, [token]);
 
   const getOperarioName = (uid) => {
-    const op = operarios.find(o => o.uid === uid);
-    return op ? op.name : 'Operario RyB';
+    return operariosMap[uid] || 'Operario RyB';
   };
 
   const getFormattedDate = (timestamp) => {

@@ -507,6 +507,27 @@ export default function ServiceDetailPage() {
         }
       }
 
+      // Fichar automáticamente a los acompañantes en segundo plano
+      const companionsToCheckIn = [...(service.companionIds || [])];
+      if (activeWorkday?.currentCompanionId && !companionsToCheckIn.includes(activeWorkday.currentCompanionId)) {
+        companionsToCheckIn.push(activeWorkday.currentCompanionId);
+      }
+
+      for (const companionId of companionsToCheckIn) {
+        try {
+          await createCheckIn({
+            userId: companionId,
+            communityId: service.communityId,
+            scheduledServiceId: serviceId,
+            lat: pos.lat,
+            lng: pos.lng,
+            manualTime: manualTime
+          });
+        } catch (compErr) {
+          console.warn(`[Companion] Error al fichar automáticamente al compañero ${companionId}:`, compErr);
+        }
+      }
+
       // Limpiar sugerencia utilizada
       localStorage.removeItem(`detected_entry_${serviceId}`);
       setSuggestedIn(null);
@@ -604,6 +625,34 @@ export default function ServiceDetailPage() {
 
   async function handleCheckOut(manualTime = null) {
     if (!activeCheckIn) return;
+
+    // Verificar si hay tareas pendientes que no sean excepciones
+    const pendingTasks = [];
+    const currentGroup = groupedServices.length > 0 ? groupedServices : [service];
+    for (const s of currentGroup) {
+      if (s.communityTaskId) {
+        const exec = taskExecutions.find(e => e.communityTaskId === s.communityTaskId);
+        const specificTask = tasks.find(t => t.id === s.communityTaskId);
+        const sName = (s.taskName || specificTask?.taskName || '').toLowerCase();
+        const isException = sName.includes('escalera') || sName.includes('portal') || sName.includes('garaje');
+        const isDone = exec && exec.status === 'completed';
+        
+        if (!isDone && !isException) {
+          pendingTasks.push(s.taskName || specificTask?.taskName || 'Tarea');
+        }
+      }
+    }
+
+    if (pendingTasks.length > 0) {
+      const confirmMsg = `No has marcado la tarea realizada: "${pendingTasks.join(', ')}".\n\n` +
+                         `¿Quieres volver atrás para marcarla como completada?\n\n` +
+                         `Aceptar (OK) = Volver atrás para marcarla\n` +
+                         `Cancelar = Continuar y finalizar el servicio (la tarea pasará al próximo día)`;
+      if (window.confirm(confirmMsg)) {
+        return; // Detener la salida
+      }
+    }
+
     setActionLoading(true);
     try {
       const pos = await getFilteredPosition();
@@ -652,6 +701,23 @@ export default function ServiceDetailPage() {
       }
       
       const result = await completeCheckOut(activeCheckIn.id, pos.lat, pos.lng, manualTime, clientSignature);
+
+      // Finalizar automáticamente los check-ins de los acompañantes
+      try {
+        const qComp = query(
+          collection(db, 'checkIns'),
+          where('scheduledServiceId', '==', serviceId),
+          where('checkOutTime', '==', null)
+        );
+        const compSnap = await getDocs(qComp);
+        for (const docSnap of compSnap.docs) {
+          if (docSnap.id !== activeCheckIn.id) {
+            await completeCheckOut(docSnap.id, pos.lat, pos.lng, manualTime, null);
+          }
+        }
+      } catch (compErr) {
+        console.warn('[Companion] Error al finalizar check-outs de los acompañantes:', compErr);
+      }
 
       // Update status
       const currentGroup = groupedServices.length > 0 ? groupedServices : [service];
@@ -1005,8 +1071,8 @@ export default function ServiceDetailPage() {
               <div className="flex flex-col gap-2">
                 {suggestedIn && (
                   <button 
-                    className="btn btn-secondary btn-sm flex items-center justify-between font-bold w-full"
-                    style={{ textAlign: 'left', background: entrySource === 'estimated' ? '#fdf4ff' : 'var(--color-accent-light)', borderColor: entrySource === 'estimated' ? '#f0abfc' : 'var(--color-accent)', color: '#0f172a' }}
+                    className="btn btn-secondary flex items-center justify-between font-bold w-full"
+                    style={{ textAlign: 'left', background: entrySource === 'estimated' ? '#fdf4ff' : 'var(--color-accent-light)', borderColor: entrySource === 'estimated' ? '#f0abfc' : 'var(--color-accent)', color: '#0f172a', padding: '12px 16px', fontSize: '0.85rem' }}
                     onClick={() => {
                       handleCheckIn(suggestedIn);
                     }}
@@ -1021,8 +1087,8 @@ export default function ServiceDetailPage() {
                 )}
                 {estimatedIn && (!suggestedIn || Math.abs(estimatedIn.getTime() - suggestedIn.getTime()) > 60000) && (
                   <button 
-                    className="btn btn-secondary btn-sm flex items-center justify-between font-bold w-full"
-                    style={{ textAlign: 'left', background: '#f0f9ff', borderColor: '#bae6fd', color: '#0369a1' }}
+                    className="btn btn-secondary flex items-center justify-between font-bold w-full"
+                    style={{ textAlign: 'left', background: '#f0f9ff', borderColor: '#bae6fd', color: '#0369a1', padding: '12px 16px', fontSize: '0.85rem' }}
                     onClick={() => {
                       handleCheckIn(estimatedIn);
                     }}
@@ -1034,8 +1100,8 @@ export default function ServiceDetailPage() {
                 )}
                 {activeWorkday?.startTime && !suggestedIn && !estimatedIn && (
                   <button 
-                    className="btn btn-secondary btn-sm flex items-center justify-between font-bold w-full"
-                    style={{ textAlign: 'left', background: '#faf5ff', borderColor: '#e9d5ff', color: '#7c3aed' }}
+                    className="btn btn-secondary flex items-center justify-between font-bold w-full"
+                    style={{ textAlign: 'left', background: '#faf5ff', borderColor: '#e9d5ff', color: '#7c3aed', padding: '12px 16px', fontSize: '0.85rem' }}
                     onClick={() => {
                       const wdStart = activeWorkday.startTime.toDate ? activeWorkday.startTime.toDate() : new Date(activeWorkday.startTime);
                       handleCheckIn(wdStart);
@@ -1161,7 +1227,7 @@ export default function ServiceDetailPage() {
 
                       const pos = await getFilteredPosition();
 
-                      // 1. Crear el check-in con hora manual de entrada
+                       // 1. Crear el check-in con hora manual de entrada
                       const checkInId = await createCheckIn({
                         userId: userProfile.uid,
                         communityId: service.communityId,
@@ -1173,6 +1239,28 @@ export default function ServiceDetailPage() {
 
                       // 2. Completar el check-out con hora manual de salida
                       await completeCheckOut(checkInId, pos.lat, pos.lng, exitDate, clientSignature);
+
+                      // Fichar automáticamente a los acompañantes en segundo plano
+                      const companionsToCheckIn = [...(service.companionIds || [])];
+                      if (activeWorkday?.currentCompanionId && !companionsToCheckIn.includes(activeWorkday.currentCompanionId)) {
+                        companionsToCheckIn.push(activeWorkday.currentCompanionId);
+                      }
+
+                      for (const companionId of companionsToCheckIn) {
+                        try {
+                          const compCheckInId = await createCheckIn({
+                            userId: companionId,
+                            communityId: service.communityId,
+                            scheduledServiceId: serviceId,
+                            lat: pos.lat,
+                            lng: pos.lng,
+                            manualTime: entryDate
+                          });
+                          await completeCheckOut(compCheckInId, pos.lat, pos.lng, exitDate, null);
+                        } catch (compErr) {
+                          console.warn(`[Companion] Error al fichar manualmente al compañero ${companionId}:`, compErr);
+                        }
+                      }
 
                       // 3. Actualizar estado según tareas completadas
                       const currentGroup = groupedServices.length > 0 ? groupedServices : [service];
@@ -1302,6 +1390,33 @@ export default function ServiceDetailPage() {
                 <button
                   className="btn btn-warning w-full flex items-center justify-center gap-2 mt-2"
                   onClick={async () => {
+                    // Verificar si hay tareas pendientes que no sean excepciones
+                    const pendingTasks = [];
+                    const currentGroup = groupedServices.length > 0 ? groupedServices : [service];
+                    for (const s of currentGroup) {
+                      if (s.communityTaskId) {
+                        const exec = taskExecutions.find(e => e.communityTaskId === s.communityTaskId);
+                        const specificTask = tasks.find(t => t.id === s.communityTaskId);
+                        const sName = (s.taskName || specificTask?.taskName || '').toLowerCase();
+                        const isException = sName.includes('escalera') || sName.includes('portal') || sName.includes('garaje');
+                        const isDone = exec && exec.status === 'completed';
+                        
+                        if (!isDone && !isException) {
+                          pendingTasks.push(s.taskName || specificTask?.taskName || 'Tarea');
+                        }
+                      }
+                    }
+
+                    if (pendingTasks.length > 0) {
+                      const confirmMsg = `No has marcado la tarea realizada: "${pendingTasks.join(', ')}".\n\n` +
+                                         `¿Quieres volver atrás para marcarla como completada?\n\n` +
+                                         `Aceptar (OK) = Volver atrás para marcarla\n` +
+                                         `Cancelar = Continuar y forzar la finalización (la tarea pasará al próximo día)`;
+                      if (window.confirm(confirmMsg)) {
+                        return; // Detener la salida
+                      }
+                    }
+
                     if (window.confirm('No tienes un fichaje activo. ¿Deseas marcar este servicio como terminado directamente?')) {
                       setActionLoading(true);
                       try {

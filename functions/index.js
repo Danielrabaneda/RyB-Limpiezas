@@ -999,3 +999,105 @@ exports.sendGroupedInvoiceEmails = onCall(
   }
 );
 
+exports.getClientPortalData = onCall(
+  {
+    region: "europe-west1",
+    memory: "256MiB",
+    timeoutSeconds: 60,
+  },
+  async (request) => {
+    const { token } = request.data;
+    if (!token || typeof token !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(token)) {
+      throw new HttpsError("invalid-argument", "Token no válido.");
+    }
+
+    logger.info(`[getClientPortalData] Solicitando datos para token: ${token.substring(0, 5)}...`);
+
+    // 1. Validar el token en publicPortals
+    const portalSnap = await db.collection("publicPortals").doc(token).get();
+    if (!portalSnap.exists || !portalSnap.data().isActive) {
+      throw new HttpsError("not-found", "El portal de cliente solicitado no existe o no está activo.");
+    }
+
+    const { communityId } = portalSnap.data();
+
+    // 2. Obtener datos de la comunidad
+    const communitySnap = await db.collection("communities").doc(communityId).get();
+    if (!communitySnap.exists || !communitySnap.data().active) {
+      throw new HttpsError("not-found", "La comunidad no existe o está inactiva.");
+    }
+
+    const communityData = {
+      id: communitySnap.id,
+      ...communitySnap.data()
+    };
+
+    // 3. Obtener fichajes (checkIns) de los últimos 30 días (limitado a 15 recientes)
+    const checkInsSnap = await db.collection("checkIns")
+      .where("communityId", "==", communityId)
+      .orderBy("checkInTime", "desc")
+      .limit(15)
+      .get();
+
+    // 4. Obtener evidencias de los últimos 30 días (limitado a 15 recientes)
+    const evidenceSnap = await db.collection("evidenceReports")
+      .where("communityId", "==", communityId)
+      .orderBy("createdAt", "desc")
+      .limit(15)
+      .get();
+
+    // 5. Obtener tareas de la comunidad
+    const tasksSnap = await db.collection("communityTasks")
+      .where("communityId", "==", communityId)
+      .get();
+
+    const tasks = tasksSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+    // Filtrar fichajes y evidencias de los últimos 30 días en memoria
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const limitTime = thirtyDaysAgo.getTime();
+
+    const rawReports = checkInsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const reports = rawReports.filter(r => {
+      const timestamp = r.checkInTime || r.createdAt;
+      const time = timestamp?.toMillis ? timestamp.toMillis() : new Date(timestamp).getTime();
+      return time >= limitTime;
+    });
+
+    const rawEvidence = evidenceSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const evidence = rawEvidence.filter(e => {
+      const timestamp = e.createdAt;
+      const time = timestamp?.toMillis ? timestamp.toMillis() : new Date(timestamp).getTime();
+      return time >= limitTime;
+    });
+
+    // 6. Obtener nombres de operarios involucrados para evitar exponer toda la plantilla de usuarios
+    const operarioUids = new Set();
+    reports.forEach(r => { if (r.userId) operarioUids.add(r.userId); });
+    evidence.forEach(e => { if (e.userId) operarioUids.add(e.userId); });
+
+    const operariosMap = {};
+    if (operarioUids.size > 0) {
+      const uidsArray = Array.from(operarioUids).slice(0, 30);
+      const usersSnap = await db.collection("users")
+        .where("uid", "in", uidsArray)
+        .get();
+      
+      usersSnap.forEach(doc => {
+        const userData = doc.data();
+        operariosMap[userData.uid] = userData.name || "Operario RyB";
+      });
+    }
+
+    return {
+      community: communityData,
+      reports: reports,
+      evidence: evidence,
+      tasks: tasks,
+      operariosMap: operariosMap
+    };
+  }
+);
+
+

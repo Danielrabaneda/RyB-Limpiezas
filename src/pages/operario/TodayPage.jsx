@@ -1,11 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNotifications } from '../../contexts/NotificationContext';
 import { getScheduledServicesForDate } from '../../services/scheduleService';
 import { getCommunitiesForOperario, getCommunity } from '../../services/communityService';
 import { optimizeRoute } from '../../services/routeOptimizerService';
 import { getCommunityTasks } from '../../services/taskService';
-import { getActiveCheckIn } from '../../services/checkInService';
+import { getActiveCheckIn, createCheckIn } from '../../services/checkInService';
 import { getActiveWorkday, startWorkday, endWorkday, activateCar, deactivateCar, getWorkdaysSummaryForDate, findLastActivityForUser, closeStaleWorkday } from '../../services/workdayService';
 import { saveManualMileage } from '../../services/mileageService';
 import { transferService, transferDay, transferWeek, rescheduleService } from '../../services/transferService';
@@ -17,7 +17,7 @@ import { addCompanionToService, removeCompanionFromService } from '../../service
 import { useNavigate } from 'react-router-dom';
 import { format, addDays, startOfDay, endOfDay, isSameDay, differenceInMinutes } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { collection, query, where, onSnapshot, Timestamp } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, Timestamp, deleteDoc, getDocs } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 
 import { getDistance } from '../../utils/geolocation';
@@ -80,6 +80,8 @@ export default function TodayPage() {
     workdayId: null,
     allTasksCompleted: false
   });
+
+  const [activeWorkdaysList, setActiveWorkdaysList] = useState([]);
 
   const [userLocation, setUserLocation] = useState(null);
 
@@ -252,6 +254,7 @@ export default function TodayPage() {
       const myWorkday = docs.find(d => d.userId === userProfile.uid);
       const asCompanionWorkdays = docs.filter(d => d.currentCompanionId === userProfile.uid);
       
+      setActiveWorkdaysList(docs);
       setActiveWorkday(myWorkday || null);
 
       // Cleanup previous titular listeners
@@ -701,11 +704,37 @@ export default function TodayPage() {
         if (oldCompanionId && oldCompanionId !== companionId) {
           try {
             await removeCompanionFromService(activeCheckIn.scheduledServiceId, oldCompanionId);
-          } catch (e) { console.warn("Could not remove old companion", e); }
+            
+            // Eliminar el check-in abierto del compañero anterior
+            const qComp = query(
+              collection(db, 'checkIns'),
+              where('scheduledServiceId', '==', activeCheckIn.scheduledServiceId),
+              where('userId', '==', oldCompanionId),
+              where('checkOutTime', '==', null)
+            );
+            const compSnap = await getDocs(qComp);
+            for (const docSnap of compSnap.docs) {
+              await deleteDoc(docSnap.ref);
+            }
+          } catch (e) { console.warn("Could not remove old companion check-in", e); }
         }
         // Add new companion if exists
         if (companionId && companionId !== oldCompanionId) {
           await addCompanionToService(activeCheckIn.scheduledServiceId, companionId);
+          
+          // Crear el check-in automático del nuevo compañero con la misma hora de entrada del titular
+          try {
+            await createCheckIn({
+              userId: companionId,
+              communityId: activeCheckIn.communityId,
+              scheduledServiceId: activeCheckIn.scheduledServiceId,
+              lat: activeCheckIn.checkInLocation?.latitude || 0,
+              lng: activeCheckIn.checkInLocation?.longitude || 0,
+              manualTime: activeCheckIn.checkInTime?.toDate ? activeCheckIn.checkInTime.toDate() : new Date(activeCheckIn.checkInTime)
+            });
+          } catch (e) {
+            console.warn("Could not create check-in for new companion", e);
+          }
         }
       }
       
@@ -784,6 +813,37 @@ export default function TodayPage() {
       default: return <span className="badge badge-warning">⏳ Pendiente</span>;
     }
   }
+
+  // Obtener información del compañero en tiempo real
+  const companionInfo = useMemo(() => {
+    if (!activeWorkday) return { uid: null, workday: null, carActive: false, name: '' };
+    
+    // El compañero puede ser el que yo seleccioné
+    let companionUid = activeWorkday.currentCompanionId;
+    
+    // O si yo no seleccioné a nadie, puede ser el titular que me seleccionó a mí
+    if (!companionUid) {
+      const titularWd = activeWorkdaysList.find(d => d.currentCompanionId === userProfile?.uid && d.userId !== userProfile?.uid);
+      if (titularWd) {
+        companionUid = titularWd.userId;
+      }
+    }
+    
+    if (!companionUid) return { uid: null, workday: null, carActive: false, name: '' };
+    
+    const compWd = activeWorkdaysList.find(d => d.userId === companionUid);
+    const opInfo = allOperarios.find(o => o.uid === companionUid);
+    const name = opInfo?.name?.split(' ')[0] || 'Compañero';
+    
+    return {
+      uid: companionUid,
+      workday: compWd || null,
+      carActive: compWd?.carActive === true,
+      name: name
+    };
+  }, [activeWorkday, activeWorkdaysList, allOperarios, userProfile?.uid]);
+
+  const hasCarConflict = activeWorkday?.carActive === true && companionInfo.carActive === true;
 
   if (loading) {
     return (
@@ -1048,38 +1108,51 @@ export default function TodayPage() {
 
                 {/* BOTÓN COCHE */}
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-                  <button 
-                    className="btn flex flex-col items-center justify-center gap-1"
-                    onClick={handleToggleCar}
-                    disabled={actionLoading}
-                    style={{
-                      width: '100%',
-                      background: activeWorkday.carActive 
-                        ? 'linear-gradient(135deg, #2563eb, #1e40af)' 
-                        : 'white',
-                      border: activeWorkday.carActive 
-                        ? '2px solid #2563eb' 
-                        : '2px dashed #64748b',
-                      borderRadius: 'var(--radius-xl)',
-                      color: activeWorkday.carActive ? '#ffffff' : '#64748b',
-                      minHeight: '80px',
-                      padding: 'var(--space-3)',
-                      boxShadow: activeWorkday.carActive 
-                        ? '0 4px 12px -2px rgba(37, 99, 235, 0.5)' 
-                        : '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-                      transition: 'all 0.3s ease'
-                    }}
-                  >
-                    <span style={{ fontSize: '1.2rem' }}>{activeWorkday.carActive ? '🚗' : '🚶'}</span>
-                    <span style={{ fontWeight: 700, fontSize: 'var(--font-xs)', textAlign: 'center', lineHeight: 1.2 }}>
-                      {activeWorkday.carActive ? 'COCHE ACTIVO' : '¿VAS EN COCHE?'}
-                    </span>
-                    <span style={{ fontSize: '9px', opacity: activeWorkday.carActive ? 0.8 : 0.6, textAlign: 'center' }}>
-                      {activeWorkday.carActive 
-                        ? `Desde ${activeWorkday.carActiveSince?.toDate ? format(activeWorkday.carActiveSince.toDate(), 'HH:mm') : '...'}` 
-                        : 'GPS Automático'}
-                    </span>
-                  </button>
+                  {(() => {
+                    const isCompanionDriving = companionInfo.carActive && !activeWorkday.carActive;
+                    return (
+                      <button 
+                        className="btn flex flex-col items-center justify-center gap-1"
+                        onClick={handleToggleCar}
+                        disabled={actionLoading || isCompanionDriving}
+                        style={{
+                          width: '100%',
+                          background: activeWorkday.carActive 
+                            ? 'linear-gradient(135deg, #2563eb, #1e40af)' 
+                            : (isCompanionDriving ? '#f8fafc' : 'white'),
+                          border: activeWorkday.carActive 
+                            ? '2px solid #2563eb' 
+                            : (isCompanionDriving ? '2px solid #e2e8f0' : '2px dashed #64748b'),
+                          borderRadius: 'var(--radius-xl)',
+                          color: activeWorkday.carActive 
+                            ? '#ffffff' 
+                            : (isCompanionDriving ? '#94a3b8' : '#64748b'),
+                          minHeight: '80px',
+                          padding: 'var(--space-3)',
+                          boxShadow: activeWorkday.carActive 
+                            ? '0 4px 12px -2px rgba(37, 99, 235, 0.5)' 
+                            : '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                          transition: 'all 0.3s ease',
+                          opacity: isCompanionDriving ? 0.85 : 1,
+                          cursor: isCompanionDriving ? 'not-allowed' : 'pointer'
+                        }}
+                      >
+                        <span style={{ fontSize: '1.2rem' }}>
+                          {activeWorkday.carActive ? '🚗' : (isCompanionDriving ? '🚫🚗' : '🚶')}
+                        </span>
+                        <span style={{ fontWeight: 700, fontSize: 'var(--font-xs)', textAlign: 'center', lineHeight: 1.2 }}>
+                          {activeWorkday.carActive 
+                            ? 'COCHE ACTIVO' 
+                            : (isCompanionDriving ? `COCHE CON ${companionInfo.name.toUpperCase()}` : '¿VAS EN COCHE?')}
+                        </span>
+                        <span style={{ fontSize: '9px', opacity: activeWorkday.carActive ? 0.8 : 0.6, textAlign: 'center' }}>
+                          {activeWorkday.carActive 
+                            ? `Desde ${activeWorkday.carActiveSince?.toDate ? format(activeWorkday.carActiveSince.toDate(), 'HH:mm') : '...'}` 
+                            : (isCompanionDriving ? 'Bloqueado para evitar duplicados' : 'GPS Automático')}
+                        </span>
+                      </button>
+                    );
+                  })()}
                   
                   <button 
                     className="btn btn-ghost btn-xs"
@@ -1543,6 +1616,70 @@ export default function TodayPage() {
                 disabled={actionLoading}
               >
                 Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE CONFLICTO DE COCHE COMPARTIDO */}
+      {hasCarConflict && (
+        <div className="modal-overlay" style={{ zIndex: 10000 }}>
+          <div className="modal-content animate-scaleIn" style={{ maxWidth: '420px', padding: '24px' }}>
+            <div className="text-center mb-6">
+              <div style={{ fontSize: '3.5rem', marginBottom: '12px' }}>🚗⚠️</div>
+              <h3 style={{ fontSize: 'var(--font-xl)', fontWeight: 800, color: 'var(--color-primary)' }}>
+                Conflicto de coche activo
+              </h3>
+              <p className="text-sm mt-3" style={{ color: '#334155', lineHeight: 1.5 }}>
+                Hemos detectado que tanto tú como tu compañero <strong>{companionInfo.name}</strong> tenéis el coche activo.
+              </p>
+              <p className="text-xs mt-2" style={{ color: '#475569', lineHeight: 1.5 }}>
+                Para evitar que se registre el kilometraje por duplicado en el sistema, solo uno de vosotros debe marcar que lleva el coche. ¿Quién conduce hoy?
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <button 
+                className="btn btn-primary w-full py-4 font-bold flex justify-center items-center gap-2"
+                onClick={async () => {
+                  setActionLoading(true);
+                  try {
+                    // Desactivar el coche en la jornada del compañero
+                    await deactivateCar(companionInfo.workday.id, []);
+                  } catch (e) {
+                    console.error("Error al desactivar coche del compañero", e);
+                    alert("Error al resolver el conflicto. Por favor inténtalo de nuevo.");
+                  } finally {
+                    setActionLoading(false);
+                  }
+                }}
+                disabled={actionLoading}
+                style={{ backgroundColor: '#2563eb', borderColor: '#2563eb' }}
+              >
+                {actionLoading ? 'PROCESANDO...' : '🙋 Lo llevo yo (Conduzco yo)'}
+              </button>
+              
+              <button 
+                className="btn w-full py-3 text-sm font-semibold border border-slate-300 bg-white hover:bg-slate-50"
+                onClick={async () => {
+                  setActionLoading(true);
+                  try {
+                    // Desactivar mi coche
+                    const breadcrumbs = JSON.parse(localStorage.getItem('ryb_car_breadcrumbs') || '[]');
+                    await deactivateCar(activeWorkday.id, breadcrumbs);
+                    localStorage.removeItem('ryb_car_breadcrumbs');
+                  } catch (e) {
+                    console.error("Error al desactivar mi coche", e);
+                    alert("Error al resolver el conflicto. Por favor inténtalo de nuevo.");
+                  } finally {
+                    setActionLoading(false);
+                  }
+                }}
+                disabled={actionLoading}
+                style={{ color: '#475569' }}
+              >
+                {actionLoading ? 'PROCESANDO...' : `🚗 Lo lleva ${companionInfo.name}`}
               </button>
             </div>
           </div>

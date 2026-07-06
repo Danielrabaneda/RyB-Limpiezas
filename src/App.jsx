@@ -45,7 +45,6 @@ class ErrorBoundary extends React.Component {
 const LandingPage = lazy(() => import('./pages/LandingPage'));
 const LoginPage = lazy(() => import('./pages/auth/LoginPage'));
 const RegisterPage = lazy(() => import('./pages/auth/RegisterPage'));
-const SetupPage = lazy(() => import('./pages/auth/SetupPage'));
 const DashboardPage = lazy(() => import('./pages/admin/DashboardPage'));
 const CommunitiesPage = lazy(() => import('./pages/admin/CommunitiesPage'));
 const OperariosPage = lazy(() => import('./pages/admin/OperariosPage'));
@@ -604,7 +603,6 @@ export default function App() {
                 {/* Public */}
                 <Route path="/login" element={<LoginPage />} />
                 <Route path="/register" element={<RegisterPage />} />
-                <Route path="/setup" element={<SetupPage />} />
                 <Route path="/portal/:token" element={<ClientPortalPage />} />
                 
                 {/* Legal Pages */}

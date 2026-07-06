@@ -22,12 +22,28 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    // Helper to check if a community's client portal is active
-    function isCommunityPortalActive(communityId) {
-      return get(/databases/$(database)/documents/communities/$(communityId)).data.portalToken != null;
+    // Check if the user is a registered employee (admin or operario)
+    function isEmployee() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'operario');
     }
 
+    // Check if the user is active in the database
+    function isActiveUser() {
+      return isAuthenticated() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true;
+    }
 
+    // Helper to check if the user is an active employee
+    function isEmployeeActive() {
+      return isEmployee() && isActiveUser();
+    }
+
+    // Helper to check if the user is an active admin
+    function isAdminActive() {
+      return isAdmin() && isActiveUser();
+    }
 
     // =========================================================================
     // RULES
@@ -42,27 +58,27 @@ service cloud.firestore {
     // GEO DETECTIONS & FCM TOKENS
     // -------------------------------------------------------------------------
     match /geoDetections/{detectionId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
-      allow create, update: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
-      allow delete: if isAdmin();
+      allow read: if isAdminActive() || (isEmployeeActive() && resource.data.userId == request.auth.uid);
+      allow create, update: if isEmployeeActive() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAdminActive();
     }
 
     match /fcmTokens/{tokenId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
-      allow create, update: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
-      allow delete: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow read: if isAdminActive() || (isEmployeeActive() && resource.data.userId == request.auth.uid);
+      allow create, update: if isEmployeeActive() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAdminActive() || (isEmployeeActive() && resource.data.userId == request.auth.uid);
     }
 
     match /users/{userId} {
       // Admins can do anything
       // Operarios need to read the list of other operarios to select companions
-      allow read: if isAuthenticated(); 
-      // Permitir la creación de perfiles si el usuario se registra a sí mismo como operario
-      allow create: if isAuthenticated() && isOwner(userId) && request.resource.data.role == 'operario';
-      allow delete: if isAdmin();
+      allow read: if isEmployeeActive(); 
+      // Permitir la creación de perfiles si el usuario se registra a sí mismo como operario o si es un admin activo
+      allow create: if isAdminActive() || (isAuthenticated() && isOwner(userId) && request.resource.data.role == 'operario');
+      allow delete: if isAdminActive();
       // Users can update their own profile (e.g. push tokens, active status), 
       // but preventing role escalation would require checking request.resource.data.role
-      allow update: if isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role);
+      allow update: if isAdminActive() || (isEmployeeActive() && isOwner(userId) && request.resource.data.role == resource.data.role);
     }
 
     // -------------------------------------------------------------------------
@@ -72,33 +88,30 @@ service cloud.firestore {
       // Permitir a cualquiera comprobar si un código específico es válido (get)
       // pero no listar todos los códigos (list) ni modificarlos (write)
       allow get: if true;
-      allow list, write: if isAdmin();
+      allow list, write: if isAdminActive();
     }
 
     // -------------------------------------------------------------------------
     // COMMUNITIES & TASKS (Global Config)
     // -------------------------------------------------------------------------
     match /communities/{communityId} {
-      // Only authenticated users can read communities, except for public get request if portal token is active
-      allow get: if isAuthenticated() || resource.data.portalToken != null;
-      allow list: if isAuthenticated();
-      // Only admins manage communities
-      allow write: if isAdmin();
+      allow read: if isEmployeeActive();
+      allow write: if isAdminActive();
     }
 
     match /taskTemplates/{templateId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
+      allow read: if isEmployeeActive();
+      allow write: if isAdminActive();
     }
 
     match /communityTasks/{taskId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
+      allow read: if isEmployeeActive();
+      allow write: if isAdminActive();
     }
 
     match /assignments/{assignmentId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
+      allow read: if isEmployeeActive();
+      allow write: if isAdminActive();
     }
 
     // -------------------------------------------------------------------------
@@ -106,28 +119,17 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     match /scheduledServices/{serviceId} {
       // Only authenticated users can read schedules
-      allow read: if isAuthenticated();
-      
-      // Admins can manage schedule entirely.
-      allow create, delete: if isAdmin();
-      
-      // Operarios need to update status (e.g., to 'in_progress', 'completed')
-      allow update: if isAuthenticated();
+      allow read, update: if isEmployeeActive();
+      allow create, delete: if isAdminActive();
     }
 
     // -------------------------------------------------------------------------
     // GPS SUGGESTIONS
     // -------------------------------------------------------------------------
     match /gpsSuggestions/{suggestionId} {
-      // Admins read to review, operarios can read if they want to see their own?
-      // Actually safer to allow all authenticated to read, or just admins + owner
-      allow read: if isAdmin() || (isAuthenticated() && resource.data.operarioUid == request.auth.uid) || (isAuthenticated() && resource.data.userId == request.auth.uid);
-      
-      // Operarios create suggestions
-      allow create: if isAuthenticated();
-      
-      // Admins review/delete/update
-      allow update, delete: if isAdmin();
+      allow read: if isAdminActive() || (isEmployeeActive() && (resource.data.operarioUid == request.auth.uid || resource.data.userId == request.auth.uid));
+      allow create: if isEmployeeActive();
+      allow update, delete: if isAdminActive();
     }
 
     // -------------------------------------------------------------------------
@@ -135,162 +137,141 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     
     match /workdays/{workdayId} {
-      // Admins can read all.
-      // Owners can read their own.
-      // Companions need to be able to read active workdays where they are 'currentCompanionId'
-      // The query is: where('currentCompanionId', '==', userId), where('status', '==', 'active')
-      allow read: if isAdmin() || isOwner(resource.data.userId) || (isAuthenticated() && resource.data.currentCompanionId == request.auth.uid);
-      
-      allow create: if isOwner(request.resource.data.userId);
-      allow update: if isAdmin() || isOwner(resource.data.userId);
-      allow delete: if isAdmin();
+      allow read: if isAdminActive() || (isEmployeeActive() && (isOwner(resource.data.userId) || resource.data.currentCompanionId == request.auth.uid));
+      allow create: if isEmployeeActive() && isOwner(request.resource.data.userId);
+      allow update: if isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId));
+      allow delete: if isAdminActive();
     }
 
     match /checkIns/{checkInId} {
-      allow read: if isAdmin() || 
-                  isOwner(resource.data.userId) || 
-                  (isAuthenticated() && isCommunityPortalActive(resource.data.communityId));
-      allow create: if isAuthenticated() && isOwner(request.resource.data.userId);
-      allow update: if isAuthenticated() && (isAdmin() || isOwner(resource.data.userId));
-      allow delete: if isAuthenticated() && isAdmin();
+      allow read: if isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId));
+      allow create: if isEmployeeActive() && (
+        isOwner(request.resource.data.userId) ||
+        get(/databases/$(database)/documents/scheduledServices/$(request.resource.data.scheduledServiceId)).data.assignedUserId == request.auth.uid
+      );
+      allow update, delete: if isEmployeeActive() && (
+        isAdminActive() || 
+        isOwner(resource.data.userId) ||
+        get(/databases/$(database)/documents/scheduledServices/$(resource.data.scheduledServiceId)).data.assignedUserId == request.auth.uid
+      );
     }
 
     match /dailyMileage/{mileageId} {
-      allow read: if isAdmin() || isOwner(resource.data.userId);
-      allow create: if isOwner(request.resource.data.userId);
-      allow update: if isAdmin() || isOwner(resource.data.userId);
-      allow delete: if isAdmin();
+      allow read: if isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId));
+      allow create: if isEmployeeActive() && isOwner(request.resource.data.userId);
+      allow update: if isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId));
+      allow delete: if isAdminActive();
     }
 
     match /materialRequests/{requestId} {
-      allow read: if isAdmin() || isOwner(resource.data.userId);
-      allow create: if isOwner(request.resource.data.userId);
-      allow update: if isAdmin() || isOwner(resource.data.userId);
-      allow delete: if isAdmin();
+      allow read: if isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId));
+      allow create: if isEmployeeActive() && isOwner(request.resource.data.userId);
+      allow update: if isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId));
+      allow delete: if isAdminActive();
     }
 
     match /reports/{reportId} {
-      allow list: if request.auth != null || 
-        (request.query.limit <= 50 && 
-         get(/databases/$(database)/documents/communities/resource.data.communityId).data.portalToken != null);
-      allow get: if isAdmin() || isOwner(resource.data.userId);
-      allow create: if isOwner(request.resource.data.userId);
-      allow update: if isAdmin() || isOwner(resource.data.userId);
-      allow delete: if isAdmin();
+      allow read, write: if isAdminActive();
     }
 
     match /transfers/{transferId} {
-      // A transfer involves a fromUserId and a toUserId, or a userId for date reschedules
-      allow read: if isAdmin() || 
-                  (isAuthenticated() && (
+      allow read: if isAdminActive() || 
+                  (isEmployeeActive() && (
                     resource.data.fromUserId == request.auth.uid || 
                     resource.data.toUserId == request.auth.uid || 
                     resource.data.userId == request.auth.uid
                   ));
       
-      // Both users involved (or the requesting user for date reschedules) can create
-      allow create: if isAdmin() || (isAuthenticated() && 
+      allow create: if isAdminActive() || (isEmployeeActive() && 
                     (
                       request.resource.data.fromUserId == request.auth.uid || 
                       request.resource.data.toUserId == request.auth.uid || 
                       request.resource.data.userId == request.auth.uid
                     ));
       
-      allow update: if isAdmin() || 
-                    (isAuthenticated() && (
+      allow update: if isAdminActive() || 
+                    (isEmployeeActive() && (
                       resource.data.fromUserId == request.auth.uid || 
                       resource.data.toUserId == request.auth.uid || 
                       resource.data.userId == request.auth.uid
                     ));
       
-      allow delete: if isAdmin();
+      allow delete: if isAdminActive();
     }
 
     match /systemNotifications/{notificationId} {
-      allow read: if isAdmin() || isOwner(resource.data.userId);
-      // System functions / admins might create. Operarios might create if they send notifications? 
-      // Safe to allow authenticated to create if they set userId to themselves or are admin.
-      allow create: if isAdmin() || isOwner(request.resource.data.userId);
-      allow update: if isAdmin() || isOwner(resource.data.userId);
-      allow delete: if isAdmin();
+      allow read: if isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId));
+      allow create: if isAdminActive() || (isEmployeeActive() && isOwner(request.resource.data.userId));
+      allow update: if isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId));
+      allow delete: if isAdminActive();
     }
 
     match /taskExecutions/{executionId} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow read, write: if isEmployeeActive();
     }
 
     match /settings/{settingId} {
-      allow read: if settingId == 'global' ? isAuthenticated() : isAdmin();
-      allow write: if isAdmin();
+      allow read: if settingId == 'global' ? isEmployeeActive() : isAdminActive();
+      allow write: if isAdminActive();
     }
 
     match /invoices/{invoiceId} {
-      allow read: if isAdmin();
-      allow write: if isAdmin();
+      allow read, write: if isAdminActive();
     }
 
     match /products/{productId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
+      allow read: if isEmployeeActive();
+      allow write: if isAdminActive();
     }
 
     match /stockMovements/{movementId} {
-      allow read: if isAdmin();
-      allow write: if isAdmin();
+      allow read, write: if isAdminActive();
     }
 
     match /absences/{absenceId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if isAdmin();
+      allow read: if isEmployeeActive();
+      allow create: if isEmployeeActive() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAdminActive();
     }
 
     match /invoice_templates/{templateId} {
-      allow read, write: if isAdmin();
+      allow read, write: if isAdminActive();
     }
 
     match /documentVault/{documentId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
+      allow read: if isEmployeeActive();
+      allow write: if isAdminActive();
     }
 
     match /evidenceReports/{reportId} {
-      allow read: if isAdmin() || 
-                  (isAuthenticated() && (
-                    resource.data.userId == request.auth.uid || 
-                    isCommunityPortalActive(resource.data.communityId)
-                  ));
-      allow create: if isAuthenticated();
-      allow update, delete: if isAdmin();
+      allow read: if isAdminActive() || (isEmployeeActive() && resource.data.userId == request.auth.uid);
+      allow create: if isEmployeeActive();
+      allow update, delete: if isAdminActive();
     }
 
     match /publicPortals/{token} {
       allow get: if true;
-      allow write, list: if isAdmin();
+      allow write, list: if isAdminActive();
     }
 
     // -------------------------------------------------------------------------
     // ADMINISTRADORES DE FINCAS
     // -------------------------------------------------------------------------
     match /administrators/{adminId} {
-      allow read: if isAdmin();
-      allow write: if isAdmin();
+      allow read, write: if isAdminActive();
     }
 
     // -------------------------------------------------------------------------
     // COMPANY REQUESTS (Leads de la Landing Page — escritura pública)
     // -------------------------------------------------------------------------
     match /companyRequests/{requestId} {
-      // Cualquier visitante puede enviar una solicitud desde la landing (sin autenticar)
       allow create: if request.resource.data.keys().hasAll(['companyName', 'contactName', 'email', 'phone']) 
                     && request.resource.data.keys().size() <= 10
                     && request.resource.data.companyName is string && request.resource.data.companyName.size() < 200
                     && request.resource.data.contactName is string && request.resource.data.contactName.size() < 200
                     && request.resource.data.email is string && request.resource.data.email.size() < 200
                     && request.resource.data.phone is string && request.resource.data.phone.size() < 50;
-      // Solo admins pueden ver, actualizar o borrar solicitudes
-      allow read, update, delete: if isAdmin();
+      allow read, update, delete: if isAdminActive();
     }
 
     // -------------------------------------------------------------------------

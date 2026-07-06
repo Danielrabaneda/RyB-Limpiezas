@@ -7,7 +7,7 @@ import {
   startOfDay, endOfDay, addDays, format, getDay, getDate, getMonth, getYear,
   startOfWeek, endOfWeek, eachDayOfInterval, startOfMonth, endOfMonth,
   isSameDay, isSameWeek, getWeekOfMonth, isWithinInterval, lastDayOfMonth,
-  isBefore, differenceInCalendarWeeks
+  isBefore, differenceInCalendarWeeks, addMonths
 } from 'date-fns';
 
 // ==================== SCHEDULED SERVICES ====================
@@ -351,6 +351,91 @@ export async function getScheduledServicesRange(startDate, endDate, filters = {}
 
 export async function updateScheduledServiceStatus(id, status) {
   await updateDoc(doc(db, 'scheduledServices', id), { status, updatedAt: serverTimestamp() });
+  if (status === 'completed') {
+    await handleGarageCompletion(id);
+  }
+}
+
+export async function handleGarageCompletion(serviceId, completionDate = new Date()) {
+  try {
+    const serviceRef = doc(db, 'scheduledServices', serviceId);
+    const serviceSnap = await getDoc(serviceRef);
+    if (!serviceSnap.exists()) return;
+    
+    const serviceData = serviceSnap.data();
+    const lowerName = (serviceData.taskName || '').toLowerCase();
+    const isGarage = serviceData.isGarage || lowerName.includes('garaje') || lowerName.includes('garage');
+    
+    if (!isGarage || !serviceData.communityTaskId) return;
+    
+    console.log(`[GarageRollover] Limpieza de garaje completada para servicio: ${serviceId}. Tarea: ${serviceData.communityTaskId}`);
+    
+    // 1. Fetch the communityTask
+    const taskRef = doc(db, 'communityTasks', serviceData.communityTaskId);
+    const taskSnap = await getDoc(taskRef);
+    if (!taskSnap.exists()) return;
+    
+    const taskData = taskSnap.data();
+    
+    // 2. Determine frequency in months
+    const freqMap = {
+      'monthly': 1,
+      'bimonthly': 2,
+      'trimonthly': 3,
+      'quadrimonthly': 4,
+      'semiannual': 6,
+      'eightmonthly': 8,
+      'annual': 12
+    };
+    const monthsToAdd = freqMap[taskData.frequencyType] || 2; // Default to 2 months if not found
+    
+    const nextDate = addMonths(completionDate, monthsToAdd);
+    
+    // 3. Update the communityTask's startDate to the completion date (formatted as yyyy-MM-dd)
+    const completionDateStr = format(completionDate, 'yyyy-MM-dd');
+    await updateDoc(taskRef, {
+      startDate: completionDateStr,
+      updatedAt: serverTimestamp()
+    });
+    console.log(`[GarageRollover] Actualizada fecha de inicio de la tarea ${serviceData.communityTaskId} a: ${completionDateStr}`);
+    
+    // 4. Look for the next pending scheduledService for this task (scheduledDate > completionDate)
+    const qNext = query(
+      collection(db, 'scheduledServices'),
+      where('communityTaskId', '==', serviceData.communityTaskId),
+      where('status', '==', 'pending')
+    );
+    const nextSnap = await getDocs(qNext);
+    
+    if (!nextSnap.empty) {
+      const nextServices = nextSnap.docs
+        .map(d => ({ id: d.id, ref: d.ref, ...d.data() }))
+        .filter(s => {
+          if (!s.scheduledDate) return false;
+          const sDate = s.scheduledDate.toDate ? s.scheduledDate.toDate() : new Date(s.scheduledDate);
+          return startOfDay(sDate) > startOfDay(completionDate);
+        })
+        .sort((a, b) => {
+          const dA = a.scheduledDate?.toDate ? a.scheduledDate.toDate() : new Date(a.scheduledDate);
+          const dB = b.scheduledDate?.toDate ? b.scheduledDate.toDate() : new Date(b.scheduledDate);
+          return dA.getTime() - dB.getTime();
+        });
+        
+      if (nextServices.length > 0) {
+        const targetService = nextServices[0];
+        console.log(`[GarageRollover] Reprogramando el siguiente servicio pendiente (${targetService.id}) de ${format(targetService.scheduledDate.toDate(), 'yyyy-MM-dd')} a ${format(nextDate, 'yyyy-MM-dd')}`);
+        
+        await updateDoc(targetService.ref, {
+          scheduledDate: Timestamp.fromDate(startOfDay(nextDate)),
+          originalDate: targetService.originalDate || targetService.scheduledDate,
+          isRescheduled: true,
+          updatedAt: serverTimestamp()
+        });
+      }
+    }
+  } catch (error) {
+    console.error('[GarageRollover] Error in handleGarageCompletion:', error);
+  }
 }
 
 export async function deleteScheduledService(id) {
@@ -428,13 +513,24 @@ export async function passTaskToNextService(scheduledService, isGarage = false) 
       const q = query(
         collection(db, 'scheduledServices'),
         where('communityId', '==', scheduledService.communityId),
-        where('scheduledDate', '>=', now),
-        where('status', '==', 'pending'),
-        orderBy('scheduledDate', 'asc')
+        where('status', '==', 'pending')
       );
       const snap = await getDocs(q);
-      if (!snap.empty) {
-        nextDate = snap.docs[0].data().scheduledDate;
+      const futurePendingDocs = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(d => {
+          if (!d.scheduledDate) return false;
+          const dDate = d.scheduledDate.toDate ? d.scheduledDate.toDate() : new Date(d.scheduledDate);
+          return dDate.getTime() >= now.toDate().getTime();
+        })
+        .sort((a, b) => {
+          const dateA = a.scheduledDate.toDate ? a.scheduledDate.toDate() : new Date(a.scheduledDate);
+          const dateB = b.scheduledDate.toDate ? b.scheduledDate.toDate() : new Date(b.scheduledDate);
+          return dateA.getTime() - dateB.getTime();
+        });
+
+      if (futurePendingDocs.length > 0) {
+        nextDate = futurePendingDocs[0].scheduledDate;
       } else {
         // Si no hay, pasarlo a mañana
         nextDate = Timestamp.fromDate(addDays(new Date(), 1));
@@ -460,6 +556,80 @@ export async function passTaskToNextService(scheduledService, isGarage = false) 
     await updateScheduledServiceStatus(scheduledService.id, 'missed');
   } catch (error) {
     console.error('[Schedule] Error pasando tarea:', error);
+  }
+}
+
+export async function checkAndRolloverGarages() {
+  try {
+    const todayStart = startOfDay(new Date());
+    
+    // Fetch all pending services
+    const q = query(
+      collection(db, 'scheduledServices'),
+      where('status', '==', 'pending')
+    );
+    
+    const snap = await getDocs(q);
+    if (snap.empty) return 0;
+    
+    const pendingServices = snap.docs.map(d => ({ id: d.id, ref: d.ref, ...d.data() }));
+    
+    // Filter to garage cleanings only that are scheduled in the past
+    const garageServices = pendingServices.filter(svc => {
+      if (!svc.scheduledDate) return false;
+      const svcDate = svc.scheduledDate.toDate ? svc.scheduledDate.toDate() : new Date(svc.scheduledDate);
+      const isPast = startOfDay(svcDate) < todayStart;
+      const lowerName = (svc.taskName || '').toLowerCase();
+      const isGarage = svc.isGarage || lowerName.includes('garaje') || lowerName.includes('garage');
+      return isPast && isGarage;
+    });
+    
+    if (garageServices.length === 0) return 0;
+    
+    console.log(`[Schedule] Encontradas ${garageServices.length} limpiezas de garaje pendientes del pasado. Procediendo al rollover...`);
+    
+    let rolledOverCount = 0;
+    for (const svc of garageServices) {
+      const origDate = svc.scheduledDate?.toDate ? svc.scheduledDate.toDate() : new Date(svc.scheduledDate);
+      
+      // Calculate the Monday of the next week recursively until it is today or in the future
+      let nextDate = origDate;
+      while (startOfDay(nextDate) < todayStart) {
+        nextDate = addDays(startOfWeek(nextDate, { weekStartsOn: 1 }), 7);
+      }
+      
+      const nextDateTimestamp = Timestamp.fromDate(nextDate);
+      
+      // Create new service for the rolled-over date
+      await addDoc(collection(db, 'scheduledServices'), {
+        communityId: svc.communityId,
+        communityTaskId: svc.communityTaskId,
+        taskName: svc.taskName || '',
+        assignedUserId: svc.assignedUserId,
+        scheduledDate: nextDateTimestamp,
+        flexibleWeek: svc.flexibleWeek || false,
+        isUrgent: svc.isUrgent || false,
+        isGarage: svc.isGarage || true,
+        status: 'pending',
+        createdAt: serverTimestamp(),
+        isRollover: true,
+        rolledOverFrom: svc.id
+      });
+      
+      // Mark original service as missed so it doesn't stay pending in the past
+      await updateDoc(svc.ref, {
+        status: 'missed',
+        updatedAt: serverTimestamp()
+      });
+      
+      rolledOverCount++;
+      console.log(`[Schedule] Rolled over garage task "${svc.taskName}" from ${format(origDate, 'yyyy-MM-dd')} to ${format(nextDate, 'yyyy-MM-dd')}`);
+    }
+    
+    return rolledOverCount;
+  } catch (error) {
+    console.error('[Schedule] Error in checkAndRolloverGarages:', error);
+    return 0;
   }
 }
 
@@ -533,6 +703,7 @@ export async function cleanupDuplicateScheduledServices() {
 
 export async function generateServicesForRange(startDate, endDate) {
   try {
+    await checkAndRolloverGarages();
     const days = eachDayOfInterval({ start: startOfDay(startDate), end: startOfDay(endDate) });
     console.log(`[Schedule] Iniciando generación: ${startDate.toISOString()} - ${endDate.toISOString()}`);
     
@@ -586,7 +757,6 @@ export async function generateServicesForRange(startDate, endDate) {
     const rescheduledSnap = await getDocs(
       query(
         collection(db, 'scheduledServices'),
-        where('isRescheduled', '==', true),
         where('originalDate', '>=', start),
         where('originalDate', '<=', end)
       )
@@ -691,8 +861,7 @@ export async function generateServicesForTask(taskId, startDate = new Date(), en
       const rescheduledSnap = await getDocs(
         query(
           collection(db, 'scheduledServices'),
-          where('communityTaskId', '==', taskId),
-          where('isRescheduled', '==', true)
+          where('communityTaskId', '==', taskId)
         )
       );
       for (const d of rescheduledSnap.docs) {
@@ -760,6 +929,7 @@ export async function generateServicesForDays(daysAhead = 14) {
  */
 export async function syncServicesForRange(startDate, endDate) {
   try {
+    await checkAndRolloverGarages();
     const days = eachDayOfInterval({ start: startOfDay(startDate), end: startOfDay(endDate) });
     console.log(`[Schedule] Iniciando sincronización: ${startDate.toISOString()} - ${endDate.toISOString()}`);
     
@@ -801,7 +971,6 @@ export async function syncServicesForRange(startDate, endDate) {
     const rescheduledSnap = await getDocs(
       query(
         collection(db, 'scheduledServices'),
-        where('isRescheduled', '==', true),
         where('originalDate', '>=', start),
         where('originalDate', '<=', end)
       )

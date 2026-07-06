@@ -5,7 +5,7 @@ import { getCommunities } from '../../services/communityService';
 import { getOperarios } from '../../services/authService';
 import { getScheduledServicesRange } from '../../services/scheduleService';
 import { getCheckInsRange } from '../../services/checkInService';
-import { generateServicesForDays, generateServicesForRange, cleanupDuplicateScheduledServices } from '../../services/scheduleService';
+import { generateServicesForDays, generateServicesForRange, cleanupDuplicateScheduledServices, checkAndRolloverGarages } from '../../services/scheduleService';
 import { startOfDay, endOfDay, subDays, format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import PlanningCalendar from '../../components/PlanningCalendar';
@@ -47,6 +47,7 @@ export default function DashboardPage() {
 
   async function loadDashboard() {
     try {
+      await checkAndRolloverGarages();
       const [communitiesList, ops, todayServices, checkIns, activeWorkdaysSnap] = await Promise.all([
         getCommunities(),
         getOperarios(),

@@ -5,7 +5,7 @@ import {
   isToday 
 } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { getScheduledServicesRange, generateServicesForMonth, syncServicesForMonth } from '../services/scheduleService';
+import { getScheduledServicesRange, generateServicesForMonth, syncServicesForMonth, checkAndRolloverGarages } from '../services/scheduleService';
 import { getCommunities } from '../services/communityService';
 import { transferService, transferDay, transferWeek, rescheduleService } from '../services/transferService';
 import TransferModal from './TransferModal';
@@ -61,6 +61,7 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
   async function loadMonthData() {
     setLoading(true);
     try {
+      await checkAndRolloverGarages();
       const start = startOfMonth(currentMonth);
       const end = endOfMonth(currentMonth);
       const filters = userId ? { userId } : {};
@@ -481,7 +482,7 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
             🔄 Traspasar Día
           </button>
         ) : (
-          <div className="text-[10px] font-bold text-slate-400 border border-slate-200 px-2 py-1 rounded flex items-center gap-1 bg-slate-50">
+          <div className="text-[10px] font-bold text-slate-400 border border-slate-200 px-2 py-1 rounded flex items-center gap-1 bg-white shadow-sm">
             🚫 Día bloqueado para traspasos
           </div>
         )}
@@ -495,7 +496,7 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
             📅 Traspasar Sem
           </button>
         ) : (
-          <div className="text-[10px] font-bold text-slate-400 border border-slate-200 px-2 py-1 rounded flex items-center gap-1 bg-slate-50">
+          <div className="text-[10px] font-bold text-slate-400 border border-slate-200 px-2 py-1 rounded flex items-center gap-1 bg-white shadow-sm">
             🚫 Sem bloqueada
           </div>
         )}
@@ -645,10 +646,10 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
 
       {/* Day Detail View Container */}
       <div className="w-full flex-shrink-0 xl:w-1/3 xl:sticky xl:top-24">
-        <div className="card shadow-lg border-0 bg-white" style={{ minHeight: '520px', display: 'flex', flexDirection: 'column', paddingBottom: '20px' }}>
+        <div className="card shadow-lg border-0" style={{ minHeight: '520px', display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden', background: 'var(--color-bg)' }}>
           
           {/* Day Header Summary */}
-          <div className="px-6 pt-6 pb-2 bg-white border-b border-slate-100">
+          <div className="px-6 pt-6 pb-2 bg-white border-b border-slate-100" style={{ borderTopLeftRadius: 'var(--radius-lg)', borderTopRightRadius: 'var(--radius-lg)' }}>
             <div className="flex items-center justify-between mb-4">
                <div>
                  <div className="text-[10px] font-black text-blue-600 uppercase tracking-[0.2em] mb-1">Detalle del día</div>
@@ -693,7 +694,7 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
 
               return (
                 <div key={op.uid} className="op-day-group animate-slideIn">
-                  <div className="flex items-center gap-3 mb-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <div className="flex items-center gap-3 mb-3 p-3 bg-white rounded-xl border border-slate-200 shadow-sm">
                     <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-600 to-blue-700 flex items-center justify-center text-sm font-black text-white shadow-sm">
                       {op.name.charAt(0)}
                     </div>
@@ -825,8 +826,8 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
           overflow-x: auto;
           -webkit-overflow-scrolling: touch;
           border-radius: 12px;
-          background: #fdfdfd;
-          border: 1px solid #e2e8f0;
+          background: var(--color-bg, #e2ebf5);
+          border: 1px solid var(--color-border, #cbd5e1);
           box-shadow: inset 0 2px 4px rgba(0,0,0,0.02);
           margin: 10px 0;
           position: relative;
@@ -863,8 +864,14 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
           flex-direction: column;
           align-items: center;
           transition: all 0.2s ease;
-          border: 1px solid transparent;
-          background: #f8fafc;
+          border: 1px solid #cbd5e1;
+          background: #ffffff;
+        }
+
+        .calendar-day-cell.outside {
+          opacity: 0.55;
+          background: #f1f5f9;
+          border-color: #e2e8f0;
         }
 
         @media (min-width: 640px) {
@@ -881,7 +888,7 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
           background: #fff;
           transform: translateY(-2px);
           box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-          border-color: #e2e8f0;
+          border-color: #94a3b8;
           z-index: 10;
         }
 
