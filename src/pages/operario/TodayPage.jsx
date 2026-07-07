@@ -63,6 +63,7 @@ export default function TodayPage() {
   const [firstStartTime, setFirstStartTime] = useState(null);
   const [allWorkdaysToday, setAllWorkdaysToday] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [transferModal, setTransferModal] = useState({ open: false, type: 'single', service: null });
   const [rescheduleModal, setRescheduleModal] = useState({ open: false, serviceId: null, currentDate: null });
@@ -284,6 +285,19 @@ export default function TodayPage() {
     };
   }, [userProfile]);
 
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      // Force reload by ignoring/clearing the ref guard
+      isLoadingTodayRef.current = false;
+      await loadToday();
+    } catch (err) {
+      console.error('Error refreshing today page:', err);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const loadToday = async () => {
     if (!userProfile?.uid) return;
     if (isLoadingTodayRef.current) return;
@@ -340,14 +354,23 @@ export default function TodayPage() {
       const communityCache = {};
       const taskCache = {};
 
+      // Prefetch all unique communities and community tasks in parallel
+      const uniqueCommunityIds = [...new Set(svcs.map(s => s.communityId))].filter(Boolean);
+      await Promise.all(uniqueCommunityIds.map(async (commId) => {
+        try {
+          const [comm, tasks] = await Promise.all([
+            getCommunity(commId),
+            getCommunityTasks(commId)
+          ]);
+          communityCache[commId] = comm;
+          taskCache[commId] = tasks;
+        } catch (err) {
+          console.warn(`Error prefetching community/tasks for ${commId}:`, err);
+        }
+      }));
+
       for (const svc of svcs) {
         try {
-          if (!communityCache[svc.communityId]) {
-            communityCache[svc.communityId] = await getCommunity(svc.communityId);
-          }
-          if (!taskCache[svc.communityId]) {
-            taskCache[svc.communityId] = await getCommunityTasks(svc.communityId);
-          }
 
           const communityTasks = taskCache[svc.communityId] || [];
           const specificTask = communityTasks.find(t => t.id === svc.communityTaskId);
@@ -1254,11 +1277,11 @@ export default function TodayPage() {
           <h3 style={{ fontSize: 'var(--font-lg)', fontWeight: 700 }}>Servicios de hoy</h3>
           <button 
             className="btn btn-ghost btn-xs flex items-center gap-1"
-            onClick={() => loadToday(true)}
-            disabled={loading}
+            onClick={handleRefresh}
+            disabled={loading || refreshing}
             style={{ color: 'var(--color-primary)', fontWeight: 600 }}
           >
-            {loading ? 'Sincronizando...' : '🔄 Sincronizar'}
+            {refreshing ? 'Actualizando...' : '🔄 Actualizar'}
           </button>
         </div>
         {routeOptimized && (

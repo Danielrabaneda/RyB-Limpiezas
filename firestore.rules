@@ -144,15 +144,33 @@ service cloud.firestore {
     }
 
     match /checkIns/{checkInId} {
-      allow read: if isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId));
+      allow read: if isAdminActive() || (isEmployeeActive() && (
+        isOwner(resource.data.userId) ||
+        (
+          'scheduledServiceId' in resource.data && 
+          resource.data.scheduledServiceId != null && 
+          resource.data.scheduledServiceId != '' && 
+          get(/databases/$(database)/documents/scheduledServices/$(resource.data.scheduledServiceId)).data.assignedUserId == request.auth.uid
+        )
+      ));
       allow create: if isEmployeeActive() && (
         isOwner(request.resource.data.userId) ||
-        get(/databases/$(database)/documents/scheduledServices/$(request.resource.data.scheduledServiceId)).data.assignedUserId == request.auth.uid
+        (
+          'scheduledServiceId' in request.resource.data && 
+          request.resource.data.scheduledServiceId != null && 
+          request.resource.data.scheduledServiceId != '' && 
+          get(/databases/$(database)/documents/scheduledServices/$(request.resource.data.scheduledServiceId)).data.assignedUserId == request.auth.uid
+        )
       );
       allow update, delete: if isEmployeeActive() && (
         isAdminActive() || 
         isOwner(resource.data.userId) ||
-        get(/databases/$(database)/documents/scheduledServices/$(resource.data.scheduledServiceId)).data.assignedUserId == request.auth.uid
+        (
+          'scheduledServiceId' in resource.data && 
+          resource.data.scheduledServiceId != null && 
+          resource.data.scheduledServiceId != '' && 
+          get(/databases/$(database)/documents/scheduledServices/$(resource.data.scheduledServiceId)).data.assignedUserId == request.auth.uid
+        )
       );
     }
 

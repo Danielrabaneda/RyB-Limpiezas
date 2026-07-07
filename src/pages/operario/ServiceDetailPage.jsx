@@ -364,14 +364,18 @@ export default function ServiceDetailPage() {
 
   async function loadStaticData() {
     try {
-      // Operarios map
-      const ops = await getOperarios();
+      // Load all required static data in parallel
+      const [ops, checkIn, workday, docSnap] = await Promise.all([
+        getOperarios(),
+        getActiveCheckIn(userProfile.uid),
+        getActiveWorkday(userProfile.uid),
+        getDoc(doc(db, 'scheduledServices', serviceId))
+      ]);
+
       const map = {};
       ops.forEach(op => map[op.uid] = op.name);
       setOperariosMap(map);
 
-      // Active check-in
-      const checkIn = await getActiveCheckIn(userProfile.uid);
       if (checkIn) {
         if (checkIn.scheduledServiceId === serviceId) {
           setActiveCheckIn(checkIn);
@@ -385,12 +389,8 @@ export default function ServiceDetailPage() {
         setOtherActiveCheckIn(null);
       }
 
-      // Workday
-      const workday = await getActiveWorkday(userProfile.uid);
       setActiveWorkday(workday);
 
-      // Calcular estimaciones de tiempo
-      const docSnap = await getDoc(doc(db, 'scheduledServices', serviceId));
       if (docSnap.exists()) {
         const svcData = { id: docSnap.id, ...docSnap.data() };
         await calculateEstimates(userProfile.uid, svcData, workday);
@@ -1061,7 +1061,7 @@ export default function ServiceDetailPage() {
         </div>
       )}
 
-      {((!isCompleted) || (isCheckedIn)) && isTitular && !otherActiveCheckIn && (
+      {((!isCompleted && isTitular) || isCheckedIn) && !otherActiveCheckIn && (
         <div className="mb-4 flex flex-col gap-3">
           
           {/* ================= SUGERENCIAS DE FICHAJE ================= */}

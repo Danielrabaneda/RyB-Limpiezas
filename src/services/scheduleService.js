@@ -149,13 +149,17 @@ export async function getScheduledServicesForDate(userId, date = new Date()) {
       )];
 
       if (relevantTitularIds.length > 0) {
-        for (const titularId of relevantTitularIds) {
+        const titularQueries = relevantTitularIds.map(async (titularId) => {
           const qTitular = query(
             collection(db, 'scheduledServices'),
             where('assignedUserId', '==', titularId)
           );
           const snapTitular = await getDocs(qTitular);
-          results3.push(...snapTitular.docs.map(d => ({ id: d.id, ...d.data(), isCompanion: true })));
+          return snapTitular.docs.map(d => ({ id: d.id, ...d.data(), isCompanion: true }));
+        });
+        const queryResults = await Promise.all(titularQueries);
+        for (const res of queryResults) {
+          results3.push(...res);
         }
       }
     } catch (err) {
