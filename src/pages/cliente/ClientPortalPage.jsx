@@ -189,6 +189,23 @@ export default function ClientPortalPage() {
           )}
         </div>
 
+        {/* Explicación del Portal Público */}
+        <div style={{ 
+          background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)', 
+          borderRadius: '16px', 
+          padding: '16px 20px', 
+          border: '1px solid #bfdbfe', 
+          marginBottom: '24px',
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.02), 0 2px 4px -1px rgba(0, 0, 0, 0.02)'
+        }}>
+          <h4 style={{ margin: '0 0 6px 0', fontSize: '13px', fontWeight: 'bold', color: '#1e3a8a', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            📢 Portal de Transparencia y Calidad
+          </h4>
+          <p style={{ margin: '0', fontSize: '11.5px', color: '#1e40af', lineHeight: '1.6' }}>
+            Este espacio digital permite a todos los vecinos y propietarios de la comunidad verificar los días y horas de nuestras visitas de limpieza, ver las fotos de evidencia del trabajo realizado y consultar el cuadrante de tareas programadas para el mantenimiento del edificio.
+          </p>
+        </div>
+
         {/* Selector de Pestañas (Tabs) */}
         <div style={{ display: 'flex', background: '#e2e8f0', padding: '4px', borderRadius: '12px', marginBottom: '20px' }}>
           <button 
