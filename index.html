@@ -23,14 +23,19 @@
     <meta name="twitter:description" content="Control horario con GPS, partes de trabajo digitales, control de kilometraje y evidencias fotográficas de tus servicios." />
     <meta name="twitter:image" content="https://limpiagest.es/images/og-image.png" />
     
-    <link rel="manifest" href="/manifest.json" />
     <script>
-      // Si accedemos a un portal público (/portal/...), desactivamos el manifest de la PWA y el modo standalone de Apple.
-      // Esto fuerza a que la opción "Añadir a pantalla de inicio" guarde un marcador directo a la URL específica del portal de este edificio,
-      // en lugar de instalar la aplicación completa que siempre iniciaría en la raíz (/) mostrando la landing page.
-      if (window.location.pathname.includes('/portal/')) {
-        var manifestLink = document.querySelector('link[rel="manifest"]');
-        if (manifestLink) manifestLink.rel = 'disabled-manifest';
+      // Inyectamos dinámicamente el manifest de la PWA solo si no estamos en un portal de cliente.
+      // Esto evita que navegadores móviles (como Safari en iOS) detecten el manifiesto en el HTML estático
+      // de los portales de clientes y fuercen a que "Añadir a pantalla de inicio" apunte a la raíz (/)
+      // instalando la app completa. Para los portales de cliente, creará un marcador web estándar directo a la URL.
+      if (!window.location.pathname.includes('/portal/')) {
+        var link = document.createElement('link');
+        link.rel = 'manifest';
+        link.href = '/manifest.json';
+        document.head.appendChild(link);
+      } else {
+        // En portales públicos también forzamos a que no use modo standalone de Apple,
+        // asegurando que se comporte como un marcador directo de navegador tradicional.
         var appleCapable = document.querySelector('meta[name="apple-mobile-web-app-capable"]');
         if (appleCapable) appleCapable.content = 'no';
       }
