@@ -3,7 +3,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { getActiveWorkday } from '../../services/workdayService';
 import { getScheduledServicesForDate } from '../../services/scheduleService';
 import { getCommunity } from '../../services/communityService';
-import { getActiveCheckIn } from '../../services/checkInService';
+import { getActiveCheckIn, completeCheckOut } from '../../services/checkInService';
 import { getDistance } from '../../utils/geolocation';
 import { createSystemNotification } from '../../services/notificationService';
 import { persistEntryDetection, persistExitDetection } from '../../services/geoDetectionService';
@@ -383,13 +383,21 @@ export default function GeolocationTracker() {
                       // Persistir en Firestore
                       persistExitDetection(userProfile.uid, activeSvc.id, activeSvc.communityName, new Date(pending.exitTime), 'confirmed');
 
-                      createSystemNotification(
-                        userProfile.uid,
-                        `🏃 Salida confirmada de ${activeSvc.communityName}`,
-                        `Se detectó tu salida y llevas tiempo fuera. Puedes finalizar con la hora detectada.`,
-                        'warning',
-                        activeSvc.id
-                      );
+                      // Auto-cerrar el fichaje en Firestore
+                      try {
+                        console.log(`[Tracker] Auto-cerrando fichaje ${checkIn.id} por salida detectada`);
+                        await completeCheckOut(checkIn.id, latitude, longitude, new Date(pending.exitTime));
+                        
+                        createSystemNotification(
+                          userProfile.uid,
+                          `🏃 Salida y auto-cierre en ${activeSvc.communityName}`,
+                          `Se ha completado el servicio automáticamente a las ${format(new Date(pending.exitTime), 'HH:mm')} tras detectar que saliste de la ubicación.`,
+                          'warning',
+                          activeSvc.id
+                        );
+                      } catch (checkoutErr) {
+                        console.error('[Tracker] Error al auto-cerrar fichaje por salida:', checkoutErr);
+                      }
                     }
                   } catch (e) {
                     localStorage.removeItem(pendingKey);
@@ -402,13 +410,21 @@ export default function GeolocationTracker() {
 
                   persistExitDetection(userProfile.uid, activeSvc.id, activeSvc.communityName, new Date(lastProcessedAt), 'estimated');
 
-                  createSystemNotification(
-                    userProfile.uid,
-                    `🏃 Salida detectada de ${activeSvc.communityName}`,
-                    `Se detectó que ya no estás en la comunidad. Puedes finalizar con la hora estimada de salida.`,
-                    'warning',
-                    activeSvc.id
-                  );
+                  // Auto-cerrar el fichaje en Firestore
+                  try {
+                    console.log(`[Tracker] Auto-cerrando fichaje ${checkIn.id} por salida inmediata tras suspensión`);
+                    await completeCheckOut(checkIn.id, latitude, longitude, new Date(lastProcessedAt));
+                    
+                    createSystemNotification(
+                      userProfile.uid,
+                      `🏃 Salida y auto-cierre en ${activeSvc.communityName}`,
+                      `Se cerró el servicio automáticamente con la hora de última actividad tras la inactividad detectada.`,
+                      'warning',
+                      activeSvc.id
+                    );
+                  } catch (checkoutErr) {
+                    console.error('[Tracker] Error al auto-cerrar fichaje por salida tras suspensión:', checkoutErr);
+                  }
                 } else {
                   // Primera detección de salida → esperar 5 min
                   console.log("[Tracker] SALIDA DETECTADA - Iniciando espera de 5 minutos");
@@ -433,13 +449,21 @@ export default function GeolocationTracker() {
 
                       persistExitDetection(userProfile.uid, activeSvc.id, activeSvc.communityName, new Date(pending.exitTime), 'confirmed');
 
-                      createSystemNotification(
-                        userProfile.uid,
-                        `🏃 Salida confirmada de ${activeSvc.communityName}`,
-                        `Llevas 5 min fuera. Puedes finalizar el servicio con la hora de salida detectada.`,
-                        'warning',
-                        activeSvc.id
-                      );
+                      // Auto-cerrar el fichaje en Firestore
+                      try {
+                        console.log(`[Tracker] Auto-cerrando fichaje ${checkIn.id} tras 5 minutos fuera`);
+                        await completeCheckOut(checkIn.id, latitude, longitude, new Date(pending.exitTime));
+                        
+                        createSystemNotification(
+                          userProfile.uid,
+                          `🏃 Salida y auto-cierre en ${activeSvc.communityName}`,
+                          `Servicio completado automáticamente tras 5 minutos fuera de la ubicación.`,
+                          'warning',
+                          activeSvc.id
+                        );
+                      } catch (checkoutErr) {
+                        console.error('[Tracker] Error al auto-cerrar fichaje tras 5 minutos fuera:', checkoutErr);
+                      }
                     }
                   } catch (e) {
                     localStorage.removeItem(pendingKey);

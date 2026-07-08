@@ -5,7 +5,7 @@ import { getScheduledServicesForDate } from '../../services/scheduleService';
 import { getCommunitiesForOperario, getCommunity } from '../../services/communityService';
 import { optimizeRoute } from '../../services/routeOptimizerService';
 import { getCommunityTasks } from '../../services/taskService';
-import { getActiveCheckIn, createCheckIn } from '../../services/checkInService';
+import { getActiveCheckIn, createCheckIn, completeCheckOut } from '../../services/checkInService';
 import { getActiveWorkday, startWorkday, endWorkday, activateCar, deactivateCar, getWorkdaysSummaryForDate, findLastActivityForUser, closeStaleWorkday } from '../../services/workdayService';
 import { saveManualMileage } from '../../services/mileageService';
 import { transferService, transferDay, transferWeek, rescheduleService } from '../../services/transferService';
@@ -326,6 +326,23 @@ export default function TodayPage() {
 
       setActiveCheckIn(checkIn);
       
+      // Auto-cerrar fichaje pendiente de días anteriores si existe (Stale Check-in)
+      if (checkIn) {
+        const checkInDate = checkIn.checkInTime?.toDate ? checkIn.checkInTime.toDate() : new Date(checkIn.checkInTime);
+        if (!isSameDay(checkInDate, now)) {
+          console.log(`[TodayPage] Fichaje pendiente obsoleto detectado del día ${format(checkInDate, 'dd/MM/yyyy')}. Auto-cerrando a las 23:59...`);
+          const endOfCheckInDay = new Date(checkInDate);
+          endOfCheckInDay.setHours(23, 59, 59, 999);
+          try {
+            await completeCheckOut(checkIn.id, 0, 0, endOfCheckInDay);
+            setActiveCheckIn(null);
+            console.log('[TodayPage] Fichaje pendiente obsoleto cerrado correctamente.');
+          } catch (err) {
+            console.error('[TodayPage] Error auto-cerrando fichaje obsoleto:', err);
+          }
+        }
+      }
+      
       // Check for stale workday (orphaned from previous day)
       if (summary.activeWorkday) {
         const wdDate = summary.activeWorkday.date?.toDate ? summary.activeWorkday.date.toDate() : new Date(summary.activeWorkday.date);
@@ -580,6 +597,22 @@ export default function TodayPage() {
     
     setActionLoading(true);
     try {
+      // Verificar si hay un servicio/portal activo y en curso
+      if (activeCheckIn) {
+        setActionLoading(false);
+        const confirmClose = window.confirm(`Tienes un servicio en curso en "${activeCheckIn.communityName}". ¿Deseas finalizar este servicio automáticamente y terminar tu jornada?`);
+        if (!confirmClose) return;
+        
+        setActionLoading(true);
+        // Obtener ubicación actual para el checkout automático
+        const loc = await getCurrentLocation();
+        const lat = loc?.lat || 0;
+        const lng = loc?.lng || 0;
+        
+        await completeCheckOut(activeCheckIn.id, lat, lng);
+        setActiveCheckIn(null);
+      }
+
       // 1. Buscar la última actividad registrada para este usuario hoy
       const lastActivity = await findLastActivityForUser(userProfile.uid, new Date(), activeWorkday.id);
       
@@ -626,6 +659,21 @@ export default function TodayPage() {
     try {
       const breadcrumbs = JSON.parse(localStorage.getItem('ryb_car_breadcrumbs') || '[]');
       
+      const endTime = (useRetroactive && retroactiveModal.suggestedTime) ? retroactiveModal.suggestedTime : new Date();
+      
+      // Si hay un servicio activo, cerrarlo con la hora correspondiente de finalización de jornada
+      if (activeCheckIn) {
+        try {
+          const loc = await getCurrentLocation();
+          const lat = loc?.lat || activeCheckIn.checkInLocation?.latitude || 0;
+          const lng = loc?.lng || activeCheckIn.checkInLocation?.longitude || 0;
+          await completeCheckOut(activeCheckIn.id, lat, lng, endTime);
+          setActiveCheckIn(null);
+        } catch (err) {
+          console.error('[TodayPage] Error al auto-cerrar servicio en resolución de jornada:', err);
+        }
+      }
+
       if (useRetroactive && retroactiveModal.suggestedTime) {
         // Finalizar jornada y coche con la hora de última actividad
         await endWorkday(activeWorkday.id, breadcrumbs, retroactiveModal.suggestedTime);
