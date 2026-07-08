@@ -498,6 +498,61 @@ export default function ControlHorarioPage() {
           )}
         </div>
       )}
+
+      {/* MODAL EDICIÓN */}
+      {editingWorkday && (
+        <div className="modal-overlay">
+          <div className="modal-content animate-scaleIn" style={{ maxWidth: '450px' }}>
+            <h3 className="font-bold text-xl mb-4 border-b pb-2 flex items-center gap-2">
+              ✏️ Editar Jornada - {editingWorkday.operarioName}
+            </h3>
+            
+            <div className="flex flex-col gap-4 mb-6">
+              <div>
+                <label className="label">Hora de Inicio</label>
+                <input 
+                  type="datetime-local"
+                  className="input"
+                  value={editForm.startTime}
+                  onChange={(e) => setEditForm(prev => ({ ...prev, startTime: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="label">Hora de Fin</label>
+                <input 
+                  type="datetime-local"
+                  className="input"
+                  value={editForm.endTime}
+                  onChange={(e) => setEditForm(prev => ({ ...prev, endTime: e.target.value }))}
+                />
+              </div>
+              {editingWorkday.autoClosed && (
+                <div className="p-3 bg-blue-50 text-blue-800 text-xs rounded-lg italic">
+                  ℹ️ Esta jornada fue cerrada automáticamente por el sistema.
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button 
+                className="btn btn-ghost"
+                onClick={() => setEditingWorkday(null)}
+                disabled={actionLoading}
+              >
+                Cancelar
+              </button>
+              <button 
+                className="btn btn-primary"
+                onClick={handleSaveEdit}
+                disabled={actionLoading}
+                style={{ background: 'var(--color-accent)' }}
+              >
+                {actionLoading ? 'Guardando...' : 'Guardar Cambios'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -614,66 +669,4 @@ export default function ControlHorarioPage() {
       </div>
     );
   }
-
-  return (
-    <div className="animate-fadeIn">
-      {/* ... (rest of main div remains same) */}
-      
-      {/* MODAL EDICIÓN */}
-      {editingWorkday && (
-        <div className="modal-overlay">
-          <div className="modal-content animate-scaleIn" style={{ maxWidth: '450px' }}>
-            <h3 className="font-bold text-xl mb-4 border-b pb-2 flex items-center gap-2">
-              ✏️ Editar Jornada - {editingWorkday.operarioName}
-            </h3>
-            
-            <div className="flex flex-col gap-4 mb-6">
-              <div>
-                <label className="label">Hora de Inicio</label>
-                <input 
-                  type="datetime-local"
-                  className="input"
-                  value={editForm.startTime}
-                  onChange={(e) => setEditForm(prev => ({ ...prev, startTime: e.target.value }))}
-                />
-              </div>
-              <div>
-                <label className="label">Hora de Fin</label>
-                <input 
-                  type="datetime-local"
-                  className="input"
-                  value={editForm.endTime}
-                  onChange={(e) => setEditForm(prev => ({ ...prev, endTime: e.target.value }))}
-                />
-              </div>
-              {editingWorkday.autoClosed && (
-                <div className="p-3 bg-blue-50 text-blue-800 text-xs rounded-lg italic">
-                  ℹ️ Esta jornada fue cerrada automáticamente por el sistema.
-                </div>
-              )}
-            </div>
-
-            <div className="flex justify-end gap-3">
-              <button 
-                className="btn btn-ghost"
-                onClick={() => setEditingWorkday(null)}
-                disabled={actionLoading}
-              >
-                Cancelar
-              </button>
-              <button 
-                className="btn btn-primary"
-                onClick={handleSaveEdit}
-                disabled={actionLoading}
-                style={{ background: 'var(--color-accent)' }}
-              >
-                {actionLoading ? 'Guardando...' : 'Guardar Cambios'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-
 }
