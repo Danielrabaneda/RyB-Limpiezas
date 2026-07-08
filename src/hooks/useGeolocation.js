@@ -7,7 +7,7 @@ export function useGeolocation() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const getCurrentPosition = useCallback(() => {
+  const getCurrentPosition = useCallback((customOptions = {}) => {
     return new Promise((resolve, reject) => {
       setLoading(true);
       setError(null);
@@ -36,7 +36,7 @@ export function useGeolocation() {
             // Si falla por timeout y estábamos usando alta precisión, intentar con baja precisión
             if (err.code === 3 && options.enableHighAccuracy) {
               console.warn('Timeout con alta precisión. Reintentando con baja precisión...');
-              getPosition({ enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 });
+              getPosition({ ...options, enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 });
               return;
             }
 
@@ -54,11 +54,12 @@ export function useGeolocation() {
         );
       };
 
-      // Iniciar con alta precisión, 15 segundos
+      // Iniciar con alta precisión, permitiendo usar caché (por defecto 5 segundos)
       getPosition({
         enableHighAccuracy: true,
         timeout: 15000,
-        maximumAge: 0,
+        maximumAge: 5000,
+        ...customOptions
       });
     });
   }, []);
@@ -132,9 +133,9 @@ export function useGeolocation() {
       let lastFilteredPosition = null;
       let lastRawPosition = null;
 
-      const MAX_ATTEMPTS = 5;
-      const REQUIRED_VALID = 3;
-      const ACCURACY_THRESHOLD = 15; // metros
+      const MAX_ATTEMPTS = 3;
+      const REQUIRED_VALID = 2;
+      const ACCURACY_THRESHOLD = 30; // metros (suficiente precisión para validar rango de 500m)
 
       for (let attempt = 0; attempt < MAX_ATTEMPTS && validReadings < REQUIRED_VALID; attempt++) {
         try {
@@ -161,6 +162,17 @@ export function useGeolocation() {
             `raw=(${pos.lat.toFixed(6)}, ${pos.lng.toFixed(6)}, ±${pos.accuracy.toFixed(1)}m) → ` +
             `filtered=(${result.lat.toFixed(6)}, ${result.lng.toFixed(6)}, ±${result.filteredAccuracy.toFixed(1)}m)`
           );
+
+          // Optimización de salida temprana: si la lectura actual ya es de excelente precisión, terminamos
+          if (pos.accuracy <= 15) {
+            console.log(`[KalmanFilter] Excelente precisión detectada (±${pos.accuracy.toFixed(1)}m <= 15m) en intento ${attempt + 1}. Retornando inmediatamente.`);
+            lastFilteredPosition = {
+              lat: pos.lat,
+              lng: pos.lng,
+              accuracy: pos.accuracy
+            };
+            break;
+          }
         } catch (readError) {
           console.warn(`[KalmanFilter] Error en lectura ${attempt + 1}:`, readError);
           // Continuar con el siguiente intento

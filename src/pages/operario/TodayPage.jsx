@@ -1361,7 +1361,7 @@ export default function TodayPage() {
                   </div>
                   <div className="service-address" style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                     <span>{svc.community?.address || ''}</span>
-                    {userLocation && svc.community?.location && (
+                    {userLocation && svc.community?.location && svc.status !== 'completed' && svc.status !== 'missed' && (
                       <span style={{ 
                         fontSize: '11px', 
                         fontWeight: 'bold', 

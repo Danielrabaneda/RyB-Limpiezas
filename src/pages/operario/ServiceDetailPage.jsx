@@ -258,7 +258,9 @@ export default function ServiceDetailPage() {
 
     const updateDistance = async () => {
       try {
-        const pos = await getFilteredPosition();
+        // Usar getCurrentPosition con un cache de 5 segundos para que sea rápido y eficiente,
+        // evitando el costoso filtro de Kalman para actualizaciones periódicas en la UI
+        const pos = await getCurrentPosition({ maximumAge: 5000 });
         if (!active) return;
         const commLat = community.location._lat || community.location.latitude || 0;
         const commLng = community.location._long || community.location.longitude || 0;
@@ -278,7 +280,7 @@ export default function ServiceDetailPage() {
       active = false;
       if (intervalId) clearInterval(intervalId);
     };
-  }, [community, getFilteredPosition]);
+  }, [community, getCurrentPosition]);
 
   // Función inteligente para estimar hora de llegada y salida basadas en la jornada
   const calculateEstimates = async (userId, currentSvc, workday) => {

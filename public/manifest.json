@@ -1,6 +1,6 @@
 {
-  "name": "RyB Limpiezas",
-  "short_name": "RyB",
+  "name": "LimpiaGest",
+  "short_name": "LimpiaGest",
   "description": "Gestión de servicios de limpieza de comunidades",
   "start_url": "/",
   "display": "standalone",

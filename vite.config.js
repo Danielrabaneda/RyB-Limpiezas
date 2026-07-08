@@ -13,9 +13,9 @@ export default defineConfig({
       filename: 'custom-sw.js',
       includeAssets: ['favicon.svg', 'favicon.png', 'icons/icon-192.png', 'icons/icon-512.png'],
       manifest: {
-        name: 'RyB Limpiezas',
-        short_name: 'RyB',
-        description: 'Sistema de gestión RyB Limpiezas',
+        name: 'LimpiaGest',
+        short_name: 'LimpiaGest',
+        description: 'Sistema de gestión LimpiaGest',
         theme_color: '#2563eb',
         background_color: '#0f172a',
         display: 'standalone',

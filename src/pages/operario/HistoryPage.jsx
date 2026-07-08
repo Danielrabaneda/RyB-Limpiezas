@@ -43,14 +43,24 @@ export default function HistoryPage() {
       const svcs = await getScheduledServicesForWeek(userProfile.uid, currentWeek);
       const cache = {};
       const taskCache = {};
+
+      // Prefetch de todas las comunidades y tareas únicas asociadas en paralelo
+      const uniqueCommunityIds = [...new Set(svcs.map(s => s.communityId))].filter(Boolean);
+      await Promise.all(uniqueCommunityIds.map(async (commId) => {
+        try {
+          const [comm, tasks] = await Promise.all([
+            getCommunity(commId),
+            getCommunityTasks(commId)
+          ]);
+          cache[commId] = comm;
+          taskCache[commId] = tasks;
+        } catch (err) {
+          console.warn(`Error prefetching community/tasks for ${commId}:`, err);
+        }
+      }));
+
       const enriched = [];
       for (const svc of svcs) {
-        if (!cache[svc.communityId]) {
-          cache[svc.communityId] = await getCommunity(svc.communityId);
-        }
-        if (!taskCache[svc.communityId]) {
-          taskCache[svc.communityId] = await getCommunityTasks(svc.communityId);
-        }
         const communityTasks = taskCache[svc.communityId] || [];
         const specificTask = communityTasks.find(t => t.id === svc.communityTaskId);
         const lowerName = (svc.taskName || '').toLowerCase();
