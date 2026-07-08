@@ -69,50 +69,7 @@ export default function ClientPortalPage() {
     }
     metaAppTitle.content = "LimpiaGest";
 
-    // 3. Crear manifest dinámico para que el start_url apunte exactamente a la URL de este portal de comunidad
-    const manifestData = {
-      name: `LimpiaGest — ${community.name}`,
-      short_name: "LimpiaGest",
-      description: `Portal de calidad de la comunidad ${community.name}`,
-      start_url: window.location.href, // URL exacta del portal con su token
-      display: "standalone",
-      background_color: "#f8fafc",
-      theme_color: "#1e3a8a",
-      icons: [
-        {
-          src: "/icons/icon-192.png",
-          sizes: "192x192",
-          type: "image/png"
-        },
-        {
-          src: "/icons/icon-512.png",
-          sizes: "512x512",
-          type: "image/png",
-          purpose: "any maskable"
-        }
-      ]
-    };
 
-    const stringified = JSON.stringify(manifestData);
-    const blob = new Blob([stringified], { type: 'application/json' });
-    const manifestUrl = URL.createObjectURL(blob);
-
-    let manifestLink = document.querySelector("link[rel='manifest']");
-    if (!manifestLink) {
-      manifestLink = document.createElement('link');
-      manifestLink.rel = 'manifest';
-      document.head.appendChild(manifestLink);
-    }
-    const originalManifestHref = manifestLink.getAttribute('href') || '/manifest.json';
-    manifestLink.href = manifestUrl;
-
-    // Restaurar manifest al desmontar o cambiar de comunidad
-    return () => {
-      if (manifestLink) {
-        manifestLink.href = originalManifestHref;
-      }
-      URL.revokeObjectURL(manifestUrl);
-    };
   }, [community]);
 
   const getOperarioName = (uid) => {
