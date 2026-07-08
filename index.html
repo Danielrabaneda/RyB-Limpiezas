@@ -7,10 +7,7 @@
     <meta name="google-site-verification" content="DXD9nFEevkV3XplJAP9DT-Z9CGVn286MV7pgcDte6Zk" />
     <meta name="keywords" content="software para empresas de limpieza, programa para empresas de limpieza, control horario limpieza, app operarios limpieza, gestion de servicios de limpieza, partes de trabajo digital, LimpiaGest" />
     <meta name="theme-color" content="#2563eb" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="LimpiaGest" />
-    
+
     <!-- Open Graph / Redes Sociales -->
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Software para Empresas de Limpieza | LimpiaGest" />
@@ -24,20 +21,30 @@
     <meta name="twitter:image" content="https://limpiagest.es/images/og-image.png" />
     
     <script>
-      // Inyectamos dinámicamente el manifest de la PWA solo si no estamos en un portal de cliente.
-      // Esto evita que navegadores móviles (como Safari en iOS) detecten el manifiesto en el HTML estático
-      // de los portales de clientes y fuercen a que "Añadir a pantalla de inicio" apunte a la raíz (/)
-      // instalando la app completa. Para los portales de cliente, creará un marcador web estándar directo a la URL.
+      // Inyectamos dinámicamente el manifest de la PWA y las etiquetas WebApp de Apple solo si no estamos en un portal.
+      // Esto evita que navegadores móviles (como Safari en iOS) detecten el modo WebApp en el HTML estático
+      // de los portales de clientes y fuercen a que "Añadir a pantalla de inicio" o "Compartir" apunte a la raíz (/)
+      // instalando la app completa. Para los portales de cliente, esto asegura que se cree un marcador web estándar a la URL actual.
       if (!window.location.pathname.includes('/portal/')) {
         var link = document.createElement('link');
         link.rel = 'manifest';
         link.href = '/manifest.json';
         document.head.appendChild(link);
-      } else {
-        // En portales públicos también forzamos a que no use modo standalone de Apple,
-        // asegurando que se comporte como un marcador directo de navegador tradicional.
-        var appleCapable = document.querySelector('meta[name="apple-mobile-web-app-capable"]');
-        if (appleCapable) appleCapable.content = 'no';
+        
+        var meta1 = document.createElement('meta');
+        meta1.name = 'apple-mobile-web-app-capable';
+        meta1.content = 'yes';
+        document.head.appendChild(meta1);
+        
+        var meta2 = document.createElement('meta');
+        meta2.name = 'apple-mobile-web-app-status-bar-style';
+        meta2.content = 'black-translucent';
+        document.head.appendChild(meta2);
+        
+        var meta3 = document.createElement('meta');
+        meta3.name = 'apple-mobile-web-app-title';
+        meta3.content = 'LimpiaGest';
+        document.head.appendChild(meta3);
       }
     </script>
     <link rel="icon" type="image/png" href="/favicon.png" />
