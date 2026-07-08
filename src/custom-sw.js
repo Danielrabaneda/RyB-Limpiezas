@@ -12,8 +12,13 @@ import { createHandlerBoundToURL } from 'workbox-precaching';
 precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
 
-// Navigation routing (SPA fallback)
-registerRoute(new NavigationRoute(createHandlerBoundToURL('index.html')));
+// Navigation routing (SPA fallback) - Excluir portal de clientes para permitir cargas de red frescas y marcadores correctos
+registerRoute(new NavigationRoute(
+  createHandlerBoundToURL('index.html'),
+  {
+    denylist: [/^\/portal\//]
+  }
+));
 
 // Cache Google Fonts
 registerRoute(
