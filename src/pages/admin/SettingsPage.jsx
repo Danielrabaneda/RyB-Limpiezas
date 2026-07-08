@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { doc, updateDoc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, updateDoc, getDoc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { updateEmail, updatePassword } from 'firebase/auth';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, auth, storage } from '../../config/firebase';
@@ -21,6 +21,8 @@ export default function SettingsPage() {
   // Company state
   const [companyName, setCompanyName] = useState('RyB Limpiezas');
   const [logoUrl, setLogoUrl] = useState('');
+  const [invitationCode, setInvitationCode] = useState('');
+  const [originalInvitationCode, setOriginalInvitationCode] = useState('');
   const [companyLoading, setCompanyLoading] = useState(false);
   const [companyMsg, setCompanyMsg] = useState('');
   
@@ -43,6 +45,10 @@ export default function SettingsPage() {
           const data = snap.data();
           if (data.companyName) setCompanyName(data.companyName);
           if (data.logoUrl) setLogoUrl(data.logoUrl);
+          if (data.invitationCode) {
+            setInvitationCode(data.invitationCode);
+            setOriginalInvitationCode(data.invitationCode);
+          }
         }
       } catch (e) {
         console.error("No se pudo cargar la configuración", e);
@@ -138,11 +144,37 @@ export default function SettingsPage() {
     setCompanyLoading(true);
     setCompanyMsg('');
     try {
+      const formattedCode = invitationCode.trim().toUpperCase();
+
       await setDoc(doc(db, 'settings', 'global'), {
         companyName,
-        logoUrl
+        logoUrl,
+        invitationCode: formattedCode
       }, { merge: true });
-      setCompanyMsg('Ajustes de la empresa actualizados. Solo aplicarán tras recargar recargar la página principal.');
+
+      // Synchronize with accessCodes collection
+      if (formattedCode && formattedCode !== originalInvitationCode) {
+        // Create new code
+        await setDoc(doc(db, 'accessCodes', formattedCode), {
+          active: true,
+          createdAt: serverTimestamp(),
+          createdBy: currentUser.uid
+        });
+
+        // Delete old code if it existed
+        if (originalInvitationCode) {
+          await deleteDoc(doc(db, 'accessCodes', originalInvitationCode));
+        }
+        
+        setOriginalInvitationCode(formattedCode);
+        setInvitationCode(formattedCode);
+      } else if (!formattedCode && originalInvitationCode) {
+        // Code removed entirely
+        await deleteDoc(doc(db, 'accessCodes', originalInvitationCode));
+        setOriginalInvitationCode('');
+      }
+
+      setCompanyMsg('Ajustes de la empresa actualizados correctamente. Si cambiaste el nombre o logo, recarga la página para ver los cambios.');
     } catch (err) {
       console.error(err);
       setCompanyMsg('Error al actualizar: ' + err.message);
@@ -209,6 +241,21 @@ export default function SettingsPage() {
                 onChange={e => setCompanyName(e.target.value)} 
                 required 
               />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Código de Invitación (Para Operarios)</label>
+              <input 
+                type="text" 
+                className="form-input" 
+                value={invitationCode} 
+                onChange={e => setInvitationCode(e.target.value.toUpperCase())} 
+                placeholder="Ej: RYB2024"
+                style={{ textTransform: 'uppercase' }}
+              />
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                Comparte este código con los operarios para que puedan registrarse en la aplicación.
+              </p>
             </div>
 
             {companyMsg && (
