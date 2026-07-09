@@ -1,6 +1,7 @@
 import { 
   collection, doc, addDoc, updateDoc, getDocs, deleteDoc,
-  query, where, orderBy, serverTimestamp, Timestamp, GeoPoint
+  query, where, orderBy, serverTimestamp, Timestamp, GeoPoint,
+  getDoc
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { startOfDay, endOfDay, differenceInMinutes } from 'date-fns';
@@ -24,27 +25,42 @@ export async function createCheckIn(data) {
 }
 
 export async function completeCheckOut(checkInId, lat, lng, manualTime = null, signatureData = null) {
+  if (!checkInId) {
+    console.warn('[completeCheckOut] checkInId is invalid:', checkInId);
+    return { duration: 0 };
+  }
+
   const checkOutTime = manualTime ? new Date(manualTime) : new Date();
   
   // Get checkin data to calculate duration
   const checkInRef = doc(db, 'checkIns', checkInId);
-  const snap = await getDocs(query(
-    collection(db, 'checkIns'),
-    where('__name__', '==', checkInId)
-  ));
-  
   let duration = 0;
-  if (!snap.empty) {
-    const data = snap.docs[0].data();
-    if (data.checkInTime) {
-      const checkInDate = data.checkInTime.toDate ? data.checkInTime.toDate() : new Date(data.checkInTime);
-      duration = differenceInMinutes(checkOutTime, checkInDate);
+  
+  try {
+    const snap = await getDoc(checkInRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      if (data.checkInTime) {
+        const checkInDate = data.checkInTime.toDate ? data.checkInTime.toDate() : new Date(data.checkInTime);
+        duration = differenceInMinutes(checkOutTime, checkInDate);
+      }
     }
+  } catch (readErr) {
+    console.warn('[completeCheckOut] Error reading check-in document:', readErr);
   }
+  
+  let cleanLat = (typeof lat === 'number' && !isNaN(lat)) ? lat : 0;
+  let cleanLng = (typeof lng === 'number' && !isNaN(lng)) ? lng : 0;
+  
+  // Clamp latitude to [-90, 90] and longitude to [-180, 180]
+  if (cleanLat < -90) cleanLat = -90;
+  if (cleanLat > 90) cleanLat = 90;
+  if (cleanLng < -180) cleanLng = -180;
+  if (cleanLng > 180) cleanLng = 180;
   
   const updateData = {
     checkOutTime: Timestamp.fromDate(checkOutTime),
-    checkOutLocation: new GeoPoint(lat, lng),
+    checkOutLocation: new GeoPoint(cleanLat, cleanLng),
     durationMinutes: Math.max(0, duration),
   };
 

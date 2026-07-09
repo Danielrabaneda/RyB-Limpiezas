@@ -13,6 +13,7 @@ import TransferRequestsPanel from '../../components/admin/TransferRequestsPanel'
 import GPSSuggestionsPanel from '../../components/admin/GPSSuggestionsPanel';
 import { collection, query, where, onSnapshot, getDocs } from 'firebase/firestore';
 import { db } from '../../config/firebase';
+import { createSystemNotification } from '../../services/notificationService';
 
 export default function DashboardPage() {
   const { userProfile } = useAuth();
@@ -31,6 +32,16 @@ export default function DashboardPage() {
   const [pendingTransfers, setPendingTransfers] = useState(0);
   const [pendingGPS, setPendingGPS] = useState(0);
   const [activeOpsNames, setActiveOpsNames] = useState([]);
+  const [showNotificationModal, setShowNotificationModal] = useState(false);
+  const [notifForm, setNotifForm] = useState({
+    recipient: 'all',
+    userId: '',
+    type: 'info',
+    triggerEvent: 'immediate',
+    title: '',
+    body: ''
+  });
+  const [notifLoading, setNotifLoading] = useState(false);
 
   useEffect(() => {
     loadDashboard();
@@ -61,25 +72,34 @@ export default function DashboardPage() {
       const completed = todayServices.filter(s => s.status === 'completed').length;
       const pending = todayServices.filter(s => s.status === 'pending').length;
 
-      // Calculate real-time active operators from active workdays AND active check-ins
+      // Calculate real-time active operators (must have active workday)
       const activeUserIds = new Set();
       
+      // Get set of UIDs of users with active workdays
+      const activeWdUserIds = new Set();
+      activeWorkdays.forEach(wd => {
+        if (wd.userId) activeWdUserIds.add(wd.userId);
+        if (wd.currentCompanionId) activeWdUserIds.add(wd.currentCompanionId);
+      });
+
       // 1. Add all operators with active workdays (and their global companions)
       activeWorkdays.forEach(wd => {
         if (wd.userId) activeUserIds.add(wd.userId);
         if (wd.currentCompanionId) activeUserIds.add(wd.currentCompanionId);
       });
 
-      // 2. Add all operators with active check-ins (and service-specific companions)
+      // 2. Add all operators with active check-ins (and service-specific companions) only if they have an active workday
       const activeCheckInDocs = checkIns.filter(c => !c.checkOutTime);
       activeCheckInDocs.forEach(c => {
-        if (c.userId) activeUserIds.add(c.userId);
+        if (c.userId && activeWdUserIds.has(c.userId)) {
+          activeUserIds.add(c.userId);
+        }
         
         if (c.scheduledServiceId) {
           const service = todayServices.find(s => s.id === c.scheduledServiceId);
           if (service && Array.isArray(service.companionIds)) {
             service.companionIds.forEach(companionId => {
-              if (companionId) {
+              if (companionId && activeWdUserIds.has(companionId)) {
                 activeUserIds.add(companionId);
               }
             });
@@ -130,6 +150,66 @@ export default function DashboardPage() {
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
+  const handleSendNotification = async (e) => {
+    e.preventDefault();
+    if (!notifForm.title.trim() || !notifForm.body.trim()) {
+      alert('Por favor, rellena el título y el cuerpo de la notificación.');
+      return;
+    }
+    
+    if (notifForm.recipient === 'specific' && !notifForm.userId) {
+      alert('Por favor, selecciona un operario.');
+      return;
+    }
+
+    setNotifLoading(true);
+    try {
+      if (notifForm.recipient === 'all') {
+        // Enviar a todos los operarios
+        const promises = operarios.map(op => 
+          createSystemNotification(
+            op.uid,
+            notifForm.title.trim(),
+            notifForm.body.trim(),
+            notifForm.type,
+            null,
+            null,
+            notifForm.triggerEvent
+          )
+        );
+        await Promise.all(promises);
+        alert('Notificación enviada con éxito a todos los trabajadores.');
+      } else {
+        // Enviar a un operario concreto
+        const selectedOp = operarios.find(op => op.uid === notifForm.userId);
+        await createSystemNotification(
+          notifForm.userId,
+          notifForm.title.trim(),
+          notifForm.body.trim(),
+          notifForm.type,
+          null,
+          null,
+          notifForm.triggerEvent
+        );
+        alert(`Notificación enviada con éxito a ${selectedOp?.name || 'el operario seleccionado'}.`);
+      }
+      setShowNotificationModal(false);
+      setNotifForm({
+        recipient: 'all',
+        userId: '',
+        type: 'info',
+        triggerEvent: 'immediate',
+        title: '',
+        body: ''
+      });
+    } catch (error) {
+      console.error('Error al enviar notificaciones:', error);
+      alert('Ocurrió un error al enviar la notificación: ' + error.message);
+    } finally {
+      setNotifLoading(false);
+    }
+  };
+
   return (
     <div className="animate-fadeIn">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
@@ -140,6 +220,33 @@ export default function DashboardPage() {
           <p className="text-muted text-sm">
             {format(new Date(), "EEEE, d 'de' MMMM yyyy", { locale: es })}
           </p>
+        </div>
+        <div>
+          <button
+            onClick={() => {
+              setNotifForm({
+                recipient: 'all',
+                userId: '',
+                type: 'info',
+                triggerEvent: 'immediate',
+                title: '',
+                body: ''
+              });
+              setShowNotificationModal(true);
+            }}
+            className="btn btn-primary"
+            style={{
+              padding: '10px 20px',
+              borderRadius: '14px',
+              fontWeight: '700',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              boxShadow: '0 4px 12px rgba(37,99,235,0.2)'
+            }}
+          >
+            📢 Enviar Notificación
+          </button>
         </div>
       </div>
 
@@ -361,6 +468,178 @@ export default function DashboardPage() {
           )}
         </div>
       </div>
+
+      {/* ===== MODAL CENTRO DE NOTIFICACIONES ===== */}
+      {showNotificationModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          zIndex: 9999,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px',
+          backdropFilter: 'blur(4px)'
+        }}>
+          <div 
+            className="animate-scaleUp"
+            style={{
+              background: 'white',
+              borderRadius: '24px',
+              width: '100%',
+              maxWidth: '500px',
+              padding: '28px',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+              maxHeight: '90vh',
+              overflowY: 'auto'
+            }}
+          >
+            <h3 style={{
+              fontSize: '1.25rem',
+              fontWeight: 800,
+              color: '#1e293b',
+              margin: '0 0 20px 0',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}>
+              📢 Crear y Enviar Notificación
+            </h3>
+
+            <form onSubmit={handleSendNotification} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div className="form-group">
+                <label className="form-label" style={{ fontWeight: 600, color: '#475569', fontSize: '0.85rem' }}>Destinatarios</label>
+                <div style={{ display: 'flex', gap: '16px', marginTop: '6px' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', cursor: 'pointer' }}>
+                    <input
+                      type="radio"
+                      name="recipient"
+                      value="all"
+                      checked={notifForm.recipient === 'all'}
+                      onChange={() => setNotifForm(f => ({ ...f, recipient: 'all', userId: '' }))}
+                    />
+                    Todos los trabajadores
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', cursor: 'pointer' }}>
+                    <input
+                      type="radio"
+                      name="recipient"
+                      value="specific"
+                      checked={notifForm.recipient === 'specific'}
+                      onChange={() => setNotifForm(f => ({ ...f, recipient: 'specific' }))}
+                    />
+                    Un trabajador en concreto
+                  </label>
+                </div>
+              </div>
+
+              {notifForm.recipient === 'specific' && (
+                <div className="form-group animate-fadeIn">
+                  <label className="form-label" style={{ fontWeight: 600, color: '#475569', fontSize: '0.85rem' }}>Seleccionar Trabajador</label>
+                  <select
+                    className="form-select"
+                    value={notifForm.userId}
+                    onChange={(e) => setNotifForm(f => ({ ...f, userId: e.target.value }))}
+                    style={{ marginTop: '6px' }}
+                    required
+                  >
+                    <option value="">-- Elige un operario --</option>
+                    {operarios.map(op => (
+                      <option key={op.uid} value={op.uid}>{op.name || op.email}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                <div className="form-group" style={{ flex: '1 1 200px' }}>
+                  <label className="form-label" style={{ fontWeight: 600, color: '#475569', fontSize: '0.85rem' }}>Tipo de Notificación</label>
+                  <select
+                    className="form-select"
+                    value={notifForm.type}
+                    onChange={(e) => setNotifForm(f => ({ ...f, type: e.target.value }))}
+                    style={{ marginTop: '6px' }}
+                  >
+                    <option value="info">🔵 Info / Sugerencia</option>
+                    <option value="warning">🟡 Precaución</option>
+                    <option value="success">🟢 Éxito</option>
+                    <option value="danger">🔴 Alerta / Peligro</option>
+                  </select>
+                </div>
+
+                <div className="form-group" style={{ flex: '1 1 200px' }}>
+                  <label className="form-label" style={{ fontWeight: 600, color: '#475569', fontSize: '0.85rem' }}>Cuándo Mostrar</label>
+                  <select
+                    className="form-select"
+                    value={notifForm.triggerEvent}
+                    onChange={(e) => setNotifForm(f => ({ ...f, triggerEvent: e.target.value }))}
+                    style={{ marginTop: '6px' }}
+                  >
+                    <option value="immediate">⚡ Al enviarla (tiempo real)</option>
+                    <option value="workday_start">🌅 Al iniciar jornada</option>
+                    <option value="workday_end">🚪 Al finalizar jornada laboral</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" style={{ fontWeight: 600, color: '#475569', fontSize: '0.85rem' }}>Título / Asunto</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Ej: Retraso en servicio..."
+                  value={notifForm.title}
+                  onChange={(e) => setNotifForm(f => ({ ...f, title: e.target.value }))}
+                  style={{ marginTop: '6px' }}
+                  maxLength={50}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" style={{ fontWeight: 600, color: '#475569', fontSize: '0.85rem' }}>Mensaje</label>
+                <textarea
+                  className="form-input"
+                  placeholder="Escribe el mensaje detallado..."
+                  value={notifForm.body}
+                  onChange={(e) => setNotifForm(f => ({ ...f, body: e.target.value }))}
+                  style={{ marginTop: '6px', minHeight: '100px', resize: 'vertical' }}
+                  maxLength={500}
+                  required
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyStyle: 'flex-end', gap: '12px', marginTop: '12px', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowNotificationModal(false)}
+                  className="btn btn-secondary"
+                  style={{ padding: '8px 16px', borderRadius: '12px', border: '1px solid var(--color-border)' }}
+                  disabled={notifLoading}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  style={{
+                    padding: '8px 20px',
+                    borderRadius: '12px',
+                    boxShadow: '0 4px 12px rgba(37,99,235,0.25)'
+                  }}
+                  disabled={notifLoading}
+                >
+                  {notifLoading ? 'Enviando...' : 'Enviar Notificación 🚀'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       <style>{`
         .section-title {

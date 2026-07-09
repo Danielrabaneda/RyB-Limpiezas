@@ -53,7 +53,7 @@ const getOrigDateStr = (originalDate) => {
 
 export default function TodayPage() {
   const { userProfile } = useAuth();
-  const { notifications, unreadCount, dismissAll } = useNotifications();
+  const { notifications, unreadCount, dismissAll, triggerWorkdayStartPopups, triggerWorkdayEndPopups } = useNotifications();
   const navigate = useNavigate();
   const [services, setServices] = useState([]);
   const [enrichedServices, setEnrichedServices] = useState([]);
@@ -129,6 +129,12 @@ export default function TodayPage() {
       console.error("Error loading operarios", err);
     }
   };
+
+  useEffect(() => {
+    if (activeWorkday) {
+      triggerWorkdayStartPopups();
+    }
+  }, [activeWorkday, triggerWorkdayStartPopups]);
 
 
 
@@ -396,7 +402,8 @@ export default function TodayPage() {
           const isGarage = !!specificTask?.isGarage || lowerName.includes('garaje') || !!svc.isGarage;
           const printColor = specificTask?.printColor || (
             lowerName.includes('escalera') ? '#22c55e' :
-            lowerName.includes('portal') || lowerName.includes('repaso') ? '#eab308' : '#ef4444'
+            lowerName.includes('portal') || lowerName.includes('repaso') ? '#eab308' :
+            lowerName.includes('oficina') ? '#3b82f6' : '#ef4444'
           );
 
           let tasks = [];
@@ -610,6 +617,24 @@ export default function TodayPage() {
         const lng = loc?.lng || 0;
         
         await completeCheckOut(activeCheckIn.id, lat, lng);
+        
+        // Also close companion check-ins for this service
+        try {
+          const qComp = query(
+            collection(db, 'checkIns'),
+            where('scheduledServiceId', '==', activeCheckIn.scheduledServiceId),
+            where('checkOutTime', '==', null)
+          );
+          const compSnap = await getDocs(qComp);
+          for (const docSnap of compSnap.docs) {
+            if (docSnap.id !== activeCheckIn.id) {
+              await completeCheckOut(docSnap.id, lat, lng, null, null);
+            }
+          }
+        } catch (compErr) {
+          console.warn('[TodayPage] Error al finalizar check-outs de los acompañantes:', compErr);
+        }
+        
         setActiveCheckIn(null);
       }
 
@@ -645,6 +670,7 @@ export default function TodayPage() {
       await endWorkday(activeWorkday.id, breadcrumbs);
       localStorage.removeItem('ryb_car_breadcrumbs');
       await loadToday();
+      triggerWorkdayEndPopups();
     } catch (err) {
       console.error('Error al finalizar jornada:', err);
       alert('Error al finalizar jornada: ' + err.message);
@@ -668,6 +694,24 @@ export default function TodayPage() {
           const lat = loc?.lat || activeCheckIn.checkInLocation?.latitude || 0;
           const lng = loc?.lng || activeCheckIn.checkInLocation?.longitude || 0;
           await completeCheckOut(activeCheckIn.id, lat, lng, endTime);
+          
+          // Also close companion check-ins for this service
+          try {
+            const qComp = query(
+              collection(db, 'checkIns'),
+              where('scheduledServiceId', '==', activeCheckIn.scheduledServiceId),
+              where('checkOutTime', '==', null)
+            );
+            const compSnap = await getDocs(qComp);
+            for (const docSnap of compSnap.docs) {
+              if (docSnap.id !== activeCheckIn.id) {
+                await completeCheckOut(docSnap.id, lat, lng, endTime, null);
+              }
+            }
+          } catch (compErr) {
+            console.warn('[TodayPage] Error al finalizar check-outs de los acompañantes:', compErr);
+          }
+          
           setActiveCheckIn(null);
         } catch (err) {
           console.error('[TodayPage] Error al auto-cerrar servicio en resolución de jornada:', err);
@@ -692,6 +736,7 @@ export default function TodayPage() {
         allTasksCompleted: false
       });
       await loadToday();
+      triggerWorkdayEndPopups();
     } catch (err) {
       console.error(err);
       alert('Error al procesar el fin de jornada: ' + err.message);
@@ -857,10 +902,6 @@ export default function TodayPage() {
     }
   };
 
-  const handleDismissNotifications = async () => {
-    await dismissAll();
-  };
-
   const handleResolveStaleWorkday = async () => {
     if (!staleWorkday) return;
     setActionLoading(true);
@@ -954,62 +995,6 @@ export default function TodayPage() {
         </div>
       )}
 
-      {unreadCount > 0 && (
-        <div 
-          className="mb-4 rounded-xl overflow-hidden"
-          style={{ 
-            background: 'var(--color-danger)', 
-            color: 'white', 
-            boxShadow: '0 4px 12px rgba(220, 38, 38, 0.3)',
-            animation: 'pulse 2s infinite'
-          }}
-        >
-          <div className="p-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span style={{ fontSize: '1.4rem' }}>🚨</span>
-              <div>
-                <div className="font-bold leading-tight">AVISO IMPORTANTE ({unreadCount})</div>
-                <div className="text-xs opacity-90">Toca “OK” para marcar como leído</div>
-              </div>
-            </div>
-            <button 
-               className="btn btn-xs btn-ghost" 
-               style={{ color: 'white', border: '1px solid rgba(255,255,255,0.4)' }}
-               onClick={(e) => {
-                 e.stopPropagation();
-                 handleDismissNotifications();
-               }}
-            >
-              OK
-            </button>
-          </div>
-          {/* Mostrar contenido de las notificaciones */}
-          <div style={{ padding: '0 16px 12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            {notifications.slice(0, 5).map((notif) => (
-              <div 
-                key={notif.id}
-                onClick={() => notif.serviceId && navigate(`/operario/servicio/${notif.serviceId}`)}
-                style={{ 
-                  background: 'rgba(255,255,255,0.15)', 
-                  borderRadius: '8px', 
-                  padding: '8px 12px',
-                  cursor: notif.serviceId ? 'pointer' : 'default',
-                  fontSize: '0.8rem',
-                  lineHeight: 1.3
-                }}
-              >
-                <div style={{ fontWeight: 700 }}>{notif.title || 'Aviso'}</div>
-                {notif.body && <div style={{ opacity: 0.85, marginTop: '2px' }}>{notif.body}</div>}
-              </div>
-            ))}
-            {notifications.length > 5 && (
-              <div style={{ fontSize: '0.7rem', opacity: 0.7, textAlign: 'center', paddingTop: '4px' }}>
-                +{notifications.length - 5} más
-              </div>
-            )}
-          </div>
-        </div>
-      )}
       <div className="mb-4">
         <h2 style={{ fontSize: 'var(--font-xl)', fontWeight: 800 }}>
           Hoy, {format(new Date(), "d 'de' MMMM", { locale: es })}

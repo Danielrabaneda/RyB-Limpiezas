@@ -372,6 +372,7 @@ export default function PlanningCalendar({ userId = null, isAdmin = false, opera
     const legend = [
       { color: '#22c55e', label: 'Limp. Escalera' },
       { color: '#eab308', label: 'Repaso Portal' },
+      { color: '#3b82f6', label: 'Limp. Oficina' },
       { color: '#ef4444', label: 'Otras tareas' },
     ];
     let lx = mX;

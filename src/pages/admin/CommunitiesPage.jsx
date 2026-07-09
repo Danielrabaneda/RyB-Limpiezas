@@ -21,6 +21,8 @@ export default function CommunitiesPage() {
   const { userProfile } = useAuth();
   const [communities, setCommunities] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [filterType, setFilterType] = useState('all');
+  const [filterAdmin, setFilterAdmin] = useState('all');
   const [operarios, setOperarios] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -665,7 +667,18 @@ export default function CommunitiesPage() {
       (comm.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (comm.address || '').toLowerCase().includes(searchTerm.toLowerCase());
     const matchesGPSFilter = !filterGPS || pendingGPSCommunityIds.has(comm.id);
-    return matchesSearch && matchesGPSFilter;
+    
+    const commType = comm.type || 'comunidad';
+    const matchesTypeFilter = filterType === 'all' || commType === filterType;
+    
+    let matchesAdminFilter = true;
+    if (filterAdmin === 'none') {
+      matchesAdminFilter = !comm.administratorId;
+    } else if (filterAdmin !== 'all') {
+      matchesAdminFilter = comm.administratorId === filterAdmin;
+    }
+    
+    return matchesSearch && matchesGPSFilter && matchesTypeFilter && matchesAdminFilter;
   }) : [];
 
   if (loading) {
@@ -719,8 +732,77 @@ export default function CommunitiesPage() {
         <div className="grid communities-grid">
         {/* Community list */}
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          <div style={{ padding: 'var(--space-4) var(--space-5)', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <h3 className="font-semibold">📋 Listado ({filteredCommunities.length !== communities.length ? `${filteredCommunities.length}/${communities.length}` : communities.length})</h3>
+          <div style={{ padding: 'var(--space-4) var(--space-5)', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+            <h3 className="font-semibold" style={{ margin: 0 }}>📋 Listado ({filteredCommunities.length !== communities.length ? `${filteredCommunities.length}/${communities.length}` : communities.length})</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <select
+                value={filterType}
+                onChange={(e) => setFilterType(e.target.value)}
+                style={{
+                  padding: '4px 8px',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--color-border)',
+                  fontSize: '0.75rem',
+                  background: 'var(--color-surface)',
+                  color: 'var(--color-text)',
+                  cursor: 'pointer',
+                  fontWeight: '500',
+                  outline: 'none'
+                }}
+              >
+                <option value="all">🔍 Todos los tipos</option>
+                <option value="comunidad">Comunidad</option>
+                <option value="garaje">Garaje</option>
+                <option value="oficinas">Oficinas</option>
+                <option value="local">Local comercial</option>
+              </select>
+
+              <select
+                value={filterAdmin}
+                onChange={(e) => setFilterAdmin(e.target.value)}
+                style={{
+                  padding: '4px 8px',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--color-border)',
+                  fontSize: '0.75rem',
+                  background: 'var(--color-surface)',
+                  color: 'var(--color-text)',
+                  cursor: 'pointer',
+                  fontWeight: '500',
+                  outline: 'none',
+                  maxWidth: '130px'
+                }}
+              >
+                <option value="all">💼 Todos los admin</option>
+                <option value="none">Sin administrador</option>
+                {administrators.map(admin => (
+                  <option key={admin.id} value={admin.id}>{admin.name}</option>
+                ))}
+              </select>
+              
+              {(filterType !== 'all' || filterAdmin !== 'all') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilterType('all');
+                    setFilterAdmin('all');
+                  }}
+                  className="btn btn-ghost btn-sm"
+                  style={{
+                    padding: '2px 6px',
+                    fontSize: '0.7rem',
+                    color: '#dc2626',
+                    fontWeight: 'bold',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '2px',
+                    height: '24px'
+                  }}
+                >
+                  ✕ Limpiar
+                </button>
+              )}
+            </div>
           </div>
 
           {/* GPS notification banner */}
@@ -1771,6 +1853,7 @@ export default function CommunitiesPage() {
                     {[
                       { color: '#22c55e', label: 'Escalera' },
                       { color: '#eab308', label: 'Portal' },
+                      { color: '#3b82f6', label: 'Oficina' },
                       { color: '#ef4444', label: 'Otras' },
                     ].map(opt => (
                       <button
@@ -1791,7 +1874,7 @@ export default function CommunitiesPage() {
                       />
                     ))}
                   </div>
-                  <p className="text-xs text-muted mt-1">🟢 Limpieza Escalera &nbsp; 🟡 Repaso Portal &nbsp; 🔴 Otras tareas</p>
+                  <p className="text-xs text-muted mt-1">🟢 Limpieza Escalera &nbsp; 🟡 Repaso Portal &nbsp; 🔵 Limpieza Oficina &nbsp; 🔴 Otras tareas</p>
                 </div>
 
                 <div className="form-group">

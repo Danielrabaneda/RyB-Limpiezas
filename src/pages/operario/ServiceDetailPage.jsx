@@ -125,7 +125,8 @@ export default function ServiceDetailPage() {
         const currentLowerName = (svcData.taskName || '').toLowerCase();
         const currentPrintColor = currentSpecificTask?.printColor || (
           currentLowerName.includes('escalera') ? '#22c55e' :
-          currentLowerName.includes('portal') || currentLowerName.includes('repaso') ? '#eab308' : '#ef4444'
+          currentLowerName.includes('portal') || currentLowerName.includes('repaso') ? '#eab308' :
+          currentLowerName.includes('oficina') ? '#3b82f6' : '#ef4444'
         );
         const currentIsGarage = !!currentSpecificTask?.isGarage || currentLowerName.includes('garaje') || !!svcData.isGarage;
         const currentIsOtras = currentPrintColor === '#ef4444' && !currentIsGarage;
@@ -139,7 +140,8 @@ export default function ServiceDetailPage() {
               const lowerName = (s.taskName || '').toLowerCase();
               const printColor = specTask?.printColor || (
                 lowerName.includes('escalera') ? '#22c55e' :
-                lowerName.includes('portal') || lowerName.includes('repaso') ? '#eab308' : '#ef4444'
+                lowerName.includes('portal') || lowerName.includes('repaso') ? '#eab308' :
+                lowerName.includes('oficina') ? '#3b82f6' : '#ef4444'
               );
               const isGarage = !!specTask?.isGarage || lowerName.includes('garaje') || !!s.isGarage;
               const isOtras = printColor === '#ef4444' && !isGarage;
@@ -460,7 +462,20 @@ export default function ServiceDetailPage() {
   async function handleCheckIn(manualTime = null) {
     setActionLoading(true);
     try {
-      const pos = await getFilteredPosition();
+      let pos = null;
+      try {
+        pos = await getFilteredPosition();
+      } catch (geoErr) {
+        console.warn('[ServiceDetail] Error al obtener posición filtrada, usando fallback:', geoErr);
+        try {
+          pos = await getCurrentPosition({ enableHighAccuracy: false, timeout: 5000 });
+        } catch (rawErr) {
+          console.warn('[ServiceDetail] Error al obtener posición rápida, usando fallback de la comunidad:', rawErr);
+          const commLat = community?.location?._lat || community?.location?.latitude || 0;
+          const commLng = community?.location?._long || community?.location?.longitude || 0;
+          pos = { lat: commLat, lng: commLng };
+        }
+      }
       
       // Validate distance (solo si no es manual o para informar)
       if (community?.location) {
@@ -571,7 +586,8 @@ export default function ServiceDetailPage() {
       const currentLowerName = (service.taskName || '').toLowerCase();
       const currentPrintColor = currentSpecificTask?.printColor || (
         currentLowerName.includes('escalera') ? '#22c55e' :
-        currentLowerName.includes('portal') || currentLowerName.includes('repaso') ? '#eab308' : '#ef4444'
+        currentLowerName.includes('portal') || currentLowerName.includes('repaso') ? '#eab308' :
+        currentLowerName.includes('oficina') ? '#3b82f6' : '#ef4444'
       );
       const currentIsGarage = !!currentSpecificTask?.isGarage || currentLowerName.includes('garaje') || !!service.isGarage;
       const currentIsOtras = currentPrintColor === '#ef4444' && !currentIsGarage;
@@ -589,7 +605,8 @@ export default function ServiceDetailPage() {
         const taskLowerName = (task.taskName || '').toLowerCase();
         const taskPrintColor = task.printColor || (
           taskLowerName.includes('escalera') ? '#22c55e' :
-          taskLowerName.includes('portal') || taskLowerName.includes('repaso') ? '#eab308' : '#ef4444'
+          taskLowerName.includes('portal') || taskLowerName.includes('repaso') ? '#eab308' :
+          taskLowerName.includes('oficina') ? '#3b82f6' : '#ef4444'
         );
         const taskIsGarage = !!task.isGarage || taskLowerName.includes('garaje');
         const taskIsOtras = taskPrintColor === '#ef4444' && !taskIsGarage;
@@ -657,14 +674,27 @@ export default function ServiceDetailPage() {
 
     setActionLoading(true);
     try {
-      const pos = await getFilteredPosition();
+      let pos = null;
+      try {
+        pos = await getFilteredPosition();
+      } catch (geoErr) {
+        console.warn('[ServiceDetail] Error al obtener posición filtrada, usando fallback:', geoErr);
+        try {
+          pos = await getCurrentPosition({ enableHighAccuracy: false, timeout: 5000 });
+        } catch (rawErr) {
+          console.warn('[ServiceDetail] Error al obtener posición rápida, usando fallback de check-in:', rawErr);
+        }
+      }
+      
+      const lat = pos?.lat || activeCheckIn?.checkInLocation?.latitude || activeCheckIn?.checkInLocation?._lat || 0;
+      const lng = pos?.lng || activeCheckIn?.checkInLocation?.longitude || activeCheckIn?.checkInLocation?._long || 0;
       
       // Si no se proporcionó hora manual, verificar si el usuario está lejos
       // y hay una hora de salida detectada que debería ofrecerse
       if (!manualTime && community?.location) {
         const commLat = community.location._lat || community.location.latitude || 0;
         const commLng = community.location._long || community.location.longitude || 0;
-        const check = isWithinRange(pos.lat, pos.lng, commLat, commLng, 500);
+        const check = isWithinRange(lat, lng, commLat, commLng, 500);
         setDistanceInfo(check);
         
         if (!check.withinRange) {
@@ -702,7 +732,7 @@ export default function ServiceDetailPage() {
         }
       }
       
-      const result = await completeCheckOut(activeCheckIn.id, pos.lat, pos.lng, manualTime, clientSignature);
+      const result = await completeCheckOut(activeCheckIn.id, lat, lng, manualTime, clientSignature);
 
       // Finalizar automáticamente los check-ins de los acompañantes
       try {
@@ -714,7 +744,7 @@ export default function ServiceDetailPage() {
         const compSnap = await getDocs(qComp);
         for (const docSnap of compSnap.docs) {
           if (docSnap.id !== activeCheckIn.id) {
-            await completeCheckOut(docSnap.id, pos.lat, pos.lng, manualTime, null);
+            await completeCheckOut(docSnap.id, lat, lng, manualTime, null);
           }
         }
       } catch (compErr) {
@@ -1227,7 +1257,20 @@ export default function ServiceDetailPage() {
                         return;
                       }
 
-                      const pos = await getFilteredPosition();
+                      let pos = null;
+                      try {
+                        pos = await getFilteredPosition();
+                      } catch (geoErr) {
+                        console.warn('[ServiceDetail] Error al obtener posición filtrada para registro manual, usando fallback:', geoErr);
+                        try {
+                          pos = await getCurrentPosition({ enableHighAccuracy: false, timeout: 5000 });
+                        } catch (rawErr) {
+                          console.warn('[ServiceDetail] Error al obtener posición rápida para registro manual, usando fallback de la comunidad:', rawErr);
+                          const commLat = community?.location?._lat || community?.location?.latitude || 0;
+                          const commLng = community?.location?._long || community?.location?.longitude || 0;
+                          pos = { lat: commLat, lng: commLng };
+                        }
+                      }
 
                        // 1. Crear el check-in con hora manual de entrada
                       const checkInId = await createCheckIn({

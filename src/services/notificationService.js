@@ -1,5 +1,5 @@
 import { db } from '../config/firebase';
-import { collection, addDoc, serverTimestamp, query, where, getDocs, writeBatch, Timestamp } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, query, where, getDocs, writeBatch, Timestamp, doc, updateDoc } from 'firebase/firestore';
 
 const BATCH_LIMIT = 500;
 
@@ -19,7 +19,7 @@ async function commitInChunks(refs, operation) {
  * Crea una notificación de sistema para un usuario específico.
  * Se utiliza para activar el "punto rojo" (Badge) en la app.
  */
-export const createSystemNotification = async (userId, title, body, type = 'info', serviceId = null, targetUrl = null) => {
+export const createSystemNotification = async (userId, title, body, type = 'info', serviceId = null, targetUrl = null, triggerEvent = 'immediate') => {
   try {
     await addDoc(collection(db, 'systemNotifications'), {
       userId,
@@ -28,12 +28,27 @@ export const createSystemNotification = async (userId, title, body, type = 'info
       type,
       serviceId,
       targetUrl,
+      triggerEvent,
       read: false,
       createdAt: serverTimestamp(),
     });
-    console.log(`[NotificationService] Alerta creada para ${userId}: ${title}`);
+    console.log(`[NotificationService] Alerta creada para ${userId}: ${title} (Trigger: ${triggerEvent})`);
   } catch (error) {
     console.error('[NotificationService] Error creando notificación:', error);
+  }
+};
+
+/**
+ * Marca una única notificación específica como leída.
+ */
+export const markNotificationAsRead = async (notificationId) => {
+  if (!notificationId) return;
+  try {
+    const ref = doc(db, 'systemNotifications', notificationId);
+    await updateDoc(ref, { read: true });
+    console.log(`[NotificationService] Marcada como leída: ${notificationId}`);
+  } catch (error) {
+    console.error('[NotificationService] Error marcando notificación como leída:', error);
   }
 };
 

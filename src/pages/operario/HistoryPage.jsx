@@ -67,7 +67,8 @@ export default function HistoryPage() {
         const isGarage = !!specificTask?.isGarage || lowerName.includes('garaje') || !!svc.isGarage;
         const printColor = specificTask?.printColor || (
           lowerName.includes('escalera') ? '#22c55e' :
-          lowerName.includes('portal') || lowerName.includes('repaso') ? '#eab308' : '#ef4444'
+          lowerName.includes('portal') || lowerName.includes('repaso') ? '#eab308' :
+          lowerName.includes('oficina') ? '#3b82f6' : '#ef4444'
         );
 
         enriched.push({

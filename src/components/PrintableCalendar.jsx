@@ -213,6 +213,10 @@ export default function PrintableCalendar({ month, services, selectedOpId, opera
               Repaso Portal
             </span>
             <span style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+              <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#3b82f6', display: 'inline-block' }}></span>
+              Limp. Oficina
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
               <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#ef4444', display: 'inline-block' }}></span>
               Otras tareas
             </span>
