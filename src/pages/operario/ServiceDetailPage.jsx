@@ -794,45 +794,6 @@ export default function ServiceDetailPage() {
     await updateTaskExecution(exec.id, { status: newStatus });
   }
 
-  async function handlePhotoUpload(e, execId) {
-    const file = e.target.files[0];
-    if (!file) return;
-    
-    // Validar tamaño (ej. 10MB)
-    if (file.size > 10 * 1024 * 1024) {
-      alert('La imagen es demasiado grande (máximo 10MB)');
-      return;
-    }
-
-    setUploadingPhoto(true);
-    try {
-      const url = await uploadPhoto(file, userProfile.uid, serviceId);
-      
-      // Actualizar DB
-      await updateDoc(doc(db, 'taskExecutions', execId), {
-        photoUrls: arrayUnion(url)
-      });
-      
-      // Actualizar estado local inmediatamente para mejor UX
-      setTaskExecutions(prev => prev.map(ex => {
-        if (ex.id === execId) {
-          return {
-            ...ex,
-            photoUrls: [...(ex.photoUrls || []), url]
-          };
-        }
-        return ex;
-      }));
-      
-    } catch (err) {
-      console.error('Error uploading photo:', err);
-      alert('Error subiendo foto: ' + (err.message || 'Error desconocido'));
-    } finally {
-      setUploadingPhoto(false);
-      if (e.target) e.target.value = ''; // Clear input
-    }
-  }
-
   async function handleGeneralPhotoUpload(e) {
     const file = e.target.files[0];
     if (!file) return;
@@ -869,42 +830,6 @@ export default function ServiceDetailPage() {
 
   async function handleSaveNotes(execId) {
     await updateTaskExecution(execId, { notes });
-  }
-
-  async function handleSubmitEvidence(exec) {
-    const task = tasks.find(t => t.id === exec.communityTaskId);
-    const hasPhotos = exec.photoUrls && exec.photoUrls.length > 0;
-    const hasNotes = exec.notes && exec.notes.trim().length > 0;
-    
-    if (!hasPhotos && !hasNotes) {
-      alert('Añade al menos una foto o una nota antes de enviar.');
-      return;
-    }
-
-    setSubmittingEvidence(prev => ({ ...prev, [exec.id]: true }));
-    try {
-      await createEvidenceReport({
-        scheduledServiceId: serviceId,
-        communityId: service.communityId,
-        communityName: community?.name || '',
-        userId: userProfile.uid,
-        userName: userProfile.name || userProfile.email || '',
-        notes: exec.notes || '',
-        photoUrls: exec.photoUrls || [],
-        taskName: task?.taskName || 'Tarea',
-        communityTaskId: exec.communityTaskId || '',
-      });
-      setSubmittedEvidence(prev => ({ ...prev, [exec.id]: true }));
-      // Auto-clear success message after 5s
-      setTimeout(() => {
-        setSubmittedEvidence(prev => ({ ...prev, [exec.id]: false }));
-      }, 5000);
-    } catch (err) {
-      console.error('Error submitting evidence:', err);
-      alert('Error al enviar la evidencia: ' + (err.message || 'Error desconocido'));
-    } finally {
-      setSubmittingEvidence(prev => ({ ...prev, [exec.id]: false }));
-    }
   }
 
   if (loading) {
