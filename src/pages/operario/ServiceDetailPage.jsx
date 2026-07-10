@@ -4,12 +4,11 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useGeolocation } from '../../hooks/useGeolocation';
 import { useServiceData } from '../../hooks/useServiceData';
 import { useCheckInFlow } from '../../hooks/useCheckInFlow';
+import { useServiceEvidence } from '../../hooks/useServiceEvidence';
 import { transferService, rescheduleService } from '../../services/transferService';
 import TransferModal from '../../components/TransferModal';
 import RescheduleModal from '../../components/RescheduleModal';
 import SignatureCanvas from '../../components/SignatureCanvas';
-import { uploadPhoto } from '../../services/storageService';
-import { updateScheduledServiceNotesAndPhotos } from '../../services/scheduleService';
 import { format } from 'date-fns';
 
 export default function ServiceDetailPage() {
@@ -18,7 +17,6 @@ export default function ServiceDetailPage() {
   const { getCurrentPosition, getFilteredPosition, loading: geoLoading } = useGeolocation();
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
-  const lastInitializedServiceId = useRef(null);
 
   // Integrar hook de datos del servicio
   const serviceData = useServiceData(serviceId, userProfile);
@@ -41,17 +39,26 @@ export default function ServiceDetailPage() {
 
   const [transferModalOpen, setTransferModalOpen] = useState(false);
   const [rescheduleModalOpen, setRescheduleModalOpen] = useState(false);
-  const [showSignatureModal, setShowSignatureModal] = useState(false);
-  const [clientSignature, setClientSignature] = useState(null);
-  
-  // Estados para evidencias generales
-  const [generalNotes, setGeneralNotes] = useState('');
-  const [generalPhotos, setGeneralPhotos] = useState([]);
-  const [uploadingGeneralPhoto, setUploadingGeneralPhoto] = useState(false);
-  const [submittingGeneralEvidence, setSubmittingGeneralEvidence] = useState(false);
-  const [submittedGeneralEvidence, setSubmittedGeneralEvidence] = useState(false);
 
-  // Integrar hook de flujo de check-in
+  // Integrar hook de evidencias y firma
+  const serviceEvidence = useServiceEvidence(serviceId, userProfile, service);
+  const {
+    showSignatureModal,
+    setShowSignatureModal,
+    clientSignature,
+    setClientSignature,
+    generalNotes,
+    setGeneralNotes,
+    generalPhotos,
+    setGeneralPhotos,
+    uploadingGeneralPhoto,
+    submittingGeneralEvidence,
+    submittedGeneralEvidence,
+    handleGeneralPhotoUpload,
+    handleSubmitGeneralEvidence
+  } = serviceEvidence;
+
+  // Integrar hook de flujo de check-in (pasando clientSignature y setClientSignature desde serviceEvidence)
   const checkInFlow = useCheckInFlow(serviceId, userProfile, serviceData, {
     navigate,
     getCurrentPosition,
@@ -86,15 +93,6 @@ export default function ServiceDetailPage() {
     handleForceComplete,
     sendGPSLocation
   } = checkInFlow;
-
-  // Sincronizar evidencias generales únicamente cuando el servicio se carga por primera vez
-  useEffect(() => {
-    if (service && service.id === serviceId && lastInitializedServiceId.current !== serviceId) {
-      setGeneralNotes(service.generalNotes || '');
-      setGeneralPhotos(service.generalPhotoUrls || []);
-      lastInitializedServiceId.current = serviceId;
-    }
-  }, [service, serviceId]);
 
 
 
@@ -140,39 +138,7 @@ export default function ServiceDetailPage() {
 
 
 
-  async function handleGeneralPhotoUpload(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    
-    if (file.size > 10 * 1024 * 1024) {
-      alert('La imagen es demasiado grande (máximo 10MB)');
-      return;
-    }
 
-    setUploadingGeneralPhoto(true);
-    try {
-      const url = await uploadPhoto(file, userProfile.uid, serviceId);
-      setGeneralPhotos(prev => [...prev, url]);
-    } catch (err) {
-      alert('Error al subir foto: ' + err.message);
-    } finally {
-      setUploadingGeneralPhoto(false);
-      if (e.target) e.target.value = '';
-    }
-  }
-
-  async function handleSubmitGeneralEvidence() {
-    setSubmittingGeneralEvidence(true);
-    try {
-      await updateScheduledServiceNotesAndPhotos(serviceId, generalNotes, generalPhotos);
-      setSubmittedGeneralEvidence(true);
-      setTimeout(() => setSubmittedGeneralEvidence(false), 3000);
-    } catch (error) {
-      alert('Error guardando evidencia: ' + error.message);
-    } finally {
-      setSubmittingGeneralEvidence(false);
-    }
-  }
 
   async function handleSaveNotes(execId) {
     await updateTaskExecution(execId, { notes });
