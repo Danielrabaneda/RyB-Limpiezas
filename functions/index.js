@@ -4,10 +4,12 @@
  * Funciones:
  * - checkWorkdayReminders: Cada 10 minutos, revisa jornadas activas y envía recordatorios push.
  * - cleanupStaleFcmTokens: Diariamente a las 3:00 AM (Europe/Madrid), limpia tokens FCM antiguos.
+ * - onGpsNotificationCreated: Trigger Firestore que envía FCM push real para notificaciones GPS (entrada/salida de comunidades).
  */
 
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { logger } = require("firebase-functions");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, Timestamp, FieldValue } = require("firebase-admin/firestore");
@@ -549,6 +551,130 @@ exports.cleanupStaleFcmTokens = onSchedule(
     } catch (error) {
       logger.error("Error fatal en cleanupStaleFcmTokens:", error);
       throw error;
+    }
+  }
+);
+
+// ============================================================================
+// FUNCIÓN 3: onGpsNotificationCreated
+// Trigger Firestore: cuando se crea una systemNotification con triggerEvent
+// 'push_only' (notificaciones GPS de entrada/salida de comunidades),
+// envía un push FCM real que puede despertar el teléfono en suspensión.
+// ============================================================================
+
+exports.onGpsNotificationCreated = onDocumentCreated(
+  {
+    document: "systemNotifications/{notifId}",
+    region: "europe-west1",
+    memory: "128MiB",
+    timeoutSeconds: 30,
+  },
+  async (event) => {
+    const data = event.data?.data();
+    if (!data) return;
+
+    // Solo procesar notificaciones GPS (push_only)
+    if (data.triggerEvent !== "push_only") return;
+
+    const { userId, title, body, type, serviceId } = data;
+    if (!userId || !title) return;
+
+    logger.info(`[GPS Push] Notificación GPS detectada para ${userId}: ${title}`);
+
+    try {
+      const tokens = await getUserFcmTokens(userId);
+
+      if (tokens.length === 0) {
+        logger.warn(`[GPS Push] Usuario ${userId} no tiene tokens FCM. No se puede enviar push.`);
+        return;
+      }
+
+      const invalidTokens = [];
+
+      const sendPromises = tokens.map(async (token) => {
+        try {
+          const message = {
+            token,
+            notification: { title, body: body || "" },
+            data: {
+              type: type || "info",
+              userId,
+              serviceId: serviceId || "",
+              triggerEvent: "push_only",
+            },
+            android: {
+              priority: "high",
+              notification: {
+                channelId: "ryb_gps_alerts",
+                sound: "default",
+                priority: "high",
+              },
+            },
+            apns: {
+              headers: {
+                "apns-priority": "10",
+                "apns-push-type": "alert",
+              },
+              payload: {
+                aps: {
+                  alert: { title, body: body || "" },
+                  sound: "default",
+                  badge: 1,
+                  "content-available": 1,
+                },
+              },
+            },
+            webpush: {
+              headers: {
+                Urgency: "high",
+              },
+              notification: {
+                title,
+                body: body || "",
+                icon: "/icons/icon-192.png",
+                badge: "/icons/icon-192.png",
+                vibrate: [200, 100, 200, 100, 200],
+                requireInteraction: true,
+                tag: `gps-${serviceId || Date.now()}`,
+              },
+            },
+          };
+
+          await messaging.send(message);
+          logger.info(`[GPS Push] Enviado a token ${token.substring(0, 20)}... para ${userId}`);
+        } catch (error) {
+          if (
+            error.code === "messaging/invalid-registration-token" ||
+            error.code === "messaging/registration-token-not-registered" ||
+            error.code === "messaging/invalid-argument"
+          ) {
+            logger.warn(`[GPS Push] Token inválido: ${token.substring(0, 20)}...`);
+            invalidTokens.push(token);
+          } else {
+            logger.error(`[GPS Push] Error enviando a ${token.substring(0, 20)}...:`, error);
+          }
+        }
+      });
+
+      await Promise.all(sendPromises);
+
+      // Limpiar tokens inválidos
+      if (invalidTokens.length > 0) {
+        const deletePromises = invalidTokens.map(async (token) => {
+          const tokenSnap = await db
+            .collection("fcmTokens")
+            .where("token", "==", token)
+            .get();
+          const batch = db.batch();
+          tokenSnap.docs.forEach((doc) => batch.delete(doc.ref));
+          return batch.commit();
+        });
+        await Promise.all(deletePromises);
+      }
+
+      logger.info(`[GPS Push] Completado para ${userId}: ${tokens.length} dispositivo(s)`);
+    } catch (error) {
+      logger.error(`[GPS Push] Error procesando notificación GPS para ${userId}:`, error);
     }
   }
 );

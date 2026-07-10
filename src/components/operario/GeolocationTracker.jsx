@@ -4,7 +4,7 @@ import { getActiveWorkday } from '../../services/workdayService';
 import { getScheduledServicesForDate } from '../../services/scheduleService';
 import { getCommunity } from '../../services/communityService';
 import { getActiveCheckIn, completeCheckOut } from '../../services/checkInService';
-import { getDistance } from '../../utils/geolocation';
+import { getDistance, sendNotification } from '../../utils/geolocation';
 import { createSystemNotification } from '../../services/notificationService';
 import { persistEntryDetection, persistExitDetection } from '../../services/geoDetectionService';
 import { registerForPushNotifications } from '../../services/fcmService';
@@ -388,12 +388,26 @@ export default function GeolocationTracker() {
                         console.log(`[Tracker] Auto-cerrando fichaje ${checkIn.id} por salida detectada`);
                         await completeCheckOut(checkIn.id, latitude, longitude, new Date(pending.exitTime));
                         
+                        sendNotification(
+                          `🏃 Salida y auto-cierre en ${activeSvc.communityName}`,
+                          {
+                            body: `Se ha completado el servicio automáticamente a las ${format(new Date(pending.exitTime), 'HH:mm')} tras detectar que saliste de la ubicación.`,
+                            icon: '/icons/icon-192.png',
+                            badge: '/icons/icon-192.png',
+                            tag: `exit-${activeSvc.id}`,
+                            urgent: true,
+                            serviceId: activeSvc.id,
+                          }
+                        );
+                        // Backup: FCM push desde servidor (despierta el teléfono en suspensión)
                         createSystemNotification(
                           userProfile.uid,
                           `🏃 Salida y auto-cierre en ${activeSvc.communityName}`,
                           `Se ha completado el servicio automáticamente a las ${format(new Date(pending.exitTime), 'HH:mm')} tras detectar que saliste de la ubicación.`,
                           'warning',
-                          activeSvc.id
+                          activeSvc.id,
+                          null,
+                          'push_only'
                         );
                       } catch (checkoutErr) {
                         console.error('[Tracker] Error al auto-cerrar fichaje por salida:', checkoutErr);
@@ -415,12 +429,26 @@ export default function GeolocationTracker() {
                     console.log(`[Tracker] Auto-cerrando fichaje ${checkIn.id} por salida inmediata tras suspensión`);
                     await completeCheckOut(checkIn.id, latitude, longitude, new Date(lastProcessedAt));
                     
+                    sendNotification(
+                      `🏃 Salida y auto-cierre en ${activeSvc.communityName}`,
+                      {
+                        body: `Se cerró el servicio automáticamente con la hora de última actividad tras la inactividad detectada.`,
+                        icon: '/icons/icon-192.png',
+                        badge: '/icons/icon-192.png',
+                        tag: `exit-suspend-${activeSvc.id}`,
+                        urgent: true,
+                        serviceId: activeSvc.id,
+                      }
+                    );
+                    // Backup: FCM push desde servidor (despierta el teléfono en suspensión)
                     createSystemNotification(
                       userProfile.uid,
                       `🏃 Salida y auto-cierre en ${activeSvc.communityName}`,
                       `Se cerró el servicio automáticamente con la hora de última actividad tras la inactividad detectada.`,
                       'warning',
-                      activeSvc.id
+                      activeSvc.id,
+                      null,
+                      'push_only'
                     );
                   } catch (checkoutErr) {
                     console.error('[Tracker] Error al auto-cerrar fichaje por salida tras suspensión:', checkoutErr);
@@ -454,12 +482,26 @@ export default function GeolocationTracker() {
                         console.log(`[Tracker] Auto-cerrando fichaje ${checkIn.id} tras 5 minutos fuera`);
                         await completeCheckOut(checkIn.id, latitude, longitude, new Date(pending.exitTime));
                         
+                        sendNotification(
+                          `🏃 Salida y auto-cierre en ${activeSvc.communityName}`,
+                          {
+                            body: `Servicio completado automáticamente tras 5 minutos fuera de la ubicación.`,
+                            icon: '/icons/icon-192.png',
+                            badge: '/icons/icon-192.png',
+                            tag: `exit-5min-${activeSvc.id}`,
+                            urgent: true,
+                            serviceId: activeSvc.id,
+                          }
+                        );
+                        // Backup: FCM push desde servidor (despierta el teléfono en suspensión)
                         createSystemNotification(
                           userProfile.uid,
                           `🏃 Salida y auto-cierre en ${activeSvc.communityName}`,
                           `Servicio completado automáticamente tras 5 minutos fuera de la ubicación.`,
                           'warning',
-                          activeSvc.id
+                          activeSvc.id,
+                          null,
+                          'push_only'
                         );
                       } catch (checkoutErr) {
                         console.error('[Tracker] Error al auto-cerrar fichaje tras 5 minutos fuera:', checkoutErr);
@@ -594,12 +636,23 @@ export default function GeolocationTracker() {
                   ? `Llegada estimada: ${detectedEntryTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}. ¿Inicias el servicio?`
                   : `¿Quieres iniciar el servicio? Estás a ${Math.round(closest.distance)}m.`;
 
+              sendNotification(title, {
+                body,
+                icon: '/icons/icon-192.png',
+                badge: '/icons/icon-192.png',
+                tag: `entry-${closest.id}`,
+                urgent: false,
+                serviceId: closest.id,
+              });
+              // Backup: FCM push desde servidor (despierta el teléfono en suspensión)
               createSystemNotification(
                 userProfile.uid,
                 title,
                 body,
                 'success',
-                closest.id
+                closest.id,
+                null,
+                'push_only'
               );
             }
           }

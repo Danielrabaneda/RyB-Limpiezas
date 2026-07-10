@@ -95,6 +95,14 @@ export function NotificationProvider({ children }) {
         if (trackers[docSnap.id]) continue; // Ya tiene tracker
 
         const data = docSnap.data();
+
+        // Las notificaciones 'push_only' (GPS/ubicación) se gestionan por FCM del servidor
+        // y el tracker ya envió la push local. No reproducir sonido ni re-alertas aquí.
+        if (data.triggerEvent === 'push_only') {
+          trackers[docSnap.id] = { count: 0, intervalId: null }; // Marcar como procesada
+          continue;
+        }
+
         const { sendNotification, playNotificationSound } = await import('../utils/geolocation');
 
         const title = data.title || 'RyB Limpiezas';
