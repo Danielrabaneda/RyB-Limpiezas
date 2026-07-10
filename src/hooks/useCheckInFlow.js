@@ -10,6 +10,7 @@ import { getDistance } from '../utils/geolocation';
 import { collection, query, where, getDocs, Timestamp, doc, updateDoc, arrayUnion } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { createTaskExecution } from '../services/checkInService';
+import { parseHHMM, formatTimeToHHMM } from '../utils/formatTime';
 
 export function useCheckInFlow(serviceId, userProfile, serviceData, {
   navigate,
@@ -556,14 +557,14 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
     if (!manualEntryTime || !manualExitTime) return;
     setActionLoading(true);
     try {
-      const [inH, inM] = manualEntryTime.split(':').map(Number);
-      const [outH, outM] = manualExitTime.split(':').map(Number);
+      const entryDate = parseHHMM(manualEntryTime);
+      const exitDate = parseHHMM(manualExitTime);
       
-      const entryDate = new Date();
-      entryDate.setHours(inH, inM, 0, 0);
-      
-      const exitDate = new Date();
-      exitDate.setHours(outH, outM, 0, 0);
+      if (!entryDate || !exitDate) {
+        alert('Formato de hora inválido.');
+        setActionLoading(false);
+        return;
+      }
 
       if (exitDate.getTime() <= entryDate.getTime()) {
         alert('La hora de salida debe ser posterior a la de entrada.');

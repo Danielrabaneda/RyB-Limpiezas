@@ -1,5 +1,6 @@
 import React from 'react';
 import { format } from 'date-fns';
+import { parseHHMM } from '../../utils/formatTime';
 
 export default function CheckInControl({
   isCheckedIn,
@@ -147,10 +148,8 @@ export default function CheckInControl({
             <button 
               className="btn btn-primary btn-sm flex-1 font-bold"
               onClick={() => {
-                if (!manualEntryTime) return;
-                const [h, m] = manualEntryTime.split(':').map(Number);
-                const entryDate = new Date();
-                entryDate.setHours(h, m, 0, 0);
+                const entryDate = parseHHMM(manualEntryTime);
+                if (!entryDate) return;
                 handleCheckIn(entryDate);
                 setShowManualEntryForm(false);
               }}
@@ -233,10 +232,8 @@ export default function CheckInControl({
             <button 
               className="btn btn-primary btn-sm flex-1 font-bold"
               onClick={() => {
-                if (!manualExitTime) return;
-                const [h, m] = manualExitTime.split(':').map(Number);
-                const exitDate = new Date();
-                exitDate.setHours(h, m, 0, 0);
+                const exitDate = parseHHMM(manualExitTime);
+                if (!exitDate) return;
                 
                 const checkInTime = activeCheckIn.checkInTime?.toDate 
                   ? activeCheckIn.checkInTime.toDate() 
