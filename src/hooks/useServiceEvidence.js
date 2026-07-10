@@ -57,6 +57,36 @@ export function useServiceEvidence(serviceId, userProfile, service) {
     }
   }
 
+  const [uploadingSignature, setUploadingSignature] = useState(false);
+
+  async function handleSaveSignature(base64Image, signerName) {
+    setShowSignatureModal(false);
+    setUploadingSignature(true);
+    try {
+      const byteString = atob(base64Image.split(',')[1]);
+      const ab = new ArrayBuffer(byteString.length);
+      const ia = new Uint8Array(ab);
+      for (let i = 0; i < byteString.length; i++) {
+        ia[i] = byteString.charCodeAt(i);
+      }
+      const blob = new Blob([ab], { type: 'image/png' });
+      const file = new File([blob], `signature_${serviceId}_${Date.now()}.png`, { type: 'image/png' });
+      
+      const imageUrl = await uploadPhoto(file, userProfile.uid, serviceId);
+      setClientSignature({
+        imageUrl,
+        signerName,
+        signedAt: new Date()
+      });
+      alert('Firma guardada correctamente.');
+    } catch (err) {
+      console.error(err);
+      alert('Error al guardar firma: ' + err.message);
+    } finally {
+      setUploadingSignature(false);
+    }
+  }
+
   return {
     showSignatureModal,
     setShowSignatureModal,
@@ -69,7 +99,9 @@ export function useServiceEvidence(serviceId, userProfile, service) {
     uploadingGeneralPhoto,
     submittingGeneralEvidence,
     submittedGeneralEvidence,
+    uploadingSignature,
     handleGeneralPhotoUpload,
-    handleSubmitGeneralEvidence
+    handleSubmitGeneralEvidence,
+    handleSaveSignature
   };
 }

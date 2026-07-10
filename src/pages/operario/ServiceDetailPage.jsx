@@ -11,6 +11,7 @@ import RescheduleModal from '../../components/RescheduleModal';
 import SignatureCanvas from '../../components/SignatureCanvas';
 import CommunityInfoCard from '../../components/operario/CommunityInfoCard';
 import CommunityDocsCard from '../../components/operario/CommunityDocsCard';
+import CheckInControl from '../../components/operario/CheckInControl';
 import { format } from 'date-fns';
 
 export default function ServiceDetailPage() {
@@ -56,8 +57,10 @@ export default function ServiceDetailPage() {
     uploadingGeneralPhoto,
     submittingGeneralEvidence,
     submittedGeneralEvidence,
+    uploadingSignature,
     handleGeneralPhotoUpload,
-    handleSubmitGeneralEvidence
+    handleSubmitGeneralEvidence,
+    handleSaveSignature
   } = serviceEvidence;
 
   // Integrar hook de flujo de check-in (pasando clientSignature y setClientSignature desde serviceEvidence)
@@ -205,329 +208,40 @@ export default function ServiceDetailPage() {
 
 
 
-      {/* Check-in/out button */}
-      {otherActiveCheckIn && !isCompleted && isTitular && (
-        <div className="card mb-4" style={{ border: '2px solid var(--color-warning)', background: 'var(--color-warning-light)' }}>
-          <p className="text-sm font-bold text-warning-dark mb-2">
-            ⚠️ Tienes otro servicio en curso
-          </p>
-          <p className="text-xs mb-3">
-            Debes finalizar el servicio activo antes de iniciar uno nuevo.
-          </p>
-          <button 
-            className="btn btn-warning btn-sm w-full"
-            onClick={() => navigate(`/operario/servicio/${otherActiveCheckIn.scheduledServiceId}`)}
-          >
-            Ir al servicio activo
-          </button>
-        </div>
-      )}
-
-      {((!isCompleted && isTitular) || isCheckedIn) && !otherActiveCheckIn && (
-        <div className="mb-4 flex flex-col gap-3">
-          
-          {/* ================= SUGERENCIAS DE FICHAJE ================= */}
-          {!isCheckedIn && (suggestedIn || estimatedIn || activeWorkday?.startTime) && (
-            <div className="card animate-fadeIn" style={{ border: '1px solid var(--color-border)', background: 'var(--color-bg-light)', padding: 'var(--space-4)' }}>
-              <h4 className="text-xs font-bold text-slate-700 mb-2">💡 Sugerencias de Llegada:</h4>
-              <div className="flex flex-col gap-2">
-                {suggestedIn && (
-                  <button 
-                    className="btn btn-secondary flex items-center justify-between font-bold w-full"
-                    style={{ textAlign: 'left', background: entrySource === 'estimated' ? '#fdf4ff' : 'var(--color-accent-light)', borderColor: entrySource === 'estimated' ? '#f0abfc' : 'var(--color-accent)', color: '#0f172a', padding: '12px 16px', fontSize: '0.85rem' }}
-                    onClick={() => {
-                      handleCheckIn(suggestedIn);
-                    }}
-                    disabled={actionLoading}
-                  >
-                    <span>
-                      {entrySource === 'estimated' ? '⏱️ Llegada estimada (background): ' : '📍 GPS detectado: '} 
-                      <strong>{format(suggestedIn, 'HH:mm')}</strong>
-                    </span>
-                    <span>Usar →</span>
-                  </button>
-                )}
-                {estimatedIn && (!suggestedIn || Math.abs(estimatedIn.getTime() - suggestedIn.getTime()) > 60000) && (
-                  <button 
-                    className="btn btn-secondary flex items-center justify-between font-bold w-full"
-                    style={{ textAlign: 'left', background: '#f0f9ff', borderColor: '#bae6fd', color: '#0369a1', padding: '12px 16px', fontSize: '0.85rem' }}
-                    onClick={() => {
-                      handleCheckIn(estimatedIn);
-                    }}
-                    disabled={actionLoading}
-                  >
-                    <span>🚗 Llegada estimada (viaje): <strong>{format(estimatedIn, 'HH:mm')}</strong></span>
-                    <span>Usar →</span>
-                  </button>
-                )}
-                {activeWorkday?.startTime && !suggestedIn && !estimatedIn && (
-                  <button 
-                    className="btn btn-secondary flex items-center justify-between font-bold w-full"
-                    style={{ textAlign: 'left', background: '#faf5ff', borderColor: '#e9d5ff', color: '#7c3aed', padding: '12px 16px', fontSize: '0.85rem' }}
-                    onClick={() => {
-                      const wdStart = activeWorkday.startTime.toDate ? activeWorkday.startTime.toDate() : new Date(activeWorkday.startTime);
-                      handleCheckIn(wdStart);
-                    }}
-                    disabled={actionLoading}
-                  >
-                    <span>👷 Inicio de jornada: <strong>{format(activeWorkday.startTime.toDate ? activeWorkday.startTime.toDate() : new Date(activeWorkday.startTime), 'HH:mm')}</strong></span>
-                    <span>Usar →</span>
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {isCheckedIn && suggestedOut && (
-            <div className="exit-suggestion-card animate-fadeIn">
-              <div className="exit-suggestion-icon">🏃</div>
-              <div className="exit-suggestion-content">
-                <p className="exit-suggestion-title">Salida confirmada</p>
-                <p className="exit-suggestion-subtitle">
-                  Se detectó tu salida a las <strong>{format(suggestedOut, 'HH:mm')}</strong> y no volviste en 5 minutos
-                </p>
-              </div>
-              <button 
-                className="btn-pulse-glow" 
-                onClick={() => handleCheckOut(suggestedOut)}
-                disabled={actionLoading}
-              >
-                ⏱️ Finalizar a las {format(suggestedOut, 'HH:mm')}
-              </button>
-            </div>
-          )}
-
-          {/* ================= FORMULARIO ENTRADA MANUAL ================= */}
-          {showManualEntryForm && !isCheckedIn && (
-            <div className="card animate-fadeIn" style={{ border: '1px solid var(--color-border)', background: 'var(--color-bg-light)', padding: 'var(--space-4)' }}>
-              <h4 className="text-xs font-bold mb-3">⏱️ Iniciar con Hora Manual</h4>
-              <div className="flex items-center justify-between gap-3 mb-4">
-                <span className="text-xs font-semibold text-slate-600">Hora de llegada:</span>
-                <input 
-                  type="time" 
-                  value={manualEntryTime} 
-                  onChange={(e) => setManualEntryTime(e.target.value)}
-                  className="form-input"
-                  style={{ width: '130px', padding: '6px 12px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}
-                />
-              </div>
-              <div className="flex gap-2">
-                <button 
-                  className="btn btn-primary btn-sm flex-1 font-bold"
-                  onClick={() => {
-                    if (!manualEntryTime) return;
-                    const [h, m] = manualEntryTime.split(':').map(Number);
-                    const entryDate = new Date();
-                    entryDate.setHours(h, m, 0, 0);
-                    handleCheckIn(entryDate);
-                    setShowManualEntryForm(false);
-                  }}
-                  disabled={actionLoading}
-                >
-                  Confirmar Entrada
-                </button>
-                <button 
-                  className="btn btn-secondary btn-sm font-bold"
-                  onClick={() => setShowManualEntryForm(false)}
-                >
-                  Cancelar
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* ================= FORMULARIO COMPLETO RETROACTIVO ================= */}
-          {showFullManualForm && !isCheckedIn && (
-            <div className="card animate-fadeIn" style={{ border: '1px solid var(--color-border)', background: 'var(--color-bg-light)', padding: 'var(--space-4)' }}>
-              <h4 className="text-xs font-bold mb-1">📝 Registrar Servicio Completo</h4>
-              <p className="text-[10px] text-muted mb-4">Registra entrada y salida de forma retroactiva si no pudiste hacerlo al momento.</p>
-              
-              <div className="flex flex-col gap-3 mb-4">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-xs font-semibold text-slate-600">Hora de llegada:</span>
-                  <input 
-                    type="time" 
-                    value={manualEntryTime} 
-                    onChange={(e) => setManualEntryTime(e.target.value)}
-                    className="form-input"
-                    style={{ width: '130px', padding: '6px 12px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}
-                  />
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-xs font-semibold text-slate-600">Hora de salida:</span>
-                  <input 
-                    type="time" 
-                    value={manualExitTime} 
-                    onChange={(e) => setManualExitTime(e.target.value)}
-                    className="form-input"
-                    style={{ width: '130px', padding: '6px 12px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}
-                  />
-                </div>
-              </div>
-
-              <div className="flex gap-2">
-                <button 
-                  className="btn btn-success btn-sm flex-1 font-bold"
-                  onClick={handleFullManualSubmit}
-                  disabled={actionLoading}
-                >
-                  Guardar Registro
-                </button>
-                <button 
-                  className="btn btn-secondary btn-sm font-bold"
-                  onClick={() => setShowFullManualForm(false)}
-                >
-                  Cancelar
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* ================= FORMULARIO SALIDA MANUAL ================= */}
-          {showManualExitForm && isCheckedIn && (
-            <div className="card animate-fadeIn" style={{ border: '1px solid var(--color-border)', background: 'var(--color-bg-light)', padding: 'var(--space-4)' }}>
-              <h4 className="text-xs font-bold mb-3">🛑 Finalizar con Hora Manual</h4>
-              <div className="flex items-center justify-between gap-3 mb-4">
-                <span className="text-xs font-semibold text-slate-600">Hora de salida:</span>
-                <input 
-                  type="time" 
-                  value={manualExitTime} 
-                  onChange={(e) => setManualExitTime(e.target.value)}
-                  className="form-input"
-                  style={{ width: '130px', padding: '6px 12px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}
-                />
-              </div>
-              <div className="flex gap-2">
-                <button 
-                  className="btn btn-primary btn-sm flex-1 font-bold"
-                  onClick={() => {
-                    if (!manualExitTime) return;
-                    const [h, m] = manualExitTime.split(':').map(Number);
-                    const exitDate = new Date();
-                    exitDate.setHours(h, m, 0, 0);
-                    
-                    const checkInTime = activeCheckIn.checkInTime?.toDate 
-                      ? activeCheckIn.checkInTime.toDate() 
-                      : new Date(activeCheckIn.checkInTime);
-                    
-                    if (exitDate.getTime() <= checkInTime.getTime()) {
-                      alert('La hora de salida debe ser posterior a la de entrada.');
-                      return;
-                    }
-
-                    handleCheckOut(exitDate);
-                    setShowManualExitForm(false);
-                  }}
-                  disabled={actionLoading}
-                >
-                  Confirmar Salida
-                </button>
-                <button 
-                  className="btn btn-secondary btn-sm font-bold"
-                  onClick={() => setShowManualExitForm(false)}
-                >
-                  Cancelar
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* ================= BOTONES DE ACCIÓN PRINCIPALES ================= */}
-          {!isCheckedIn ? (
-            <div className="flex flex-col gap-2 w-full">
-              {!showManualEntryForm && !showFullManualForm && (
-                <>
-                  <button
-                    className="checkin-btn start"
-                    onClick={() => handleCheckIn()}
-                    disabled={actionLoading || geoLoading}
-                  >
-                    {actionLoading ? '📍 Obteniendo ubicación...' : '📍 Iniciar servicio'}
-                  </button>
-                  
-                  <div className="flex gap-2 mt-1">
-                    <button
-                      className="btn btn-secondary btn-sm flex-1 font-bold"
-                      onClick={() => setShowManualEntryForm(true)}
-                    >
-                      ⏱️ Entrada Manual
-                    </button>
-                    <button
-                      className="btn btn-secondary btn-sm flex-1 font-bold"
-                      onClick={() => setShowFullManualForm(true)}
-                    >
-                      📝 Todo Retroactivo
-                    </button>
-                  </div>
-                </>
-              )}
-              
-              {isInProgress && !showManualEntryForm && !showFullManualForm && (
-                <button
-                  className="btn btn-warning w-full flex items-center justify-center gap-2 mt-2"
-                  onClick={handleForceComplete}
-                  disabled={actionLoading}
-                >
-                  ⚠️ Forzar Finalización
-                </button>
-              )}
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2 w-full animate-fadeIn">
-              {/* Card de firma del cliente */}
-              <div className="card" style={{ border: '1px solid var(--color-border)', background: 'var(--color-bg-light)', padding: 'var(--space-3) var(--space-4)', margin: 0 }}>
-                <h4 style={{ fontSize: 'var(--font-sm)', fontWeight: 'bold', margin: '0 0 var(--space-2) 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  ✍️ Firma del Cliente (Opcional)
-                </h4>
-                {clientSignature ? (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: 'var(--color-success-light)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-success-light)' }}>
-                    <div style={{ flex: 1 }}>
-                      <span className="text-xs font-bold text-success" style={{ display: 'block' }}>✅ Firma de conformidad registrada</span>
-                      <span className="text-[10px] text-muted" style={{ display: 'block' }}>Nombre: {clientSignature.signerName}</span>
-                    </div>
-                    <button 
-                      type="button" 
-                      className="btn btn-ghost btn-xs" 
-                      onClick={() => setClientSignature(null)}
-                      style={{ color: 'var(--color-danger)', border: '1px solid var(--color-danger)', padding: '2px 6px', fontSize: '10px' }}
-                    >
-                      Borrar
-                    </button>
-                  </div>
-                ) : (
-                  <button 
-                    type="button" 
-                    className="btn btn-secondary btn-sm w-full" 
-                    onClick={() => setShowSignatureModal(true)}
-                    disabled={actionLoading}
-                    style={{ fontSize: '0.8rem', padding: '8px 12px' }}
-                  >
-                    ✍️ Capturar firma de conformidad
-                  </button>
-                )}
-              </div>
-
-              {!showManualExitForm && (
-                <>
-                  <button
-                    className="checkin-btn stop"
-                    onClick={() => handleCheckOut()}
-                    disabled={actionLoading || geoLoading}
-                  >
-                    {actionLoading ? '📍 Finalizando...' : '🛑 Finalizar servicio'}
-                  </button>
-                  <button
-                    className="btn btn-secondary btn-sm w-full font-bold mt-1"
-                    onClick={() => setShowManualExitForm(true)}
-                  >
-                    ⏱️ Salida Manual
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+      <CheckInControl
+        isCheckedIn={isCheckedIn}
+        isCompleted={isCompleted}
+        isTitular={isTitular}
+        otherActiveCheckIn={otherActiveCheckIn}
+        suggestedIn={suggestedIn}
+        entrySource={entrySource}
+        estimatedIn={estimatedIn}
+        estimatedOut={estimatedOut}
+        activeWorkday={activeWorkday}
+        suggestedOut={suggestedOut}
+        showManualEntryForm={showManualEntryForm}
+        setShowManualEntryForm={setShowManualEntryForm}
+        manualEntryTime={manualEntryTime}
+        setManualEntryTime={setManualEntryTime}
+        showFullManualForm={showFullManualForm}
+        setShowFullManualForm={setShowFullManualForm}
+        showManualExitForm={showManualExitForm}
+        setShowManualExitForm={setShowManualExitForm}
+        manualExitTime={manualExitTime}
+        setManualExitTime={setManualExitTime}
+        actionLoading={actionLoading}
+        geoLoading={geoLoading}
+        activeCheckIn={activeCheckIn}
+        clientSignature={clientSignature}
+        setClientSignature={setClientSignature}
+        setShowSignatureModal={setShowSignatureModal}
+        isInProgress={isInProgress}
+        navigate={navigate}
+        handleCheckIn={handleCheckIn}
+        handleCheckOut={handleCheckOut}
+        handleFullManualSubmit={handleFullManualSubmit}
+        handleForceComplete={handleForceComplete}
+      />
 
       {/* Task checklist */}
       <div className="card">
@@ -694,34 +408,7 @@ export default function ServiceDetailPage() {
 
       {showSignatureModal && (
         <SignatureCanvas 
-          onSave={async ({ base64Image, signerName }) => {
-            setShowSignatureModal(false);
-            setActionLoading(true);
-            try {
-              // Convert base64 to file
-              const byteString = atob(base64Image.split(',')[1]);
-              const ab = new ArrayBuffer(byteString.length);
-              const ia = new Uint8Array(ab);
-              for (let i = 0; i < byteString.length; i++) {
-                ia[i] = byteString.charCodeAt(i);
-              }
-              const blob = new Blob([ab], { type: 'image/png' });
-              const file = new File([blob], `signature_${serviceId}_${Date.now()}.png`, { type: 'image/png' });
-              
-              const imageUrl = await uploadPhoto(file, userProfile.uid, serviceId);
-              setClientSignature({
-                imageUrl,
-                signerName,
-                signedAt: new Date()
-              });
-              alert('Firma guardada correctamente.');
-            } catch (err) {
-              console.error(err);
-              alert('Error al guardar firma: ' + err.message);
-            } finally {
-              setActionLoading(false);
-            }
-          }}
+          onSave={handleSaveSignature}
           onCancel={() => setShowSignatureModal(false)}
         />
       )}
