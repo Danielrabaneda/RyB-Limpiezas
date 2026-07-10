@@ -59,7 +59,7 @@ export function useServiceEvidence(serviceId, userProfile, service, options = {}
 
   const [uploadingSignature, setUploadingSignature] = useState(false);
 
-  async function handleSaveSignature(base64Image, signerName) {
+  async function handleSaveSignature({ base64Image, signerName }) {
     setShowSignatureModal(false);
     setUploadingSignature(true);
     if (options.setActionLoading) options.setActionLoading(true);
