@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useGeolocation } from '../../hooks/useGeolocation';
@@ -15,14 +15,12 @@ import CheckInControl from '../../components/operario/CheckInControl';
 import TasksList from '../../components/operario/TasksList';
 import GeneralEvidenceCard from '../../components/operario/GeneralEvidenceCard';
 import CompanionsCard from '../../components/operario/CompanionsCard';
-import { format } from 'date-fns';
 
 export default function ServiceDetailPage() {
   const { serviceId } = useParams();
   const { userProfile } = useAuth();
   const { getCurrentPosition, getFilteredPosition, loading: geoLoading } = useGeolocation();
   const navigate = useNavigate();
-  const fileInputRef = useRef(null);
 
   // Integrar hook de datos del servicio
   const serviceData = useServiceData(serviceId, userProfile);
@@ -139,21 +137,12 @@ export default function ServiceDetailPage() {
       });
       alert('Cambio de fecha solicitado. El administrador deberá validarlo.');
       setRescheduleModalOpen(false);
-      fetchServiceDetails();
+      loadStaticData();
     } catch (err) {
       alert('Error en el cambio de fecha: ' + err.message);
     } finally {
       setActionLoading(false);
     }
-  }
-
-
-
-
-
-
-  async function handleSaveNotes(execId) {
-    await updateTaskExecution(execId, { notes });
   }
 
   if (loading) {
