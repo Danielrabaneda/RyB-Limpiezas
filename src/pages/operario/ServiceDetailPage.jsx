@@ -2,27 +2,22 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useGeolocation } from '../../hooks/useGeolocation';
-import { getCommunity } from '../../services/communityService';
-import { getCommunityTasks } from '../../services/taskService';
-import { getScheduledServicesForDate, updateScheduledServiceStatus, addCompanionToService, removeCompanionFromService, shouldScheduleOnDay, updateScheduledServiceNotesAndPhotos, passTaskToNextService } from '../../services/scheduleService';
+import { useServiceData } from '../../hooks/useServiceData';
+import { updateScheduledServiceStatus, addCompanionToService, shouldScheduleOnDay, updateScheduledServiceNotesAndPhotos, passTaskToNextService } from '../../services/scheduleService';
 import { 
-  createCheckIn, completeCheckOut, getActiveCheckIn, getCheckInsForDate,
-  createTaskExecution, updateTaskExecution, getTaskExecutionsForService,
+  createCheckIn, completeCheckOut, getCheckInsForDate,
+  createTaskExecution,
   isWithinRange
 } from '../../services/checkInService';
 import { uploadPhoto } from '../../services/storageService';
 import { createGPSSuggestion } from '../../services/gpsSuggestionService';
-import { createEvidenceReport } from '../../services/evidenceService';
 import { transferService, rescheduleService } from '../../services/transferService';
-import { getOperarios } from '../../services/authService';
 import TransferModal from '../../components/TransferModal';
 import RescheduleModal from '../../components/RescheduleModal';
 import SignatureCanvas from '../../components/SignatureCanvas';
-import { getCommunityGuides } from '../../services/documentVaultService';
-import { getActiveWorkday } from '../../services/workdayService';
 import { getEntryDetection, getExitDetection } from '../../services/geoDetectionService';
 import { getDistance } from '../../utils/geolocation';
-import { doc, getDoc, onSnapshot, collection, query, where, updateDoc, arrayUnion, getDocs, Timestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { format, startOfWeek, endOfWeek } from 'date-fns';
 
@@ -32,35 +27,39 @@ export default function ServiceDetailPage() {
   const { getCurrentPosition, getFilteredPosition, loading: geoLoading } = useGeolocation();
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
+  const lastInitializedServiceId = useRef(null);
+  const lastEstimatedServiceId = useRef(null);
 
-  const [service, setService] = useState(null);
-  const [community, setCommunity] = useState(null);
-  const [tasks, setTasks] = useState([]);
-  const [taskExecutions, setTaskExecutions] = useState([]);
-  const [activeCheckIn, setActiveCheckIn] = useState(null);
-  const [otherActiveCheckIn, setOtherActiveCheckIn] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // Integrar hook de datos del servicio
+  const {
+    service,
+    community,
+    tasks,
+    taskExecutions,
+    activeCheckIn,
+    setActiveCheckIn,
+    otherActiveCheckIn,
+    loading,
+    operariosMap,
+    activeWorkday,
+    communityDocs,
+    groupedServices,
+    loadStaticData,
+    toggleTaskStatus,
+    handleRemoveCompanion,
+  } = useServiceData(serviceId, userProfile);
+
   const [actionLoading, setActionLoading] = useState(false);
   const [transferModalOpen, setTransferModalOpen] = useState(false);
   const [rescheduleModalOpen, setRescheduleModalOpen] = useState(false);
-  const [operariosMap, setOperariosMap] = useState({});
-  const [selectedTaskExec, setSelectedTaskExec] = useState(null);
-  const [notes, setNotes] = useState('');
-  const [photos, setPhotos] = useState([]);
-  const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [distanceInfo, setDistanceInfo] = useState(null);
   const [sendingGPS, setSendingGPS] = useState(false);
   const [gpsSent, setGpsSent] = useState(false);
   const [suggestedIn, setSuggestedIn] = useState(null);
   const [entrySource, setEntrySource] = useState('realtime');
   const [suggestedOut, setSuggestedOut] = useState(null);
-  const [activeWorkday, setActiveWorkday] = useState(null);
-  const [submittingEvidence, setSubmittingEvidence] = useState({});
-  const [submittedEvidence, setSubmittedEvidence] = useState({});
   const [showSignatureModal, setShowSignatureModal] = useState(false);
   const [clientSignature, setClientSignature] = useState(null);
-  const [communityDocs, setCommunityDocs] = useState([]);
-  const [groupedServices, setGroupedServices] = useState([]);
   
   // Estados para evidencias generales
   const [generalNotes, setGeneralNotes] = useState('');
@@ -78,107 +77,19 @@ export default function ServiceDetailPage() {
   const [manualEntryTime, setManualEntryTime] = useState('');
   const [manualExitTime, setManualExitTime] = useState('');
 
+  // Sincronizar evidencias generales únicamente cuando el servicio se carga por primera vez
   useEffect(() => {
-    if (!serviceId) return;
+    if (service && service.id === serviceId && lastInitializedServiceId.current !== serviceId) {
+      setGeneralNotes(service.generalNotes || '');
+      setGeneralPhotos(service.generalPhotoUrls || []);
+      lastInitializedServiceId.current = serviceId;
+    }
+  }, [service, serviceId]);
 
-    // Reset state when service changes
-    setActiveCheckIn(null);
-    setService(null);
-    setCommunity(null);
-    setTasks([]);
-    setTaskExecutions([]);
-    setDistanceInfo(null);
-    setClientSignature(null);
-    setShowSignatureModal(false);
-    setCommunityDocs([]);
+  // Cargar sugerencias de geolocalización
+  useEffect(() => {
+    if (!serviceId || !userProfile?.uid) return;
 
-    // 1. Listen to service document
-    const unsubService = onSnapshot(doc(db, 'scheduledServices', serviceId), async (snap) => {
-      if (!snap.exists()) {
-        setLoading(false);
-        return;
-      }
-      const svcData = { id: snap.id, ...snap.data() };
-      setService(svcData);
-      setGeneralNotes(svcData.generalNotes || '');
-      setGeneralPhotos(svcData.generalPhotoUrls || []);
-
-      // Load static info if not already loaded
-      if (!community) {
-        const comm = await getCommunity(svcData.communityId);
-        setCommunity(comm);
-        
-        const commTasks = await getCommunityTasks(svcData.communityId);
-        setTasks(commTasks);
-
-        const docs = await getCommunityGuides(svcData.communityId);
-        setCommunityDocs(docs || []);
-      }
-
-      // Load grouped services on the same day for this community
-      try {
-        const svcDate = svcData.scheduledDate?.toDate ? svcData.scheduledDate.toDate() : new Date(svcData.scheduledDate);
-        const allSvcsToday = await getScheduledServicesForDate(userProfile.uid, svcDate);
-        
-        // Find category/color for the current service to apply selective grouping
-        const currentSpecificTask = commTasks.find(t => t.id === svcData.communityTaskId);
-        const currentLowerName = (svcData.taskName || '').toLowerCase();
-        const currentPrintColor = currentSpecificTask?.printColor || (
-          currentLowerName.includes('escalera') ? '#22c55e' :
-          currentLowerName.includes('portal') || currentLowerName.includes('repaso') ? '#eab308' :
-          currentLowerName.includes('oficina') ? '#3b82f6' : '#ef4444'
-        );
-        const currentIsGarage = !!currentSpecificTask?.isGarage || currentLowerName.includes('garaje') || !!svcData.isGarage;
-        const currentIsOtras = currentPrintColor === '#ef4444' && !currentIsGarage;
-
-        let filtered = [];
-        if (currentIsOtras) {
-          // Group only "Otras" (red) tasks of the same community today
-          for (const s of allSvcsToday) {
-            if (s.communityId === svcData.communityId) {
-              const specTask = commTasks.find(t => t.id === s.communityTaskId);
-              const lowerName = (s.taskName || '').toLowerCase();
-              const printColor = specTask?.printColor || (
-                lowerName.includes('escalera') ? '#22c55e' :
-                lowerName.includes('portal') || lowerName.includes('repaso') ? '#eab308' :
-                lowerName.includes('oficina') ? '#3b82f6' : '#ef4444'
-              );
-              const isGarage = !!specTask?.isGarage || lowerName.includes('garaje') || !!s.isGarage;
-              const isOtras = printColor === '#ef4444' && !isGarage;
-              
-              if (isOtras) {
-                filtered.push(s);
-              }
-            }
-          }
-        } else {
-          // Escalera, Portal and Garaje do not group with anything else
-          filtered = [svcData];
-        }
-
-        if (!filtered.some(s => s.id === svcData.id)) {
-          filtered.push(svcData);
-        }
-        setGroupedServices(filtered);
-      } catch (err) {
-        console.warn('Error loading grouped services:', err);
-        setGroupedServices([svcData]);
-      }
-    });
-
-    // 2. Listen to task executions
-    const qExecs = query(
-      collection(db, 'taskExecutions'),
-      where('scheduledServiceId', '==', serviceId)
-    );
-    const unsubExecs = onSnapshot(qExecs, (snap) => {
-      setTaskExecutions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-
-    // 3. One-time fetches
-    loadStaticData();
-    
-    // Cargar sugerencias de geolocalización (local y Firestore)
     const loadGeoSuggestions = async () => {
       try {
         const sIn = localStorage.getItem(`detected_entry_${serviceId}`);
@@ -222,13 +133,11 @@ export default function ServiceDetailPage() {
     };
     loadGeoSuggestions();
 
-    // Polling para detectar salida confirmada o promover pending exits
     const exitPollInterval = setInterval(() => {
       const confirmedExit = localStorage.getItem(`detected_exit_${serviceId}`);
       if (confirmedExit && !suggestedOut) {
         setSuggestedOut(new Date(confirmedExit));
       } else if (!confirmedExit && !suggestedOut) {
-        // Comprobar si hay un pending que debería promoverse
         const pendingRaw = localStorage.getItem(`detected_exit_pending_${serviceId}`);
         if (pendingRaw) {
           try {
@@ -242,14 +151,20 @@ export default function ServiceDetailPage() {
           } catch (e) { /* ignore */ }
         }
       }
-    }, 10_000); // cada 10 segundos
+    }, 10_000);
 
     return () => {
-      unsubService();
-      unsubExecs();
       clearInterval(exitPollInterval);
     };
-  }, [serviceId, userProfile]);
+  }, [serviceId, userProfile?.uid]);
+
+  // Efecto para calcular estimaciones al cargar datos estáticos (ejecuta una vez por servicio)
+  useEffect(() => {
+    if (service && service.id === serviceId && activeWorkday && !loading && lastEstimatedServiceId.current !== serviceId) {
+      calculateEstimates(userProfile.uid, service, activeWorkday);
+      lastEstimatedServiceId.current = serviceId;
+    }
+  }, [service, serviceId, activeWorkday, loading, userProfile?.uid]);
 
   // Efecto para actualizar la distancia en tiempo real
   useEffect(() => {
@@ -260,8 +175,6 @@ export default function ServiceDetailPage() {
 
     const updateDistance = async () => {
       try {
-        // Usar getCurrentPosition con un cache de 5 segundos para que sea rápido y eficiente,
-        // evitando el costoso filtro de Kalman para actualizaciones periódicas en la UI
         const pos = await getCurrentPosition({ maximumAge: 5000 });
         if (!active) return;
         const commLat = community.location._lat || community.location.latitude || 0;
@@ -271,12 +184,12 @@ export default function ServiceDetailPage() {
           setDistanceInfo(check);
         }
       } catch (err) {
-        // Ignorar errores de GPS silenciosos
+        // Ignorar errores GPS silenciosos
       }
     };
 
     updateDistance();
-    intervalId = setInterval(updateDistance, 10_000); // 10 segundos
+    intervalId = setInterval(updateDistance, 10_000);
 
     return () => {
       active = false;
@@ -304,9 +217,8 @@ export default function ServiceDetailPage() {
         const lastCheckIn = completedCheckIns[0];
         const lastExitTime = lastCheckIn.checkOutTime?.toDate ? lastCheckIn.checkOutTime.toDate() : new Date(lastCheckIn.checkOutTime);
         
-        let travelMinutes = 15; // default fallback
+        let travelMinutes = 15;
         
-        // Intenta calcular la distancia si tenemos las ubicaciones
         try {
           const lastComm = await getCommunity(lastCheckIn.communityId);
           if (lastComm?.location && currentSvc?.communityId) {
@@ -319,7 +231,6 @@ export default function ServiceDetailPage() {
               
               if (lat1 && lng1 && lat2 && lng2) {
                 const dist = getDistance(lat1, lng1, lat2, lng2);
-                // 666 m/min = 40 km/h
                 travelMinutes = Math.round(dist / 666) + 2; 
                 if (travelMinutes < 2) travelMinutes = 2;
                 if (travelMinutes > 120) travelMinutes = 15;
@@ -333,17 +244,15 @@ export default function ServiceDetailPage() {
         estIn = new Date(lastExitTime.getTime() + travelMinutes * 60 * 1000);
       } else if (workday?.startTime) {
         const workdayStart = workday.startTime.toDate ? workday.startTime.toDate() : new Date(workday.startTime);
-        estIn = new Date(workdayStart.getTime() + 10 * 60 * 1000); // 10 min de viaje inicial
+        estIn = new Date(workdayStart.getTime() + 10 * 60 * 1000);
       } else {
         estIn = new Date();
       }
 
-      // Evitar que la hora estimada de entrada sea en el futuro
       if (estIn.getTime() > Date.now()) {
         estIn = new Date();
       }
 
-      // Estimar salida: entrada + 30 min
       estOut = new Date(estIn.getTime() + 30 * 60 * 1000);
       if (estOut.getTime() > Date.now()) {
         estOut = new Date();
@@ -352,7 +261,6 @@ export default function ServiceDetailPage() {
       setEstimatedIn(estIn);
       setEstimatedOut(estOut);
 
-      // Inicializar campos del formulario manual con formato "HH:mm"
       const formatTime = (date) => {
         const h = String(date.getHours()).padStart(2, '0');
         const m = String(date.getMinutes()).padStart(2, '0');
@@ -366,45 +274,6 @@ export default function ServiceDetailPage() {
     }
   };
 
-  async function loadStaticData() {
-    try {
-      // Load all required static data in parallel
-      const [ops, checkIn, workday, docSnap] = await Promise.all([
-        getOperarios(),
-        getActiveCheckIn(userProfile.uid),
-        getActiveWorkday(userProfile.uid),
-        getDoc(doc(db, 'scheduledServices', serviceId))
-      ]);
-
-      const map = {};
-      ops.forEach(op => map[op.uid] = op.name);
-      setOperariosMap(map);
-
-      if (checkIn) {
-        if (checkIn.scheduledServiceId === serviceId) {
-          setActiveCheckIn(checkIn);
-          setOtherActiveCheckIn(null);
-        } else {
-          setActiveCheckIn(null);
-          setOtherActiveCheckIn(checkIn);
-        }
-      } else {
-        setActiveCheckIn(null);
-        setOtherActiveCheckIn(null);
-      }
-
-      setActiveWorkday(workday);
-
-      if (docSnap.exists()) {
-        const svcData = { id: docSnap.id, ...docSnap.data() };
-        await calculateEstimates(userProfile.uid, svcData, workday);
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function handleTransferConfirm(toUserId) {
     if (!toUserId) return;
@@ -445,19 +314,6 @@ export default function ServiceDetailPage() {
     }
   }
 
-
-
-  async function handleRemoveCompanion(companionId) {
-    if (!window.confirm('¿Seguro que este compañero ya no está en el servicio?')) return;
-    setActionLoading(true);
-    try {
-      await removeCompanionFromService(serviceId, companionId);
-    } catch (err) {
-      alert('Error quitando acompañante: ' + err.message);
-    } finally {
-      setActionLoading(false);
-    }
-  }
 
   async function handleCheckIn(manualTime = null) {
     setActionLoading(true);
@@ -787,11 +643,6 @@ export default function ServiceDetailPage() {
     } finally {
       setActionLoading(false);
     }
-  }
-
-  async function toggleTaskStatus(exec) {
-    const newStatus = exec.status === 'completed' ? 'pending' : 'completed';
-    await updateTaskExecution(exec.id, { status: newStatus });
   }
 
   async function handleGeneralPhotoUpload(e) {
