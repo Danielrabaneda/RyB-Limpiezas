@@ -22,3 +22,27 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Evitar scripts temporales de depuración sueltos en la raíz
+/find_*.js
+/find_*.cjs
+/find_*.py
+/fix_*.js
+/fix_*.cjs
+/fix_*.py
+/inspect_*.js
+/inspect_*.cjs
+/inspect_*.py
+/parse_*.js
+/parse_*.cjs
+/parse_*.py
+/debug_*.js
+/debug_*.cjs
+/debug_*.py
+/test_*.js
+/test_*.cjs
+/test_*.py
+/check_*.js
+/check_*.cjs
+/check_*.py
+
