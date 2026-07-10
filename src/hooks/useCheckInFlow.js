@@ -16,7 +16,9 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
   getCurrentPosition,
   getFilteredPosition,
   clientSignature,
-  setClientSignature
+  setClientSignature,
+  actionLoading: externalActionLoading,
+  setActionLoading: externalSetActionLoading
 }) {
   const {
     service,
@@ -30,7 +32,9 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
     loadStaticData
   } = serviceData;
 
-  const [actionLoading, setActionLoading] = useState(false);
+  const [localActionLoading, setLocalActionLoading] = useState(false);
+  const actionLoading = externalActionLoading !== undefined ? externalActionLoading : localActionLoading;
+  const setActionLoading = externalSetActionLoading !== undefined ? externalSetActionLoading : setLocalActionLoading;
   const [distanceInfo, setDistanceInfo] = useState(null);
   const [sendingGPS, setSendingGPS] = useState(false);
   const [gpsSent, setGpsSent] = useState(false);

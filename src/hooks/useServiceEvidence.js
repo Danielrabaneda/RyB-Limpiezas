@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { uploadPhoto } from '../services/storageService';
 import { updateScheduledServiceNotesAndPhotos } from '../services/scheduleService';
 
-export function useServiceEvidence(serviceId, userProfile, service) {
+export function useServiceEvidence(serviceId, userProfile, service, options = {}) {
   const [showSignatureModal, setShowSignatureModal] = useState(false);
   const [clientSignature, setClientSignature] = useState(null);
   
@@ -62,6 +62,7 @@ export function useServiceEvidence(serviceId, userProfile, service) {
   async function handleSaveSignature(base64Image, signerName) {
     setShowSignatureModal(false);
     setUploadingSignature(true);
+    if (options.setActionLoading) options.setActionLoading(true);
     try {
       const byteString = atob(base64Image.split(',')[1]);
       const ab = new ArrayBuffer(byteString.length);
@@ -84,6 +85,7 @@ export function useServiceEvidence(serviceId, userProfile, service) {
       alert('Error al guardar firma: ' + err.message);
     } finally {
       setUploadingSignature(false);
+      if (options.setActionLoading) options.setActionLoading(false);
     }
   }
 

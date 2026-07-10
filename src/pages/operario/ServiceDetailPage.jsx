@@ -42,9 +42,12 @@ export default function ServiceDetailPage() {
 
   const [transferModalOpen, setTransferModalOpen] = useState(false);
   const [rescheduleModalOpen, setRescheduleModalOpen] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
 
-  // Integrar hook de evidencias y firma
-  const serviceEvidence = useServiceEvidence(serviceId, userProfile, service);
+  // Integrar hook de evidencias y firma (pasando setActionLoading para bloquear UI al firmar)
+  const serviceEvidence = useServiceEvidence(serviceId, userProfile, service, {
+    setActionLoading
+  });
   const {
     showSignatureModal,
     setShowSignatureModal,
@@ -63,17 +66,18 @@ export default function ServiceDetailPage() {
     handleSaveSignature
   } = serviceEvidence;
 
-  // Integrar hook de flujo de check-in (pasando clientSignature y setClientSignature desde serviceEvidence)
+  // Integrar hook de flujo de check-in (pasando clientSignature, setClientSignature y actionLoading compartido)
   const checkInFlow = useCheckInFlow(serviceId, userProfile, serviceData, {
     navigate,
     getCurrentPosition,
     getFilteredPosition,
     clientSignature,
-    setClientSignature
+    setClientSignature,
+    actionLoading,
+    setActionLoading
   });
 
   const {
-    actionLoading,
     distanceInfo,
     sendingGPS,
     gpsSent,
