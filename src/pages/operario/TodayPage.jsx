@@ -10,6 +10,7 @@ import { useTodayData } from '../../hooks/useTodayData';
 import { useNavigate } from 'react-router-dom';
 import { format, addDays } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { getDistance } from '../../utils/geolocation';
 
 const getOrigDateStr = (originalDate) => {
   if (!originalDate) return '';

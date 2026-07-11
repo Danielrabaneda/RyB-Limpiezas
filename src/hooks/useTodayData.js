@@ -384,7 +384,6 @@ export function useTodayData(userProfile) {
     activeWorkdaysList,
     userLocation,
     loadToday,
-    handleRefresh,
-    getDistance
+    handleRefresh
   };
 }
