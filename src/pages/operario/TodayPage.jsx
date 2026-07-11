@@ -1,43 +1,15 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNotifications } from '../../contexts/NotificationContext';
-import { getScheduledServicesForDate } from '../../services/scheduleService';
-import { getCommunity } from '../../services/communityService';
-import { optimizeRoute } from '../../services/routeOptimizerService';
-import { getCommunityTasks } from '../../services/taskService';
-import { getActiveCheckIn, createCheckIn } from '../../services/checkInService';
-import { getActiveWorkday, getWorkdaysSummaryForDate, findLastActivityForUser, closeStaleWorkday } from '../../services/workdayService';
 import { transferService, transferDay, transferWeek, rescheduleService } from '../../services/transferService';
 import TransferModal from '../../components/TransferModal';
 import RescheduleModal from '../../components/RescheduleModal';
 import { useCarAndCompanion } from '../../hooks/useCarAndCompanion';
 import { useWorkdayLifecycle } from '../../hooks/useWorkdayLifecycle';
+import { useTodayData } from '../../hooks/useTodayData';
 import { useNavigate } from 'react-router-dom';
-import { format, addDays, isSameDay } from 'date-fns';
+import { format, addDays } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { collection, query, where, onSnapshot, deleteDoc, getDocs } from 'firebase/firestore';
-import { db } from '../../config/firebase';
-
-import { getDistance } from '../../utils/geolocation';
-
-const getCurrentLocation = () => {
-  return new Promise((resolve) => {
-    if (!("geolocation" in navigator)) {
-      resolve(null);
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-      },
-      (err) => {
-        console.warn("[GPS] Error obteniendo ubicación para recorrido:", err);
-        resolve(null);
-      },
-      { enableHighAccuracy: true, timeout: 5000, maximumAge: 60000 }
-    );
-  });
-};
 
 const getOrigDateStr = (originalDate) => {
   if (!originalDate) return '';
@@ -48,399 +20,41 @@ const getOrigDateStr = (originalDate) => {
     return '';
   }
 };
-
 export default function TodayPage() {
   const { userProfile } = useAuth();
   const { notifications, unreadCount, dismissAll, triggerWorkdayStartPopups, triggerWorkdayEndPopups } = useNotifications();
   const navigate = useNavigate();
-  const [enrichedServices, setEnrichedServices] = useState([]);
-  const [routeOptimized, setRouteOptimized] = useState(false);
-  const [activeCheckIn, setActiveCheckIn] = useState(null);
-  const [activeWorkday, setActiveWorkday] = useState(null);
-  const [firstStartTime, setFirstStartTime] = useState(null);
-  const [allWorkdaysToday, setAllWorkdaysToday] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [transferModal, setTransferModal] = useState({ open: false, type: 'single', service: null });
   const [rescheduleModal, setRescheduleModal] = useState({ open: false, serviceId: null, currentDate: null });
-  const [staleWorkday, setStaleWorkday] = useState(null); // { workday, suggestedEndTime }
 
-  const [activeWorkdaysList, setActiveWorkdaysList] = useState([]);
-
-  const [userLocation, setUserLocation] = useState(null);
-  // Guard to prevent concurrent loadToday() calls from multiple snapshot triggers
-  const isLoadingTodayRef = useRef(false);
-
-  // Efecto para actualizar la ubicación del operario periódicamente
-  useEffect(() => {
-    let active = true;
-    let intervalId = null;
-
-    const updateLocation = async () => {
-      try {
-        const pos = await getCurrentLocation();
-        if (active && pos) {
-          setUserLocation(pos);
-        }
-      } catch (e) {
-        // Ignorar
-      }
-    };
-
-    updateLocation();
-    intervalId = setInterval(updateLocation, 15_000); // 15 segundos
-
-    return () => {
-      active = false;
-      if (intervalId) clearInterval(intervalId);
-    };
-  }, []);
+  // Hook de carga y sincronización de datos de hoy (Paso 4)
+  const todayData = useTodayData(userProfile);
+  const {
+    enrichedServices,
+    routeOptimized,
+    activeCheckIn,
+    setActiveCheckIn,
+    activeWorkday,
+    setActiveWorkday,
+    firstStartTime,
+    allWorkdaysToday,
+    loading,
+    setLoading,
+    refreshing,
+    staleWorkday,
+    setStaleWorkday,
+    activeWorkdaysList,
+    userLocation,
+    loadToday,
+    handleRefresh
+  } = todayData;
 
   useEffect(() => {
     if (activeWorkday) {
       triggerWorkdayStartPopups();
     }
   }, [activeWorkday, triggerWorkdayStartPopups]);
-
-  useEffect(() => {
-    if (!userProfile?.uid) return;
-    
-    setLoading(true);
-    let unsubWorkdays = () => {};
-    let unsubMyServices = () => {};
-    let titularUnsubs = [];
-
-    // 1. Listen to active workdays where I am titular OR companion
-    const qWorkdays = query(
-      collection(db, 'workdays'),
-      where('status', '==', 'active')
-    );
-
-    unsubWorkdays = onSnapshot(qWorkdays, (snap) => {
-      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      const myWorkday = docs.find(d => d.userId === userProfile.uid);
-      const asCompanionWorkdays = docs.filter(d => d.currentCompanionId === userProfile.uid);
-      
-      setActiveWorkdaysList(docs);
-      setActiveWorkday(myWorkday || null);
-
-      // Cleanup previous titular listeners
-      titularUnsubs.forEach(u => u());
-      titularUnsubs = [];
-
-      // Single call to loadToday when workdays change
-      loadToday();
-    }, (err) => {
-      console.error("Error in workdays snapshot:", err);
-    });
-
-    // 2. Listen to my services (to get status updates) - no date filter to avoid index issues
-    const qMySvcs = query(
-      collection(db, 'scheduledServices'),
-      where('assignedUserId', '==', userProfile.uid)
-    );
-    unsubMyServices = onSnapshot(qMySvcs, () => loadToday(), (err) => {
-      console.error("Error in myServices snapshot:", err);
-    });
-
-    return () => {
-      unsubWorkdays();
-      unsubMyServices();
-      titularUnsubs.forEach(u => u());
-    };
-  }, [userProfile]);
-
-  const handleRefresh = async () => {
-    setRefreshing(true);
-    try {
-      // Force reload by ignoring/clearing the ref guard
-      isLoadingTodayRef.current = false;
-      await loadToday();
-    } catch (err) {
-      console.error('Error refreshing today page:', err);
-    } finally {
-      setRefreshing(false);
-    }
-  };
-
-  const loadToday = async () => {
-    if (!userProfile?.uid) return;
-    if (isLoadingTodayRef.current) return;
-    isLoadingTodayRef.current = true;
-    
-    try {
-      const now = new Date();
-      console.log(`[TodayPage] Loading data for ${userProfile.uid} at ${now.toISOString()}`);
-
-      const [svcs, checkIn, summary] = await Promise.all([
-        getScheduledServicesForDate(userProfile.uid, now),
-        getActiveCheckIn(userProfile.uid),
-        getWorkdaysSummaryForDate(userProfile.uid, now)
-      ]);
-
-      console.log(`[TodayPage] Fetched ${svcs.length} services and summary (active: ${summary.hasActive})`);
-
-      if (checkIn) {
-        try {
-          const comm = await getCommunity(checkIn.communityId);
-          checkIn.communityName = comm?.name || 'Comunidad';
-        } catch (e) {
-          checkIn.communityName = 'Comunidad';
-        }
-      }
-
-      setActiveCheckIn(checkIn);
-      
-      // Auto-cerrar fichaje pendiente de días anteriores si existe (Stale Check-in)
-      if (checkIn) {
-        const checkInDate = checkIn.checkInTime?.toDate ? checkIn.checkInTime.toDate() : new Date(checkIn.checkInTime);
-        if (!isSameDay(checkInDate, now)) {
-          console.log(`[TodayPage] Fichaje pendiente obsoleto detectado del día ${format(checkInDate, 'dd/MM/yyyy')}. Auto-cerrando a las 23:59...`);
-          const endOfCheckInDay = new Date(checkInDate);
-          endOfCheckInDay.setHours(23, 59, 59, 999);
-          try {
-            await completeCheckOut(checkIn.id, 0, 0, endOfCheckInDay);
-            setActiveCheckIn(null);
-            console.log('[TodayPage] Fichaje pendiente obsoleto cerrado correctamente.');
-          } catch (err) {
-            console.error('[TodayPage] Error auto-cerrando fichaje obsoleto:', err);
-          }
-        }
-      }
-      
-      // Check for stale workday (orphaned from previous day)
-      if (summary.activeWorkday) {
-        const wdDate = summary.activeWorkday.date?.toDate ? summary.activeWorkday.date.toDate() : new Date(summary.activeWorkday.date);
-        if (!isSameDay(wdDate, now)) {
-          // It's from another day! Find last activity
-          const lastActivity = await findLastActivityForUser(userProfile.uid, wdDate, summary.activeWorkday.id);
-          setStaleWorkday({
-            workday: summary.activeWorkday,
-            suggestedEndTime: lastActivity || (summary.activeWorkday.startTime?.toDate ? summary.activeWorkday.startTime.toDate() : new Date())
-          });
-          setActiveWorkday(null); // Don't show as "Active" today
-        } else {
-          setActiveWorkday(summary.activeWorkday);
-          setStaleWorkday(null);
-        }
-      } else {
-        setActiveWorkday(null);
-        setStaleWorkday(null);
-      }
-
-      setFirstStartTime(summary.firstStartTime);
-      // We store the aggregated minutes in a virtual allWorkdaysToday-like array for backwards compatibility with UI logic
-      setAllWorkdaysToday([{ totalMinutes: summary.totalMinutes }]); 
-
-      const enriched = [];
-      const communityCache = {};
-      const taskCache = {};
-
-      // Prefetch all unique communities and community tasks in parallel
-      const uniqueCommunityIds = [...new Set(svcs.map(s => s.communityId))].filter(Boolean);
-      await Promise.all(uniqueCommunityIds.map(async (commId) => {
-        try {
-          const [comm, tasks] = await Promise.all([
-            getCommunity(commId),
-            getCommunityTasks(commId)
-          ]);
-          communityCache[commId] = comm;
-          taskCache[commId] = tasks;
-        } catch (err) {
-          console.warn(`Error prefetching community/tasks for ${commId}:`, err);
-        }
-      }));
-
-      for (const svc of svcs) {
-        try {
-
-          const communityTasks = taskCache[svc.communityId] || [];
-          const specificTask = communityTasks.find(t => t.id === svc.communityTaskId);
-
-          const lowerName = (svc.taskName || '').toLowerCase();
-          const isGarage = !!specificTask?.isGarage || lowerName.includes('garaje') || !!svc.isGarage;
-          const printColor = specificTask?.printColor || (
-            lowerName.includes('escalera') ? '#22c55e' :
-            lowerName.includes('portal') || lowerName.includes('repaso') ? '#eab308' :
-            lowerName.includes('oficina') ? '#3b82f6' : '#ef4444'
-          );
-
-          let tasks = [];
-          if (svc.taskName) {
-            tasks = [{ 
-              id: svc.communityTaskId || svc.id, 
-              taskName: svc.taskName,
-              isUrgent: svc.isUrgent || specificTask?.isUrgent || false,
-              status: svc.status
-            }];
-          } else if (specificTask) {
-            tasks = [{
-              ...specificTask,
-              isUrgent: specificTask.isUrgent || svc.isUrgent || false,
-              status: svc.status
-            }];
-          }
-
-          enriched.push({
-            ...svc,
-            community: communityCache[svc.communityId] || { name: 'Comunidad desconocida' },
-            tasks,
-            isGarage,
-            printColor
-          });
-        } catch (enrichErr) {
-          console.warn(`Error enriching service ${svc.id}:`, enrichErr);
-          enriched.push({ ...svc, community: { name: 'Comunidad...' }, tasks: [] });
-        }
-      }
-
-      // Route optimization based on current location or started services
-      let optimized = [...enriched];
-      let isRouteOptimized = false;
-
-      let startLat = null;
-      let startLng = null;
-
-      // 1. Check active check-in community location
-      if (checkIn && checkIn.communityId) {
-        const comm = communityCache[checkIn.communityId];
-        if (comm && comm.location) {
-          startLat = comm.location._lat || comm.location.latitude || null;
-          startLng = comm.location._long || comm.location.longitude || null;
-        }
-      }
-
-      // 2. Check in_progress or started service community location
-      if (!startLat || !startLng) {
-        const activeSvc = enriched.find(s => s.status === 'in_progress' || s.status === 'started');
-        if (activeSvc && activeSvc.community?.location) {
-          const loc = activeSvc.community.location;
-          startLat = loc._lat || loc.latitude || null;
-          startLng = loc._long || loc.longitude || null;
-        }
-      }
-
-      // 3. Check latest completed service today
-      if (!startLat || !startLng) {
-        const completedSvcs = enriched.filter(s => s.status === 'completed');
-        if (completedSvcs.length > 0) {
-          completedSvcs.sort((a, b) => {
-            const tA = a.updatedAt?.toDate ? a.updatedAt.toDate().getTime() : (a.updatedAt ? new Date(a.updatedAt).getTime() : 0);
-            const tB = b.updatedAt?.toDate ? b.updatedAt.toDate().getTime() : (b.updatedAt ? new Date(b.updatedAt).getTime() : 0);
-            return tA - tB;
-          });
-          const lastCompleted = completedSvcs[completedSvcs.length - 1];
-          if (lastCompleted.community?.location) {
-            const loc = lastCompleted.community.location;
-            startLat = loc._lat || loc.latitude || null;
-            startLng = loc._long || loc.longitude || null;
-          }
-        }
-      }
-
-      // 4. Fallback to current GPS location of the user (to optimize the route before starting)
-      if (!startLat || !startLng) {
-        try {
-          const currentPos = await getCurrentLocation();
-          if (currentPos) {
-            startLat = currentPos.lat;
-            startLng = currentPos.lng;
-          }
-        } catch (gpsErr) {
-          console.warn('[GPS] Error getting current position for route:', gpsErr);
-        }
-      }
-
-      // 5. Fallback to first community with a location if we still don't have a starting point
-      if (!startLat || !startLng) {
-        const firstWithLocation = enriched.find(s => s.community?.location);
-        if (firstWithLocation) {
-          const loc = firstWithLocation.community.location;
-          startLat = loc._lat || loc.latitude || null;
-          startLng = loc._long || loc.longitude || null;
-        }
-      }
-
-      if (startLat && startLng) {
-        try {
-          optimized = optimizeRoute(enriched, startLat, startLng);
-          isRouteOptimized = true;
-        } catch (optimizeErr) {
-          console.error('Error optimizing route:', optimizeErr);
-        }
-      }
-
-      // Group optimized services selectively
-      const grouped = [];
-      const seenGroupKeys = new Set();
-      
-      for (const svc of optimized) {
-        if (!svc.communityId) {
-          grouped.push(svc);
-          continue;
-        }
-        
-        const isOtras = svc.printColor === '#ef4444' && !svc.isGarage;
-        const groupKey = isOtras ? `${svc.communityId}_otras` : `${svc.communityId}_${svc.id}`;
-        
-        if (seenGroupKeys.has(groupKey)) {
-          const existingGroup = grouped.find(g => g.groupKey === groupKey);
-          if (existingGroup) {
-            existingGroup.groupedServices.push(svc);
-            if (svc.tasks && svc.tasks.length > 0) {
-              existingGroup.tasks.push(...svc.tasks);
-            }
-            if (svc.flexibleWeek) existingGroup.flexibleWeek = true;
-            if (svc.isCompanion) existingGroup.isCompanion = true;
-            if (svc.isTransferred) existingGroup.isTransferred = true;
-            if (svc.isRescheduled) existingGroup.isRescheduled = true;
-            if (svc.isGarage) existingGroup.isGarage = true;
-            
-            // Consolidate status
-            const allSvcs = existingGroup.groupedServices;
-            if (allSvcs.every(s => s.status === 'completed')) {
-              existingGroup.status = 'completed';
-            } else if (allSvcs.every(s => s.status === 'missed')) {
-              existingGroup.status = 'missed';
-            } else if (allSvcs.every(s => s.status === 'completed' || s.status === 'missed')) {
-              existingGroup.status = 'completed';
-            } else if (allSvcs.some(s => s.status === 'in_progress' || s.status === 'started' || s.status === 'completed' || s.status === 'missed')) {
-              existingGroup.status = 'in_progress';
-            } else {
-              existingGroup.status = 'pending';
-            }
-          }
-        } else {
-          seenGroupKeys.add(groupKey);
-          grouped.push({
-            ...svc,
-            groupKey,
-            groupedServices: [svc]
-          });
-        }
-      }
-
-      setRouteOptimized(isRouteOptimized);
-      setEnrichedServices(grouped);
-    } catch (err) {
-      console.error('Error loading today:', err);
-    } finally {
-      isLoadingTodayRef.current = false;
-      setLoading(false);
-    }
-  };
-
-  // Temporizador de seguridad para evitar que la pantalla de carga se quede bloqueada
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (loading) {
-        console.warn('Safety timeout triggered for TodayPage loading state');
-        setLoading(false);
-      }
-    }, 10000); // 10 segundos
-    return () => clearTimeout(timer);
-  }, [loading]);
 
   // Hook de acompañantes y vehículo (Paso 2)
   const carAndCompanion = useCarAndCompanion(userProfile, {

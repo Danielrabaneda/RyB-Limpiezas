@@ -5,25 +5,7 @@ import { completeCheckOut } from '../services/checkInService';
 import { format, differenceInMinutes } from 'date-fns';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../config/firebase';
-
-const getCurrentLocation = () => {
-  return new Promise((resolve) => {
-    if (!("geolocation" in navigator)) {
-      resolve(null);
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-      },
-      (err) => {
-        console.warn("[GPS] Error obteniendo ubicación para finalización de jornada:", err);
-        resolve(null);
-      },
-      { enableHighAccuracy: true, timeout: 5000, maximumAge: 60000 }
-    );
-  });
-};
+import { getCurrentLocation } from '../utils/geolocation';
 
 export function useWorkdayLifecycle(userProfile, {
   activeWorkday,

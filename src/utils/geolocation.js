@@ -142,3 +142,25 @@ export async function sendNotification(title, options) {
   }
 }
 
+/**
+ * Obtiene la ubicación GPS actual del dispositivo en una Promesa
+ */
+export function getCurrentLocation() {
+  return new Promise((resolve) => {
+    if (!("geolocation" in navigator)) {
+      resolve(null);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+      },
+      (err) => {
+        console.warn("[GPS] Error obteniendo ubicación:", err);
+        resolve(null);
+      },
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 60000 }
+    );
+  });
+}
+
