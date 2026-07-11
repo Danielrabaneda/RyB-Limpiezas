@@ -8,6 +8,13 @@ import { calculateDailyMileage } from './mileageService';
 
 const COLLECTION_NAME = 'workdays';
 
+export function safeParseDate(value) {
+  if (!value) return new Date();
+  if (typeof value.toDate === 'function') return value.toDate();
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? new Date() : d;
+}
+
 export async function startWorkday(userId, userName = 'Operario') {
   // Verificación de seguridad: No permitir iniciar si ya hay una activa
   const existing = await getActiveWorkday(userId);
@@ -44,7 +51,7 @@ export async function endWorkday(workdayId, breadcrumbs = [], customEndTime = nu
   if (workdaySnap.exists()) {
     workdayData = workdaySnap.data();
     if (workdayData.startTime) {
-      const startTimeDate = workdayData.startTime.toDate ? workdayData.startTime.toDate() : new Date(workdayData.startTime);
+      const startTimeDate = safeParseDate(workdayData.startTime);
       duration = differenceInMinutes(endTime, startTimeDate);
       if (duration < 0) duration = 0;
     }
@@ -55,7 +62,7 @@ export async function endWorkday(workdayId, breadcrumbs = [], customEndTime = nu
   if (workdayData?.carActive) {
     updatedCarSessions = updatedCarSessions.map(session => {
       if (!session.endTime) {
-        const startTimeDate = session.startTime?.toDate ? session.startTime.toDate() : new Date(session.startTime);
+        const startTimeDate = safeParseDate(session.startTime);
         
         const sessionBreadcrumbs = breadcrumbs.filter(b => {
           const bTime = typeof b.timestamp === 'number' ? b.timestamp : new Date(b.timestamp).getTime();
@@ -206,14 +213,14 @@ export async function getWorkdaysSummaryForDate(userId, date = new Date()) {
   
   // Sort by startTime to find the absolute first start of the day
   const sortedWorkdays = [...todayWorkdays].sort((a, b) => {
-    const aTime = a.startTime?.toDate ? a.startTime.toDate() : new Date(a.startTime);
-    const bTime = b.startTime?.toDate ? b.startTime.toDate() : new Date(b.startTime);
+    const aTime = safeParseDate(a.startTime);
+    const bTime = safeParseDate(b.startTime);
     return aTime - bTime;
   });
 
   if (sortedWorkdays.length > 0) {
     const first = sortedWorkdays[0];
-    firstStartTime = first.startTime?.toDate ? first.startTime.toDate() : new Date(first.startTime);
+    firstStartTime = safeParseDate(first.startTime);
   }
 
   // BUSCAR JORNADA ACTIVA EN TODOS LOS DÍAS (por si se olvidó cerrarla ayer)
@@ -222,13 +229,13 @@ export async function getWorkdaysSummaryForDate(userId, date = new Date()) {
     hasActive = true;
     activeWorkday = globalActiveWd;
     if (!firstStartTime) {
-      firstStartTime = globalActiveWd.startTime?.toDate ? globalActiveWd.startTime.toDate() : new Date(globalActiveWd.startTime);
+      firstStartTime = safeParseDate(globalActiveWd.startTime);
     }
   }
 
   for (const wd of todayWorkdays) {
     if (wd.status === 'active') {
-      const startTime = wd.startTime?.toDate ? wd.startTime.toDate() : new Date(wd.startTime);
+      const startTime = safeParseDate(wd.startTime);
       totalMinutes += Math.max(0, differenceInMinutes(now, startTime));
     } else {
       totalMinutes += (Number(wd.totalMinutes) || 0);
@@ -237,7 +244,7 @@ export async function getWorkdaysSummaryForDate(userId, date = new Date()) {
 
   // Si la jornada activa es de días anteriores, calcular sus minutos también para mostrar en UI
   if (globalActiveWd && !todayWorkdays.find(w => w.id === globalActiveWd.id)) {
-    const startTime = globalActiveWd.startTime?.toDate ? globalActiveWd.startTime.toDate() : new Date(globalActiveWd.startTime);
+    const startTime = safeParseDate(globalActiveWd.startTime);
     totalMinutes += Math.max(0, differenceInMinutes(now, startTime));
   }
   
@@ -480,7 +487,7 @@ export async function closeStaleWorkday(workdayId, suggestedEndTime) {
   const workdayData = workdaySnap.data();
   
   const endTime = suggestedEndTime || new Date();
-  const startTime = workdayData.startTime?.toDate ? workdayData.startTime.toDate() : new Date(workdayData.startTime);
+  const startTime = safeParseDate(workdayData.startTime);
   
   // Calculate duration correctly
   let duration = differenceInMinutes(endTime, startTime);
