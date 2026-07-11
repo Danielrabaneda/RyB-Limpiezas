@@ -15,15 +15,7 @@ import { format, addDays } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { getDistance } from '../../utils/geolocation';
 
-const getOrigDateStr = (originalDate) => {
-  if (!originalDate) return '';
-  try {
-    const dateObj = originalDate.toDate ? originalDate.toDate() : new Date(originalDate);
-    return format(dateObj, 'dd/MM');
-  } catch (e) {
-    return '';
-  }
-};
+
 export default function TodayPage() {
   const { userProfile } = useAuth();
   const { notifications, unreadCount, dismissAll, triggerWorkdayStartPopups, triggerWorkdayEndPopups } = useNotifications();
@@ -170,14 +162,7 @@ export default function TodayPage() {
 
 
 
-  function getStatusBadge(status) {
-    switch (status) {
-      case 'completed': return <span className="badge badge-success">✅ Completado</span>;
-      case 'in_progress': return <span className="badge badge-info">🔄 En curso</span>;
-      case 'missed': return <span className="badge badge-danger">❌ No realizado</span>;
-      default: return <span className="badge badge-warning">⏳ Pendiente</span>;
-    }
-  }
+
 
   if (loading) {
     return (
