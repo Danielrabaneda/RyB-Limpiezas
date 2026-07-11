@@ -6,14 +6,11 @@ import { getCommunity } from '../../services/communityService';
 import { optimizeRoute } from '../../services/routeOptimizerService';
 import { getCommunityTasks } from '../../services/taskService';
 import { getActiveCheckIn, createCheckIn, completeCheckOut } from '../../services/checkInService';
-import { getActiveWorkday, startWorkday, endWorkday, activateCar, deactivateCar, getWorkdaysSummaryForDate, findLastActivityForUser, closeStaleWorkday } from '../../services/workdayService';
-import { saveManualMileage } from '../../services/mileageService';
+import { getActiveWorkday, startWorkday, endWorkday, getWorkdaysSummaryForDate, findLastActivityForUser, closeStaleWorkday } from '../../services/workdayService';
 import { transferService, transferDay, transferWeek, rescheduleService } from '../../services/transferService';
 import TransferModal from '../../components/TransferModal';
 import RescheduleModal from '../../components/RescheduleModal';
-import { getOperarios } from '../../services/authService';
-import { updateWorkdayCompanion } from '../../services/workdayService';
-import { addCompanionToService, removeCompanionFromService } from '../../services/scheduleService';
+import { useCarAndCompanion } from '../../hooks/useCarAndCompanion';
 import { useNavigate } from 'react-router-dom';
 import { format, addDays, isSameDay, differenceInMinutes } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -66,10 +63,6 @@ export default function TodayPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [transferModal, setTransferModal] = useState({ open: false, type: 'single', service: null });
   const [rescheduleModal, setRescheduleModal] = useState({ open: false, serviceId: null, currentDate: null });
-  const [allOperarios, setAllOperarios] = useState([]);
-  const [companionSelectorOpen, setCompanionSelectorOpen] = useState(false);
-  const [mileageModalOpen, setMileageModalOpen] = useState(false);
-  const [manualKm, setManualKm] = useState('');
   const [staleWorkday, setStaleWorkday] = useState(null); // { workday, suggestedEndTime }
   const [retroactiveModal, setRetroactiveModal] = useState({
     open: false,
@@ -112,113 +105,10 @@ export default function TodayPage() {
   }, []);
 
   useEffect(() => {
-    if (userProfile?.uid) {
-      loadOperarios();
-    }
-  }, [userProfile]);
-
-  const loadOperarios = async () => {
-    try {
-      const ops = await getOperarios();
-      setAllOperarios(ops.filter(o => o.uid !== userProfile.uid && o.active));
-    } catch (err) {
-      console.error("Error loading operarios", err);
-    }
-  };
-
-  useEffect(() => {
     if (activeWorkday) {
       triggerWorkdayStartPopups();
     }
   }, [activeWorkday, triggerWorkdayStartPopups]);
-
-
-
-  useEffect(() => {
-    let watchId = null;
-    let wakeLock = null;
-
-    const requestWakeLock = async () => {
-      try {
-        if ('wakeLock' in navigator) {
-          wakeLock = await navigator.wakeLock.request('screen');
-        }
-      } catch (err) {
-        console.warn('[WakeLock] No se pudo activar el bloqueo de pantalla:', err);
-      }
-    };
-
-    const releaseWakeLock = async () => {
-      try {
-        if (wakeLock) {
-          await wakeLock.release();
-          wakeLock = null;
-        }
-      } catch (err) {
-        console.error('[WakeLock] Error al liberar bloqueo:', err);
-      }
-    };
-
-    const handleVisibilityChange = async () => {
-      if (document.visibilityState === 'visible' && activeWorkday?.carActive) {
-        await requestWakeLock();
-      }
-    };
-
-    if (activeWorkday && activeWorkday.carActive) {
-      requestWakeLock();
-      document.addEventListener('visibilitychange', handleVisibilityChange);
-
-      const processPosition = (pos) => {
-        const currentBreadcrumb = {
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          timestamp: Date.now()
-        };
-
-        try {
-          const existing = JSON.parse(localStorage.getItem('ryb_car_breadcrumbs') || '[]');
-          
-          if (existing.length > 0) {
-            const last = existing[existing.length - 1];
-            const dist = getDistance(last.lat, last.lng, currentBreadcrumb.lat, currentBreadcrumb.lng);
-            const timeDiff = currentBreadcrumb.timestamp - last.timestamp;
-
-            // Guardar si se ha movido > 50m o pasaron > 2 minutos (120s)
-            if (dist >= 50 || timeDiff >= 120000) {
-              existing.push(currentBreadcrumb);
-              localStorage.setItem('ryb_car_breadcrumbs', JSON.stringify(existing));
-            }
-          } else {
-            existing.push(currentBreadcrumb);
-            localStorage.setItem('ryb_car_breadcrumbs', JSON.stringify(existing));
-          }
-        } catch (e) {
-          console.error('[GPS] Error guardando breadcrumb en watchPosition:', e);
-        }
-      };
-
-      if ("geolocation" in navigator) {
-        watchId = navigator.geolocation.watchPosition(
-          processPosition,
-          (error) => console.warn('[GPS] watchPosition error:', error),
-          {
-            enableHighAccuracy: true, 
-            timeout: 20000, 
-            maximumAge: 30000 
-          }
-        );
-      }
-    }
-
-    return () => {
-      releaseWakeLock();
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      if (watchId !== null && "geolocation" in navigator) {
-        navigator.geolocation.clearWatch(watchId);
-      }
-    };
-  }, [activeWorkday?.carActive]);
 
   useEffect(() => {
     if (!userProfile?.uid) return;
@@ -559,6 +449,31 @@ export default function TodayPage() {
     return () => clearTimeout(timer);
   }, [loading]);
 
+  // Hook de acompañantes y vehículo (Paso 2)
+  const carAndCompanion = useCarAndCompanion(userProfile, {
+    activeWorkday,
+    activeCheckIn,
+    activeWorkdaysList,
+    loadToday,
+    actionLoading,
+    setActionLoading
+  });
+  const {
+    allOperarios,
+    companionSelectorOpen,
+    setCompanionSelectorOpen,
+    mileageModalOpen,
+    setMileageModalOpen,
+    manualKm,
+    setManualKm,
+    handleSetCompanion,
+    handleToggleCar,
+    handleManualMileage,
+    handleResolveCarConflict,
+    companionInfo,
+    hasCarConflict
+  } = carAndCompanion;
+
   const handleStartWorkday = async () => {
     if (!userProfile?.uid) return;
     setActionLoading(true);
@@ -783,101 +698,6 @@ export default function TodayPage() {
     }
   };
 
-  const handleSetCompanion = async (companionId) => {
-    if (!activeWorkday) return;
-    const oldCompanionId = activeWorkday.currentCompanionId;
-    setActionLoading(true);
-    try {
-      await updateWorkdayCompanion(activeWorkday.id, companionId);
-      
-      // If there's an active check-in, also update the companion in that service immediately
-      if (activeCheckIn?.scheduledServiceId) {
-        // Remove old companion if exists
-        if (oldCompanionId && oldCompanionId !== companionId) {
-          try {
-            await removeCompanionFromService(activeCheckIn.scheduledServiceId, oldCompanionId);
-            
-            // Eliminar el check-in abierto del compañero anterior
-            const qComp = query(
-              collection(db, 'checkIns'),
-              where('scheduledServiceId', '==', activeCheckIn.scheduledServiceId),
-              where('userId', '==', oldCompanionId),
-              where('checkOutTime', '==', null)
-            );
-            const compSnap = await getDocs(qComp);
-            for (const docSnap of compSnap.docs) {
-              await deleteDoc(docSnap.ref);
-            }
-          } catch (e) { console.warn("Could not remove old companion check-in", e); }
-        }
-        // Add new companion if exists
-        if (companionId && companionId !== oldCompanionId) {
-          await addCompanionToService(activeCheckIn.scheduledServiceId, companionId);
-          
-          // Crear el check-in automático del nuevo compañero con la misma hora de entrada del titular
-          try {
-            await createCheckIn({
-              userId: companionId,
-              communityId: activeCheckIn.communityId,
-              scheduledServiceId: activeCheckIn.scheduledServiceId,
-              lat: activeCheckIn.checkInLocation?.latitude || 0,
-              lng: activeCheckIn.checkInLocation?.longitude || 0,
-              manualTime: activeCheckIn.checkInTime?.toDate ? activeCheckIn.checkInTime.toDate() : new Date(activeCheckIn.checkInTime)
-            });
-          } catch (e) {
-            console.warn("Could not create check-in for new companion", e);
-          }
-        }
-      }
-      
-      await loadToday();
-      setCompanionSelectorOpen(false);
-    } catch (err) {
-      alert("Error al asignar acompañante: " + err.message);
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleToggleCar = async () => {
-    if (!activeWorkday) return;
-    setActionLoading(true);
-    try {
-      if (activeWorkday.carActive) {
-        const breadcrumbs = JSON.parse(localStorage.getItem('ryb_car_breadcrumbs') || '[]');
-        await deactivateCar(activeWorkday.id, breadcrumbs);
-        localStorage.removeItem('ryb_car_breadcrumbs');
-      } else {
-        localStorage.setItem('ryb_car_breadcrumbs', '[]');
-        await activateCar(activeWorkday.id);
-      }
-      await loadToday();
-    } catch (err) {
-      alert('Error al cambiar modo coche: ' + err.message);
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleManualMileage = async () => {
-    if (!manualKm || isNaN(manualKm)) {
-      alert('Por favor, ingresa un número válido de kilómetros');
-      return;
-    }
-    setActionLoading(true);
-    try {
-      const name = userProfile.name || userProfile.displayName || 'Operario';
-      await saveManualMileage(userProfile.uid, name, new Date(), manualKm);
-      alert('Kilometraje guardado correctamente');
-      setMileageModalOpen(false);
-      setManualKm('');
-    } catch (err) {
-      alert('Error al guardar kilometraje: ' + err.message);
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
   const handleResolveStaleWorkday = async () => {
     if (!staleWorkday) return;
     setActionLoading(true);
@@ -901,37 +721,6 @@ export default function TodayPage() {
       default: return <span className="badge badge-warning">⏳ Pendiente</span>;
     }
   }
-
-  // Obtener información del compañero en tiempo real
-  const companionInfo = useMemo(() => {
-    if (!activeWorkday) return { uid: null, workday: null, carActive: false, name: '' };
-    
-    // El compañero puede ser el que yo seleccioné
-    let companionUid = activeWorkday.currentCompanionId;
-    
-    // O si yo no seleccioné a nadie, puede ser el titular que me seleccionó a mí
-    if (!companionUid) {
-      const titularWd = activeWorkdaysList.find(d => d.currentCompanionId === userProfile?.uid && d.userId !== userProfile?.uid);
-      if (titularWd) {
-        companionUid = titularWd.userId;
-      }
-    }
-    
-    if (!companionUid) return { uid: null, workday: null, carActive: false, name: '' };
-    
-    const compWd = activeWorkdaysList.find(d => d.userId === companionUid);
-    const opInfo = allOperarios.find(o => o.uid === companionUid);
-    const name = opInfo?.name?.split(' ')[0] || 'Compañero';
-    
-    return {
-      uid: companionUid,
-      workday: compWd || null,
-      carActive: compWd?.carActive === true,
-      name: name
-    };
-  }, [activeWorkday, activeWorkdaysList, allOperarios, userProfile?.uid]);
-
-  const hasCarConflict = activeWorkday?.carActive === true && companionInfo.carActive === true;
 
   if (loading) {
     return (
@@ -1646,18 +1435,7 @@ export default function TodayPage() {
             <div className="flex flex-col gap-3">
               <button 
                 className="btn btn-primary w-full py-4 font-bold flex justify-center items-center gap-2"
-                onClick={async () => {
-                  setActionLoading(true);
-                  try {
-                    // Desactivar el coche en la jornada del compañero
-                    await deactivateCar(companionInfo.workday.id, []);
-                  } catch (e) {
-                    console.error("Error al desactivar coche del compañero", e);
-                    alert("Error al resolver el conflicto. Por favor inténtalo de nuevo.");
-                  } finally {
-                    setActionLoading(false);
-                  }
-                }}
+                onClick={() => handleResolveCarConflict(false)}
                 disabled={actionLoading}
                 style={{ backgroundColor: '#2563eb', borderColor: '#2563eb' }}
               >
@@ -1666,20 +1444,7 @@ export default function TodayPage() {
               
               <button 
                 className="btn w-full py-3 text-sm font-semibold border border-slate-300 bg-white hover:bg-slate-50"
-                onClick={async () => {
-                  setActionLoading(true);
-                  try {
-                    // Desactivar mi coche
-                    const breadcrumbs = JSON.parse(localStorage.getItem('ryb_car_breadcrumbs') || '[]');
-                    await deactivateCar(activeWorkday.id, breadcrumbs);
-                    localStorage.removeItem('ryb_car_breadcrumbs');
-                  } catch (e) {
-                    console.error("Error al desactivar mi coche", e);
-                    alert("Error al resolver el conflicto. Por favor inténtalo de nuevo.");
-                  } finally {
-                    setActionLoading(false);
-                  }
-                }}
+                onClick={() => handleResolveCarConflict(true)}
                 disabled={actionLoading}
                 style={{ color: '#475569' }}
               >
