@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNotifications } from '../../contexts/NotificationContext';
 import { getScheduledServicesForDate } from '../../services/scheduleService';
-import { getCommunitiesForOperario, getCommunity } from '../../services/communityService';
+import { getCommunity } from '../../services/communityService';
 import { optimizeRoute } from '../../services/routeOptimizerService';
 import { getCommunityTasks } from '../../services/taskService';
 import { getActiveCheckIn, createCheckIn, completeCheckOut } from '../../services/checkInService';
@@ -15,9 +15,9 @@ import { getOperarios } from '../../services/authService';
 import { updateWorkdayCompanion } from '../../services/workdayService';
 import { addCompanionToService, removeCompanionFromService } from '../../services/scheduleService';
 import { useNavigate } from 'react-router-dom';
-import { format, addDays, startOfDay, endOfDay, isSameDay, differenceInMinutes } from 'date-fns';
+import { format, addDays, isSameDay, differenceInMinutes } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { collection, query, where, onSnapshot, Timestamp, deleteDoc, getDocs } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, deleteDoc, getDocs } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 
 import { getDistance } from '../../utils/geolocation';
@@ -55,7 +55,6 @@ export default function TodayPage() {
   const { userProfile } = useAuth();
   const { notifications, unreadCount, dismissAll, triggerWorkdayStartPopups, triggerWorkdayEndPopups } = useNotifications();
   const navigate = useNavigate();
-  const [services, setServices] = useState([]);
   const [enrichedServices, setEnrichedServices] = useState([]);
   const [routeOptimized, setRouteOptimized] = useState(false);
   const [activeCheckIn, setActiveCheckIn] = useState(null);
@@ -67,7 +66,6 @@ export default function TodayPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [transferModal, setTransferModal] = useState({ open: false, type: 'single', service: null });
   const [rescheduleModal, setRescheduleModal] = useState({ open: false, serviceId: null, currentDate: null });
-  const [permissionsMissing, setPermissionsMissing] = useState(false);
   const [allOperarios, setAllOperarios] = useState([]);
   const [companionSelectorOpen, setCompanionSelectorOpen] = useState(false);
   const [mileageModalOpen, setMileageModalOpen] = useState(false);
@@ -85,8 +83,6 @@ export default function TodayPage() {
   const [activeWorkdaysList, setActiveWorkdaysList] = useState([]);
 
   const [userLocation, setUserLocation] = useState(null);
-
-  const [debugLogs, setDebugLogs] = useState([]);
   // Guard to prevent concurrent loadToday() calls from multiple snapshot triggers
   const isLoadingTodayRef = useRef(false);
 
@@ -173,19 +169,6 @@ export default function TodayPage() {
       requestWakeLock();
       document.addEventListener('visibilitychange', handleVisibilityChange);
 
-      const getDistance = (lat1, lon1, lat2, lon2) => {
-        const R = 6371e3; 
-        const φ1 = lat1 * Math.PI / 180;
-        const φ2 = lat2 * Math.PI / 180;
-        const Δφ = (lat2 - lat1) * Math.PI / 180;
-        const Δλ = (lon2 - lon1) * Math.PI / 180;
-        const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-                Math.cos(φ1) * Math.cos(φ2) *
-                Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        return R * c;
-      };
-
       const processPosition = (pos) => {
         const currentBreadcrumb = {
           lat: pos.coords.latitude,
@@ -243,12 +226,7 @@ export default function TodayPage() {
     setLoading(true);
     let unsubWorkdays = () => {};
     let unsubMyServices = () => {};
-    let unsubCompanionServices = () => {};
     let titularUnsubs = [];
-
-    const todayStr = format(new Date(), 'yyyy-MM-dd');
-    const dayStart = Timestamp.fromDate(startOfDay(new Date()));
-    const dayEnd = Timestamp.fromDate(endOfDay(new Date()));
 
     // 1. Listen to active workdays where I am titular OR companion
     const qWorkdays = query(
@@ -286,7 +264,6 @@ export default function TodayPage() {
     return () => {
       unsubWorkdays();
       unsubMyServices();
-      unsubCompanionServices();
       titularUnsubs.forEach(u => u());
     };
   }, [userProfile]);
@@ -563,7 +540,6 @@ export default function TodayPage() {
 
       setRouteOptimized(isRouteOptimized);
       setEnrichedServices(grouped);
-      setServices(svcs);
     } catch (err) {
       console.error('Error loading today:', err);
     } finally {
@@ -967,34 +943,6 @@ export default function TodayPage() {
 
   return (
     <div className="animate-fadeIn">
-      {permissionsMissing && (
-        <div 
-          className="mb-4 p-4 rounded-xl flex flex-col gap-2 relative overflow-hidden"
-          style={{ 
-            background: 'linear-gradient(135deg, #ef4444, #b91c1c)', 
-            color: 'white', 
-            boxShadow: '0 4px 12px rgba(220, 38, 38, 0.3)'
-          }}
-        >
-          <div className="flex items-center gap-3 relative z-10">
-            <span style={{ fontSize: '1.8rem' }}>⚠️</span>
-            <div>
-              <div className="font-bold text-lg leading-tight">PERMISOS DENEGADOS</div>
-              <div className="text-sm opacity-90 mt-1">
-                La app necesita Notificaciones y Ubicación (GPS) para funcionar correctamente.
-              </div>
-            </div>
-          </div>
-          <button 
-            className="btn btn-sm mt-2 relative z-10 font-bold" 
-            style={{ background: 'white', color: '#b91c1c', border: 'none' }}
-            onClick={() => alert("Por favor, entra en los Ajustes de tu navegador o de tu teléfono, busca 'RyB Limpiezas' o la web actual, y permite el uso de Ubicación y Notificaciones.")}
-          >
-            Cómo solucionarlo
-          </button>
-        </div>
-      )}
-
       <div className="mb-4">
         <h2 style={{ fontSize: 'var(--font-xl)', fontWeight: 800 }}>
           Hoy, {format(new Date(), "d 'de' MMMM", { locale: es })}
