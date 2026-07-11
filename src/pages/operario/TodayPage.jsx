@@ -4,6 +4,9 @@ import { useNotifications } from '../../contexts/NotificationContext';
 import { transferService, transferDay, transferWeek, rescheduleService } from '../../services/transferService';
 import TransferModal from '../../components/TransferModal';
 import RescheduleModal from '../../components/RescheduleModal';
+import WorkdayHeaderCard from '../../components/operario/WorkdayHeaderCard';
+import CarAndCompanionControl from '../../components/operario/CarAndCompanionControl';
+import TodayServicesList from '../../components/operario/TodayServicesList';
 import { useCarAndCompanion } from '../../hooks/useCarAndCompanion';
 import { useWorkdayLifecycle } from '../../hooks/useWorkdayLifecycle';
 import { useTodayData } from '../../hooks/useTodayData';
@@ -237,185 +240,26 @@ export default function TodayPage() {
         
         return (
           <>
-            {!allServicesIndividual && (
-              <div 
-                className="card mb-6 animate-slideUp workday-button-wrapper" 
-                onClick={(!actionLoading) ? (activeWorkday ? handleEndWorkday : handleStartWorkday) : undefined}
-                style={{ 
-                  background: activeWorkday 
-                    ? 'linear-gradient(135deg, #2563eb, #1e40af)' 
-                    : 'linear-gradient(135deg, #ffffff, #f1f5f9)',
-                  padding: 'var(--space-6)',
-                  cursor: actionLoading ? 'wait' : 'pointer',
-                  borderRadius: 'var(--radius-2xl)',
-                  textAlign: 'center',
-                  transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                  boxShadow: activeWorkday 
-                    ? '0 10px 25px -5px rgba(37, 99, 235, 0.5), inset 0 -4px 0 rgba(0,0,0,0.2)' 
-                    : '0 8px 16px -4px rgba(0, 0, 0, 0.1), inset 0 -4px 0 rgba(0,0,0,0.05)',
-                  border: activeWorkday ? 'none' : '1px solid var(--color-border)',
-                  transform: actionLoading ? 'scale(0.98)' : 'scale(1)',
-                  userSelect: 'none'
-                }}
-              >
-                <div className="flex flex-col items-center gap-2">
-                  <div style={{ 
-                    fontSize: '3.5rem', 
-                    marginBottom: 'var(--space-1)',
-                    filter: actionLoading ? 'grayscale(1) opacity(0.5)' : 'drop-shadow(0 4px 6px rgba(0,0,0,0.1))',
-                    transition: 'transform 0.2s ease'
-                  }} className={activeWorkday && !actionLoading ? 'animate-pulse' : ''}>
-                    {actionLoading ? '⏳' : (activeWorkday ? '✅' : '🏢')}
-                  </div>
-                  
-                  <div style={{ 
-                    fontSize: 'var(--font-xl)', 
-                    fontWeight: 900, 
-                    letterSpacing: '0.05em',
-                    color: activeWorkday ? '#ffffff' : 'var(--color-primary)' 
-                  }}>
-                    {actionLoading 
-                      ? 'PROCESANDO...' 
-                      : activeWorkday 
-                         ? 'JORNADA ACTIVA' 
-                         : 'INICIAR JORNADA'}
-                  </div>
-
-                  <div style={{ 
-                    fontSize: 'var(--font-sm)', 
-                    color: activeWorkday ? 'rgba(255,255,255,0.8)' : 'var(--color-text-muted)' 
-                  }}>
-                    {activeWorkday 
-                      ? `Empezaste hoy a las ${format(firstStartTime || (activeWorkday.startTime?.toDate ? activeWorkday.startTime.toDate() : new Date()), 'HH:mm')}`
-                      : 'Pulsa aquí para empezar a trabajar hoy'}
-                  </div>
-
-                  {(() => {
-                    const accumulatedMinutes = allWorkdaysToday.reduce((acc, curr) => acc + (curr.totalMinutes || 0), 0);
-                    if (accumulatedMinutes > 0) {
-                      const h = Math.floor(accumulatedMinutes / 60);
-                      const m = accumulatedMinutes % 60;
-                      return (
-                        <div style={{ 
-                          fontSize: 'var(--font-xs)', 
-                          fontWeight: 700,
-                          marginTop: '4px',
-                          color: activeWorkday ? 'rgba(255,255,255,0.9)' : 'var(--color-accent)'
-                        }}>
-                          ⏱️ Acumulado hoy: {h}h {m}m
-                        </div>
-                      );
-                    }
-                    return null;
-                  })()}
-
-                  {activeWorkday && !actionLoading && (
-                    <div className="mt-4 py-2 px-4" style={{ 
-                      background: 'rgba(255,255,255,0.2)', 
-                      borderRadius: 'var(--radius-full)',
-                      color: 'white',
-                      fontSize: 'var(--font-xs)',
-                      fontWeight: 700
-                    }}>
-                      PULSA PARA FINALIZAR
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
+            <WorkdayHeaderCard 
+              activeWorkday={activeWorkday}
+              actionLoading={actionLoading}
+              firstStartTime={firstStartTime}
+              allWorkdaysToday={allWorkdaysToday}
+              allServicesIndividual={allServicesIndividual}
+              handleStartWorkday={handleStartWorkday}
+              handleEndWorkday={handleEndWorkday}
+            />
 
             {/* FILA CON BOTÓN ACOMPAÑANTE + BOTÓN COCHE */}
-            {activeWorkday && (
-              <div className="mb-6 animate-fadeIn" style={{ display: 'flex', gap: 'var(--space-3)' }}>
-                {/* BOTÓN ACOMPAÑANTE */}
-                <button 
-                  className="btn flex flex-col items-center justify-center gap-1"
-                  onClick={() => setCompanionSelectorOpen(true)}
-                  style={{
-                    flex: 1,
-                    background: activeWorkday.currentCompanionId ? 'var(--color-bg-subtle)' : 'white',
-                    border: '2px dashed var(--color-primary)',
-                    borderRadius: 'var(--radius-xl)',
-                    color: 'var(--color-primary)',
-                    minHeight: '80px',
-                    padding: 'var(--space-3)',
-                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
-                  }}
-                >
-                  <span style={{ fontSize: '1.2rem' }}>👥</span>
-                  <span style={{ fontWeight: 700, fontSize: 'var(--font-xs)', textAlign: 'center', lineHeight: 1.2 }}>
-                    {activeWorkday.currentCompanionId 
-                      ? `CON: ${allOperarios.find(o => o.uid === activeWorkday.currentCompanionId)?.name?.split(' ')[0] || '...'}` 
-                      : '¿COMPAÑERO?'}
-                  </span>
-                  <span style={{ fontSize: '9px', opacity: 0.6, textAlign: 'center' }}>
-                    {activeWorkday.currentCompanionId ? 'Cambiar/Quitar' : 'Toca para elegir'}
-                  </span>
-                </button>
-
-                {/* BOTÓN COCHE */}
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-                  {(() => {
-                    const isCompanionDriving = companionInfo.carActive && !activeWorkday.carActive;
-                    return (
-                      <button 
-                        className="btn flex flex-col items-center justify-center gap-1"
-                        onClick={handleToggleCar}
-                        disabled={actionLoading || isCompanionDriving}
-                        style={{
-                          width: '100%',
-                          background: activeWorkday.carActive 
-                            ? 'linear-gradient(135deg, #2563eb, #1e40af)' 
-                            : (isCompanionDriving ? '#f8fafc' : 'white'),
-                          border: activeWorkday.carActive 
-                            ? '2px solid #2563eb' 
-                            : (isCompanionDriving ? '2px solid #e2e8f0' : '2px dashed #64748b'),
-                          borderRadius: 'var(--radius-xl)',
-                          color: activeWorkday.carActive 
-                            ? '#ffffff' 
-                            : (isCompanionDriving ? '#94a3b8' : '#64748b'),
-                          minHeight: '80px',
-                          padding: 'var(--space-3)',
-                          boxShadow: activeWorkday.carActive 
-                            ? '0 4px 12px -2px rgba(37, 99, 235, 0.5)' 
-                            : '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-                          transition: 'all 0.3s ease',
-                          opacity: isCompanionDriving ? 0.85 : 1,
-                          cursor: isCompanionDriving ? 'not-allowed' : 'pointer'
-                        }}
-                      >
-                        <span style={{ fontSize: '1.2rem' }}>
-                          {activeWorkday.carActive ? '🚗' : (isCompanionDriving ? '🚫🚗' : '🚶')}
-                        </span>
-                        <span style={{ fontWeight: 700, fontSize: 'var(--font-xs)', textAlign: 'center', lineHeight: 1.2 }}>
-                          {activeWorkday.carActive 
-                            ? 'COCHE ACTIVO' 
-                            : (isCompanionDriving ? `COCHE CON ${companionInfo.name.toUpperCase()}` : '¿VAS EN COCHE?')}
-                        </span>
-                        <span style={{ fontSize: '9px', opacity: activeWorkday.carActive ? 0.8 : 0.6, textAlign: 'center' }}>
-                          {activeWorkday.carActive 
-                            ? `Desde ${activeWorkday.carActiveSince?.toDate ? format(activeWorkday.carActiveSince.toDate(), 'HH:mm') : '...'}` 
-                            : (isCompanionDriving ? 'Bloqueado para evitar duplicados' : 'GPS Automático')}
-                        </span>
-                      </button>
-                    );
-                  })()}
-                  
-                  <button 
-                    className="btn btn-ghost btn-xs"
-                    onClick={() => setMileageModalOpen(true)}
-                    style={{ 
-                      fontSize: '10px', 
-                      color: 'var(--color-primary)', 
-                      fontWeight: 600,
-                      textDecoration: 'underline'
-                    }}
-                  >
-                    Ingresar km manualmente
-                  </button>
-                </div>
-              </div>
-            )}
+            <CarAndCompanionControl 
+              activeWorkday={activeWorkday}
+              companionInfo={companionInfo}
+              allOperarios={allOperarios}
+              actionLoading={actionLoading}
+              handleToggleCar={handleToggleCar}
+              setCompanionSelectorOpen={setCompanionSelectorOpen}
+              setMileageModalOpen={setMileageModalOpen}
+            />
 
 
           </>
@@ -495,202 +339,19 @@ export default function TodayPage() {
         </div>
       )}
 
-      {/* LISTADO DE SERVICIOS */}
-      <div className="flex flex-col gap-1 mb-4">
-        <div className="flex justify-between items-center">
-          <h3 style={{ fontSize: 'var(--font-lg)', fontWeight: 700 }}>Servicios de hoy</h3>
-          <button 
-            className="btn btn-ghost btn-xs flex items-center gap-1"
-            onClick={handleRefresh}
-            disabled={loading || refreshing}
-            style={{ color: 'var(--color-primary)', fontWeight: 600 }}
-          >
-            {refreshing ? 'Actualizando...' : '🔄 Actualizar'}
-          </button>
-        </div>
-        {routeOptimized && (
-          <div className="text-xs" style={{ color: 'var(--color-success)', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}>
-            <span>⚡ Recorrido optimizado por distancia y horario</span>
-          </div>
-        )}
-      </div>
-
-      {enrichedServices.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-state-icon">🎉</div>
-          <h3 className="empty-state-title">Sin servicios hoy</h3>
-          <p className="text-muted text-sm">No tienes servicios programados para hoy</p>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-5">
-          {enrichedServices.map((svc, index) => {
-            const hasIndividualTime = svc.community?.individualTimeTracking;
-            const canAccess = activeWorkday || hasIndividualTime;
-            const statusClass = svc.status === 'completed' ? 'completed' : (svc.status === 'in_progress' || svc.status === 'started') ? 'in-progress' : '';
-            const garageClass = svc.isGarage ? 'garage' : '';
-            return (
-            <div
-              key={svc.id}
-              className={`service-card ${statusClass} ${garageClass} ${!canAccess ? 'opacity-50 grayscale' : ''}`}
-              onClick={() => {
-                if (!canAccess) {
-                  alert('Debes iniciar tu jornada primero para acceder a los servicios.');
-                  return;
-                }
-                navigate(`/operario/servicio/${svc.id}`);
-              }}
-              style={{ 
-                cursor: canAccess ? 'pointer' : 'not-allowed'
-              }}
-            >
-              <div className="service-card-header">
-                <div>
-                  <div className="service-community" style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                    {routeOptimized && (
-                      <span style={{ fontSize: '10px', background: 'var(--color-primary)', color: '#ffffff', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
-                        #{index + 1}
-                      </span>
-                    )}
-                    {svc.community?.name || 'Comunidad'}
-                    {svc.community?.preferredTime && (
-                      <span style={{ fontSize: '10px', background: '#fee2e2', color: '#dc2626', padding: '2px 6px', borderRadius: '12px', border: '1px solid currentColor', fontWeight: 'bold' }}>
-                        🕐 Hora pref: {svc.community.preferredTime}
-                      </span>
-                    )}
-                    {hasIndividualTime && (
-                      <span style={{ fontSize: '10px', background: 'var(--color-info-light)', color: 'var(--color-info)', padding: '2px 6px', borderRadius: '12px', border: '1px solid currentColor', fontWeight: 'bold' }}>
-                        ⏱️ Indep.
-                      </span>
-                    )}
-                    {svc.flexibleWeek && (
-                      <span style={{ fontSize: '10px', background: '#fef3c7', color: '#b45309', padding: '2px 6px', borderRadius: '12px', border: '1px solid currentColor', fontWeight: 'bold' }}>
-                        📅 Sem. Flexible
-                      </span>
-                    )}
-                    {svc.isCompanion && (
-                      <span style={{ fontSize: '10px', background: '#e0f2fe', color: '#0369a1', padding: '2px 6px', borderRadius: '12px', border: '1px solid currentColor', fontWeight: 'bold' }}>
-                        🤝 Apoyo prestado
-                      </span>
-                    )}
-                    {svc.isTransferred && (
-                      <span style={{ fontSize: '10px', background: '#fef2f2', color: '#ef4444', padding: '2px 6px', borderRadius: '12px', border: '1px solid currentColor', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
-                        ↪️ Traspasado{svc.transferValidated === false ? ' (Pte.)' : ''}
-                      </span>
-                    )}
-                    {svc.isRescheduled && (
-                      <span style={{ fontSize: '10px', background: '#faf5ff', color: '#7c3aed', padding: '2px 6px', borderRadius: '12px', border: '1px solid currentColor', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
-                        📅 Cambiado{getOrigDateStr(svc.originalDate) ? ` (era ${getOrigDateStr(svc.originalDate)})` : ''}{svc.rescheduleValidated === false ? ' (Pte.)' : ''}
-                      </span>
-                    )}
-                  </div>
-                  <div className="service-address" style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                    <span>{svc.community?.address || ''}</span>
-                    {userLocation && svc.community?.location && svc.status !== 'completed' && svc.status !== 'missed' && (
-                      <span style={{ 
-                        fontSize: '11px', 
-                        fontWeight: 'bold', 
-                        color: getDistance(userLocation.lat, userLocation.lng, svc.community.location._lat || svc.community.location.latitude, svc.community.location._long || svc.community.location.longitude) <= 500 ? 'var(--color-success)' : 'var(--color-warning)'
-                      }}>
-                        📍 Distancia: {Math.round(getDistance(userLocation.lat, userLocation.lng, svc.community.location._lat || svc.community.location.latitude, svc.community.location._long || svc.community.location.longitude))}m
-                      </span>
-                    )}
-                  </div>
-                </div>
-                {getStatusBadge(svc.status)}
-              </div>
-              
-              {!svc.isCompanion && !['completed', 'in_progress'].includes(svc.status) && (
-                <div className="flex gap-2 w-full mt-1 mb-2">
-                  <button 
-                    className="btn btn-ghost btn-xs flex-1"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setTransferModal({ open: true, type: 'single', service: svc });
-                    }}
-                    style={{ color: 'var(--color-warning)', border: '1px solid var(--color-warning)', fontSize: '11px', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
-                  >
-                    🔄 Traspasar
-                  </button>
-                  <button 
-                    className="btn btn-ghost btn-xs flex-1"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setRescheduleModal({ open: true, serviceId: svc.id, currentDate: svc.scheduledDate });
-                    }}
-                    style={{ color: 'var(--color-primary)', border: '1px solid var(--color-primary)', fontSize: '11px', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
-                  >
-                    📅 Mover día
-                  </button>
-                </div>
-              )}
-
-              <div className="service-tasks" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'nowrap', gap: '8px' }}>
-                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', flex: 1 }}>
-                  {svc.tasks?.map(t => {
-                    let chipClass = 'service-task-chip';
-                    if (t.status === 'completed') {
-                      chipClass += ' completed';
-                    } else if (t.status === 'missed') {
-                      chipClass += ' missed';
-                    } else if (t.isUrgent) {
-                      chipClass += ' urgent';
-                    }
-                    
-                    return (
-                      <span key={t.id} className={chipClass}>
-                        {t.status === 'completed' ? '✓ ' : t.status === 'missed' ? '✕ ' : t.isUrgent ? '🚨 ' : ''}
-                        {t.taskName}
-                      </span>
-                    );
-                  })}
-                </div>
-                {svc.isCompanion ? (
-                  <button 
-                    className="btn btn-secondary"
-                    style={{ borderRadius: '9999px', padding: '6px 18px', fontSize: '13px', fontWeight: 'bold', whiteSpace: 'nowrap' }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate(`/operario/servicio/${svc.id}`);
-                    }}
-                  >
-                    Ver detalles
-                  </button>
-                ) : (!svc.status || svc.status === 'pending') && (
-                  <button 
-                    className="btn btn-primary"
-                    style={{ borderRadius: '9999px', padding: '6px 18px', fontSize: '13px', fontWeight: 'bold', boxShadow: '0 4px 6px -1px rgba(37, 99, 235, 0.3)', whiteSpace: 'nowrap' }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (!canAccess) {
-                        alert('Debes iniciar tu jornada primero para acceder a este servicio.');
-                        return;
-                      }
-                      navigate(`/operario/servicio/${svc.id}`);
-                    }}
-                  >
-                    Inicio
-                  </button>
-                )}
-                {svc.status === 'in_progress' && (
-                  <button 
-                    className="btn btn-info"
-                    style={{ borderRadius: '9999px', padding: '6px 18px', fontSize: '13px', fontWeight: 'bold', whiteSpace: 'nowrap' }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate(`/operario/servicio/${svc.id}`);
-                    }}
-                  >
-                    Continuar
-                  </button>
-                )}
-              </div>
-              {!canAccess && (
-                <div className="text-xs font-bold text-danger mt-3">⚠️ Jornada no iniciada</div>
-              )}
-            </div>
-          );})}
-        </div>
-      )}
+      {/* LISTADO DE SERVICIOS (Paso 5.3-5.4) */}
+      <TodayServicesList 
+        enrichedServices={enrichedServices}
+        routeOptimized={routeOptimized}
+        loading={loading}
+        refreshing={refreshing}
+        activeWorkday={activeWorkday}
+        userLocation={userLocation}
+        handleRefresh={handleRefresh}
+        setTransferModal={setTransferModal}
+        setRescheduleModal={setRescheduleModal}
+        navigate={navigate}
+      />
 
       <TransferModal 
         isOpen={transferModal.open}
