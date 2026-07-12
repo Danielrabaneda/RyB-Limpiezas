@@ -2741,3 +2741,20 @@ body.loaded {
   transform: translateX(-4px);
 }
 
+/* Estilos de badges de inventario y pedidos */
+.status-badge { 
+  font-size: 0.7rem; 
+  padding: 2px 6px; 
+  border-radius: 99px; 
+  font-weight: bold; 
+}
+.status-pending { 
+  background: #fff7ed; 
+  color: #c2410c; 
+}
+.status-completed { 
+  background: #f0fdf4; 
+  color: #15803d; 
+}
+
+
