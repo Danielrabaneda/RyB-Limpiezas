@@ -16,6 +16,7 @@ import { es } from 'date-fns/locale';
 import { useAuth } from '../../contexts/AuthContext';
 import { getAllUsers } from '../../services/authService';
 import { groupFlatList } from '../../utils/dateGrouping';
+import { useInventoryData } from '../../hooks/useInventoryData';
 
 export const CATEGORIES = [
   { id: 'quimicos', name: 'Químicos / Limpieza', emoji: '🧪', badgeClass: 'badge-cat-quimicos' },
@@ -79,11 +80,25 @@ export const autoCategorize = (name) => {
 export default function InventoryPage() {
   const { currentUser, userProfile } = useAuth();
   const [activeTab, setActiveTab] = useState('orders'); // 'orders', 'catalog', 'movements'
-  const [orders, setOrders] = useState([]);
-  const [products, setProducts] = useState([]);
-  const [movements, setMovements] = useState([]);
-  const [users, setUsers] = useState({});
-  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  const {
+    products,
+    setProducts,
+    orders,
+    setOrders,
+    movements,
+    setMovements,
+    users,
+    loading,
+    loadData,
+    handleStatusChange,
+    handleDeleteOrder,
+    handleAddProduct: handleAddProductRaw,
+    handleEditProductSubmit: handleEditProductSubmitRaw,
+    handleDeleteProduct,
+    handleStockAction: handleStockActionRaw
+  } = useInventoryData({ currentUser, userProfile, actionLoading, setActionLoading });
+
   const [expandedGroups, setExpandedGroups] = useState(new Set());
 
   const toggleGroup = (id) => {
@@ -130,78 +145,32 @@ export default function InventoryPage() {
     }
   }, [activeTab, products]);
 
-  const loadData = async () => {
-    setLoading(true);
-    try {
-      const [pData, oData, uData, mData] = await Promise.all([
-        getProducts(),
-        getMaterialRequests(),
-        getAllUsers(),
-        getStockMovements(200)
-      ]);
-      
-      setProducts(pData);
-      setOrders(oData);
-      setMovements(mData);
-      
-      const userMap = {};
-      uData.forEach(u => userMap[u.uid] = u);
-      setUsers(userMap);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleStatusChange = async (orderId, status) => {
-    try {
-      await updateRequestStatus(orderId, status, currentUser.uid, userProfile?.name || 'Admin');
-      loadData();
-    } catch (err) {
-      alert(err.message || 'Error al actualizar estado');
-    }
-  };
-
-  const handleDeleteOrder = async (id) => {
-    if (!confirm('¿Borrar este pedido?')) return;
-    try {
-      await deleteMaterialRequest(id);
-      loadData();
-    } catch (err) {
-      alert('Error al borrar');
-    }
-  };
-
   const handleAddProduct = async (e) => {
     e.preventDefault();
     try {
-      await createProduct({
+      await handleAddProductRaw({
         ...newProduct,
         category: newProduct.category || autoCategorize(newProduct.name)
       });
       setNewProduct({ name: '', unit: 'unidad', minStock: '5', category: 'general' });
       setShowAddProduct(false);
-      loadData();
     } catch (err) {
-      alert('Error al añadir producto');
+      // Error already handled inside hook
     }
   };
 
   const handleEditProductSubmit = async (e) => {
     e.preventDefault();
     try {
-      await updateProduct(editProductModal.product.id, {
+      await handleEditProductSubmitRaw(editProductModal.product.id, {
         name: editProductModal.name,
         unit: editProductModal.unit,
         minStock: editProductModal.minStock,
         category: editProductModal.category
       });
       setEditProductModal({ open: false, product: null, name: '', unit: 'unidad', minStock: '5', category: 'general' });
-      loadData();
     } catch (err) {
-      console.error(err);
-      alert('Error al actualizar producto');
+      // Error already handled inside hook
     }
   };
 
@@ -280,43 +249,18 @@ export default function InventoryPage() {
     }
   };
 
-  const handleDeleteProduct = async (id) => {
-    if (!confirm('¿Borrar producto del catálogo? ¡Se perderá el inventario actual de este producto!')) return;
-    try {
-      await deleteProduct(id);
-      loadData();
-    } catch (err) {
-      alert('Error al borrar producto');
-    }
-  };
-
   const handleStockAction = async (e) => {
     e.preventDefault();
     try {
-      if (stockModal.type === 'in') {
-        await addStock(
-          stockModal.product.id, 
-          stockModal.product.name, 
-          stockModal.quantity, 
-          currentUser.uid, 
-          userProfile?.name || 'Admin', 
-          stockModal.notes
-        );
-      } else if (stockModal.type === 'adjust') {
-        await adjustStock(
-          stockModal.product.id, 
-          stockModal.product.name, 
-          stockModal.quantity, 
-          currentUser.uid, 
-          userProfile?.name || 'Admin', 
-          stockModal.notes
-        );
-      }
+      await handleStockActionRaw(
+        stockModal.type,
+        stockModal.product,
+        stockModal.quantity,
+        stockModal.notes
+      );
       setStockModal({ open: false, type: 'in', product: null, quantity: '', notes: '' });
-      loadData();
     } catch (err) {
-      console.error(err);
-      alert('Error actualizando stock');
+      // Error handled in hook
     }
   };
 
