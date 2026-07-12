@@ -17,6 +17,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { getAllUsers } from '../../services/authService';
 import { groupFlatList } from '../../utils/dateGrouping';
 import { useInventoryData } from '../../hooks/useInventoryData';
+import { useShoppingList } from '../../hooks/useShoppingList';
 
 export const CATEGORIES = [
   { id: 'quimicos', name: 'Químicos / Limpieza', emoji: '🧪', badgeClass: 'badge-cat-quimicos' },
@@ -114,36 +115,29 @@ export default function InventoryPage() {
   const [statsModal, setStatsModal] = useState({ open: false, product: null });
   const [statsPeriod, setStatsPeriod] = useState('monthly'); // 'monthly' or 'yearly'
   const [editProductModal, setEditProductModal] = useState({ open: false, product: null, name: '', unit: 'unidad', minStock: '5', category: 'general' });
-  const [shoppingItems, setShoppingItems] = useState([]);
   const [statsFilterRange, setStatsFilterRange] = useState('12m');
   const [statsFilterFamily, setStatsFilterFamily] = useState('all');
   const [statsSearch, setStatsSearch] = useState('');
 
+  const {
+    shoppingItems,
+    setShoppingItems,
+    handleAddManualItem,
+    handleCopyShoppingList,
+    handleCompletePurchase
+  } = useShoppingList({
+    products,
+    activeTab,
+    currentUser,
+    userProfile,
+    setActionLoading,
+    loadData,
+    setActiveTab
+  });
+
   useEffect(() => {
     loadData();
   }, []);
-
-  useEffect(() => {
-    if (activeTab === 'shopping' && products.length > 0) {
-      const lowStockItems = products
-        .filter(p => (p.currentStock || 0) <= (p.minStock || 0))
-        .map(p => {
-          const diff = (p.minStock || 0) - (p.currentStock || 0);
-          const defaultQty = diff > 0 ? diff : 5;
-          return {
-            id: p.id,
-            name: p.name,
-            unit: p.unit,
-            currentStock: p.currentStock || 0,
-            minStock: p.minStock || 0,
-            quantityToBuy: defaultQty,
-            checked: true,
-            isManual: false
-          };
-        });
-      setShoppingItems(lowStockItems);
-    }
-  }, [activeTab, products]);
 
   const handleAddProduct = async (e) => {
     e.preventDefault();
@@ -174,80 +168,7 @@ export default function InventoryPage() {
     }
   };
 
-  const handleAddManualItem = (productId) => {
-    if (!productId) return;
-    const p = products.find(prod => prod.id === productId);
-    if (!p) return;
-    
-    if (shoppingItems.some(item => item.id === p.id)) {
-      alert('El producto ya está en la lista de compra');
-      return;
-    }
-    
-    const newItem = {
-      id: p.id,
-      name: p.name,
-      unit: p.unit,
-      currentStock: p.currentStock || 0,
-      minStock: p.minStock || 0,
-      quantityToBuy: 5,
-      checked: true,
-      isManual: true
-    };
-    setShoppingItems([...shoppingItems, newItem]);
-  };
 
-  const handleCopyShoppingList = () => {
-    const selected = shoppingItems.filter(item => item.checked && item.quantityToBuy > 0);
-    if (selected.length === 0) {
-      alert('No hay productos seleccionados en la lista');
-      return;
-    }
-    
-    let text = `🛒 *RyB LIMPIEZAS - LISTA DE COMPRA*\n`;
-    text += `Fecha: ${format(new Date(), 'dd/MM/yyyy')}\n\n`;
-    selected.forEach((item, idx) => {
-      text += `${idx + 1}. *${item.name}*: ${item.quantityToBuy} ${item.unit} (Stock act: ${item.currentStock} ${item.unit})\n`;
-    });
-    
-    navigator.clipboard.writeText(text)
-      .then(() => alert('📋 Lista de compra copiada al portapapeles'))
-      .catch(err => alert('Error al copiar la lista'));
-  };
-
-  const handleCompletePurchase = async () => {
-    const selected = shoppingItems.filter(item => item.checked && item.quantityToBuy > 0);
-    if (selected.length === 0) {
-      alert('No hay productos seleccionados para comprar');
-      return;
-    }
-    
-    if (!confirm(`¿Registrar la entrada de stock para los ${selected.length} productos seleccionados?`)) {
-      return;
-    }
-    
-    setLoading(true);
-    try {
-      for (const item of selected) {
-        await addStock(
-          item.id,
-          item.name,
-          item.quantityToBuy,
-          currentUser.uid,
-          userProfile?.name || 'Admin',
-          'Entrada automática desde Lista de Compra'
-        );
-      }
-      alert('✅ Entrada de stock registrada con éxito');
-      await loadData();
-      setActiveTab('catalog');
-    } catch (err) {
-      console.error(err);
-      alert('Error al registrar la compra');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleStockAction = async (e) => {
     e.preventDefault();
