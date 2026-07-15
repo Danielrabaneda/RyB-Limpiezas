@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { doc, onSnapshot, collection, query, where } from 'firebase/firestore';
+import { doc, onSnapshot, collection, query, where, getDocs, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { getCommunity } from '../services/communityService';
 import { getCommunityTasks } from '../services/taskService';
@@ -167,6 +167,40 @@ export function useServiceData(serviceId, userProfile) {
     const newStatus = exec.status === 'completed' ? 'pending' : 'completed';
     try {
       await updateTaskExecution(exec.id, { status: newStatus });
+
+      // Si es una tarea roja ("otras"), actualizar también su correspondiente estado en scheduledServices
+      const task = tasks.find(t => t.id === exec.communityTaskId);
+      if (task) {
+        const taskLowerName = (task.taskName || '').toLowerCase();
+        const taskPrintColor = task.printColor || (
+          taskLowerName.includes('escalera') ? '#22c55e' :
+          taskLowerName.includes('portal') || taskLowerName.includes('repaso') ? '#eab308' :
+          taskLowerName.includes('oficina') ? '#3b82f6' : '#ef4444'
+        );
+        const taskIsGarage = !!task.isGarage || taskLowerName.includes('garaje');
+        const taskIsOtras = taskPrintColor === '#ef4444' && !taskIsGarage;
+
+        if (taskIsOtras) {
+          // Buscamos los servicios programados pendientes (o completados si estamos desmarcando)
+          const targetStatus = newStatus === 'completed' ? 'pending' : 'completed';
+          const qSvc = query(
+            collection(db, 'scheduledServices'),
+            where('communityTaskId', '==', exec.communityTaskId),
+            where('status', '==', targetStatus)
+          );
+          const svcSnap = await getDocs(qSvc);
+          if (!svcSnap.empty) {
+            const batch = writeBatch(db);
+            svcSnap.docs.forEach(docSnap => {
+              batch.update(docSnap.ref, { 
+                status: newStatus, 
+                updatedAt: serverTimestamp() 
+              });
+            });
+            await batch.commit();
+          }
+        }
+      }
     } catch (err) {
       console.error('[useServiceData] Error in toggleTaskStatus:', err);
       alert('Error al actualizar tarea: ' + err.message);

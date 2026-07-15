@@ -356,7 +356,8 @@ export default function HistoryPage() {
                   const communityGroups = {};
                   dayServices.forEach(svc => {
                     const isOtras = svc.printColor === '#ef4444' && !svc.isGarage;
-                    const groupKey = isOtras ? `${svc.communityId}_otras` : `${svc.communityId}_${svc.id}`;
+                    if (isOtras) return;
+                    const groupKey = `${svc.communityId}_${svc.id}`;
                     
                     if (!communityGroups[groupKey]) {
                       communityGroups[groupKey] = {

@@ -257,7 +257,8 @@ export function useTodayData(userProfile) {
         }
         
         const isOtras = svc.printColor === '#ef4444' && !svc.isGarage;
-        const groupKey = isOtras ? `${svc.communityId}_otras` : `${svc.communityId}_${svc.id}`;
+        if (isOtras) continue;
+        const groupKey = `${svc.communityId}_${svc.id}`;
         
         if (seenGroupKeys.has(groupKey)) {
           const existingGroup = grouped.find(g => g.groupKey === groupKey);

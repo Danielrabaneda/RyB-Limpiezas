@@ -366,15 +366,37 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
       const currentIsGarage = !!currentSpecificTask?.isGarage || currentLowerName.includes('garaje') || !!service.isGarage;
       const currentIsOtras = currentPrintColor === '#ef4444' && !currentIsGarage;
 
-      const relevantTasks = allTasks.filter(task => {
-        if (!currentIsOtras) {
-          if (service.communityTaskId) {
-            return task.id === service.communityTaskId;
-          } else {
-            return task.taskName === service.taskName;
+      // Obtener tareas rojas ("otras") pendientes de la base de datos para esta comunidad
+      let pendingRedTaskIds = new Set();
+      try {
+        const qPendingRed = query(
+          collection(db, 'scheduledServices'),
+          where('communityId', '==', service.communityId),
+          where('status', '==', 'pending')
+        );
+        const pendingSnap = await getDocs(qPendingRed);
+        pendingSnap.forEach(d => {
+          const sData = d.data();
+          const t = allTasks.find(x => x.id === sData.communityTaskId);
+          if (t) {
+            const taskLowerName = (t.taskName || '').toLowerCase();
+            const taskPrintColor = t.printColor || (
+              taskLowerName.includes('escalera') ? '#22c55e' :
+              taskLowerName.includes('portal') || taskLowerName.includes('repaso') ? '#eab308' :
+              taskLowerName.includes('oficina') ? '#3b82f6' : '#ef4444'
+            );
+            const taskIsGarage = !!t.isGarage || taskLowerName.includes('garaje');
+            const taskIsOtras = taskPrintColor === '#ef4444' && !taskIsGarage;
+            if (taskIsOtras) {
+              pendingRedTaskIds.add(sData.communityTaskId);
+            }
           }
-        }
+        });
+      } catch (err) {
+        console.warn('Error fetching pending red services:', err);
+      }
 
+      const relevantTasks = allTasks.filter(task => {
         const taskLowerName = (task.taskName || '').toLowerCase();
         const taskPrintColor = task.printColor || (
           taskLowerName.includes('escalera') ? '#22c55e' :
@@ -383,6 +405,20 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
         );
         const taskIsGarage = !!task.isGarage || taskLowerName.includes('garaje');
         const taskIsOtras = taskPrintColor === '#ef4444' && !taskIsGarage;
+
+        if (!currentIsOtras) {
+          const isMainTask = service.communityTaskId
+            ? task.id === service.communityTaskId
+            : task.taskName === service.taskName;
+          if (isMainTask) return true;
+
+          // Si la tarea actual no es roja, pero hay tareas rojas pendientes en la comunidad,
+          // las inyectamos dentro de esta tarjeta
+          if (taskIsOtras && pendingRedTaskIds.has(task.id)) {
+            return true;
+          }
+          return false;
+        }
 
         if (!taskIsOtras) return false;
 
