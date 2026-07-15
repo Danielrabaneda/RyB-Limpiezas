@@ -422,6 +422,7 @@ function AdminLayout() {
 
 function OperarioLayout() {
   const { userProfile, logout } = useAuth();
+  const { unreadCount, dismissAll } = useNotifications();
   const navigate = useNavigate();
   const location = useLocation();
   const [globalSettings, setGlobalSettings] = useState(null);
@@ -492,6 +493,22 @@ function OperarioLayout() {
         </div>
         <div className="flex items-center gap-3">
           <span style={{ fontSize: 'var(--font-xs)', opacity: 0.8 }}>{userProfile?.name}</span>
+          {unreadCount > 0 && (
+            <button 
+              onClick={() => {
+                dismissAll();
+                alert('Todos los avisos marcados como leídos.');
+              }}
+              className="relative p-2 text-white hover:bg-slate-700 rounded-full transition-colors flex items-center justify-center"
+              style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: '4px' }}
+              title={`${unreadCount} avisos pendientes`}
+            >
+              <span style={{ fontSize: '1.1rem' }}>🔔</span>
+              <span className="absolute top-0 right-0 inline-flex items-center justify-center px-1.5 py-0.5 text-[8px] font-bold leading-none text-white transform translate-x-1/3 -translate-y-1/3 bg-red-600 rounded-full animate-pulse">
+                {unreadCount}
+              </span>
+            </button>
+          )}
           <button 
             onClick={() => window.dispatchEvent(new CustomEvent('ryb-open-cookie-settings'))}
             className="btn btn-ghost btn-sm"
