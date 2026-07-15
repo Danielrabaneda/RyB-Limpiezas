@@ -10,6 +10,43 @@ import { getCommunities } from './communityService';
 
 const COLLECTION = 'invoices';
 
+// ==================== VERIFACTU: HASH ENCADENADO ====================
+/**
+ * Calcula la huella/hash de un "registro de facturación de alta" según
+ * las especificaciones técnicas de la AEAT (VERI*FACTU v0.1.2).
+ * Verificado contra los 3 casos de ejemplo del documento oficial
+ * (Veri-Factu_especificaciones_huella_hash_registros.pdf, sección 6).
+ * NO MODIFICAR el orden de concatenación ni el .toUpperCase() final.
+ *
+ * Versión asíncrona compatible con navegador (Web Crypto API).
+ */
+export async function computeInvoiceHash({
+  idEmisorFactura,
+  numSerieFactura,
+  fechaExpedicionFactura,
+  tipoFactura,
+  cuotaTotal,
+  importeTotal,
+  huellaAnterior,
+  fechaHoraHusoGenRegistro
+}) {
+  const cadena =
+    `IDEmisorFactura=${idEmisorFactura}` +
+    `&NumSerieFactura=${numSerieFactura}` +
+    `&FechaExpedicionFactura=${fechaExpedicionFactura}` +
+    `&TipoFactura=${tipoFactura}` +
+    `&CuotaTotal=${cuotaTotal}` +
+    `&ImporteTotal=${importeTotal}` +
+    `&Huella=${huellaAnterior || ''}` +
+    `&FechaHoraHusoGenRegistro=${fechaHoraHusoGenRegistro}`;
+
+  const encoder = new TextEncoder();
+  const data = encoder.encode(cadena);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
 // ==================== BILLING SETTINGS ====================
 const DEFAULT_SETTINGS = {
   companyName: "Limpiezas Rayba S.L",
@@ -78,6 +115,12 @@ export async function createInvoice(data) {
 
 export async function updateInvoice(id, data) {
   const ref = doc(db, COLLECTION, id);
+  // VERIFACTU: Inmutabilidad — solo se pueden editar borradores
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('La factura no existe');
+  if (snap.data().status !== 'draft') {
+    throw new Error('No se puede modificar una factura emitida (solo borradores)');
+  }
   await updateDoc(ref, {
     ...data,
     updatedAt: serverTimestamp()
@@ -85,11 +128,25 @@ export async function updateInvoice(id, data) {
 }
 
 export async function deleteInvoice(id) {
-  await deleteDoc(doc(db, COLLECTION, id));
+  const ref = doc(db, COLLECTION, id);
+  // VERIFACTU: Inmutabilidad — solo se pueden eliminar borradores
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('La factura no existe');
+  if (snap.data().status !== 'draft') {
+    throw new Error('No se puede eliminar una factura emitida (solo borradores)');
+  }
+  await deleteDoc(ref);
 }
 
 export async function deleteMultipleInvoices(ids) {
   if (!ids || ids.length === 0) return;
+  // VERIFACTU: Inmutabilidad — verificar que todas son borradores antes de eliminar
+  for (const id of ids) {
+    const snap = await getDoc(doc(db, COLLECTION, id));
+    if (snap.exists() && snap.data().status !== 'draft') {
+      throw new Error(`No se puede eliminar la factura ${snap.data().invoiceNumber || id}: solo se pueden eliminar borradores`);
+    }
+  }
   const CHUNK_SIZE = 400;
   for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
     const chunk = ids.slice(i, i + CHUNK_SIZE);
@@ -114,7 +171,12 @@ export async function getNextInvoiceNumber(year) {
 }
 
 // Emit Invoice: Change status from draft to pending, assign number atomically
+// VERIFACTU: Calcula y almacena hash encadenado con la factura anterior
 export async function emitInvoice(id) {
+  // Obtener hash de la última factura emitida ANTES de la transacción
+  const lastEmitted = await getLastEmittedInvoice();
+  const previousHash = lastEmitted?.hash || '';
+
   const invoiceRef = doc(db, COLLECTION, id);
   const settingsRef = doc(db, 'settings', 'billing');
   
@@ -147,13 +209,34 @@ export async function emitInvoice(id) {
     }
     const dueDate = new Date(issueDate.getTime() + 30 * 24 * 60 * 60 * 1000);
 
-    // Update invoice with assigned number
+    // VERIFACTU: Calcular hash encadenado
+    const dd = String(issueDate.getDate()).padStart(2, '0');
+    const mm = String(issueDate.getMonth() + 1).padStart(2, '0');
+    const yyyy = issueDate.getFullYear();
+    const fechaExpedicion = `${dd}-${mm}-${yyyy}`;
+    const tipoFactura = data.rectifiesInvoiceId ? 'R1' : 'F1';
+
+    const hash = await computeInvoiceHash({
+      idEmisorFactura: settings.nif || 'B04843843',
+      numSerieFactura: invoiceNumber,
+      fechaExpedicionFactura: fechaExpedicion,
+      tipoFactura,
+      cuotaTotal: parseFloat(data.taxAmount || 0).toFixed(2),
+      importeTotal: parseFloat(data.totalAmount || 0).toFixed(2),
+      huellaAnterior: previousHash,
+      fechaHoraHusoGenRegistro: new Date().toISOString()
+    });
+
+    // Update invoice with assigned number and hash chain
     transaction.update(invoiceRef, {
       status: 'pending',
       invoiceNumber: invoiceNumber,
       invoiceSeq: nextSeq,
       issueDate: issueDate,
-      dueDate: dueDate
+      dueDate: dueDate,
+      hash: hash,
+      previousHash: previousHash,
+      tipoFactura: tipoFactura
     });
     
     // Increment sequence counter atomically
@@ -289,8 +372,14 @@ export async function getLastEmittedInvoice() {
 }
 
 // Emit multiple invoices at once atomically using a single transaction
+// VERIFACTU: Encadena hashes secuencialmente dentro del lote
 export async function emitAllInvoices(ids) {
   if (!ids || ids.length === 0) return;
+
+  // Obtener hash de la última factura emitida ANTES de la transacción
+  const lastEmitted = await getLastEmittedInvoice();
+  let chainHash = lastEmitted?.hash || '';
+
   const settingsRef = doc(db, 'settings', 'billing');
   
   await runTransaction(db, async (transaction) => {
@@ -313,6 +402,12 @@ export async function emitAllInvoices(ids) {
       issueDate = new Date();
     }
     const dueDate = new Date(issueDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    // VERIFACTU: Formatear fecha para el hash
+    const dd = String(issueDate.getDate()).padStart(2, '0');
+    const mm = String(issueDate.getMonth() + 1).padStart(2, '0');
+    const yyyy = issueDate.getFullYear();
+    const fechaExpedicion = `${dd}-${mm}-${yyyy}`;
     
     for (const { ref, snap } of invoiceSnaps) {
       if (!snap.exists()) throw new Error("Una de las facturas no existe");
@@ -325,15 +420,35 @@ export async function emitAllInvoices(ids) {
       } else {
         invoiceNumber = String(nextSeq);
       }
+
+      // VERIFACTU: Hash encadenado secuencial
+      const tipoFactura = data.rectifiesInvoiceId ? 'R1' : 'F1';
+      const previousHash = chainHash;
+
+      const hash = await computeInvoiceHash({
+        idEmisorFactura: settings.nif || 'B04843843',
+        numSerieFactura: invoiceNumber,
+        fechaExpedicionFactura: fechaExpedicion,
+        tipoFactura,
+        cuotaTotal: parseFloat(data.taxAmount || 0).toFixed(2),
+        importeTotal: parseFloat(data.totalAmount || 0).toFixed(2),
+        huellaAnterior: previousHash,
+        fechaHoraHusoGenRegistro: new Date().toISOString()
+      });
       
       transaction.update(ref, {
         status: 'pending',
         invoiceNumber: invoiceNumber,
         invoiceSeq: nextSeq,
         issueDate: issueDate,
-        dueDate: dueDate
+        dueDate: dueDate,
+        hash: hash,
+        previousHash: previousHash,
+        tipoFactura: tipoFactura
       });
       
+      // Encadenar: el hash de esta factura es el previousHash de la siguiente
+      chainHash = hash;
       nextSeq++;
     }
     
@@ -366,3 +481,65 @@ export async function sendGroupedInvoiceEmails(invoiceIds) {
   return result.data;
 }
 
+// ==================== VERIFACTU: FACTURA RECTIFICATIVA ====================
+/**
+ * Crea una factura rectificativa que referencia a la original.
+ * NUNCA modifica ni elimina la factura original (inmutabilidad Verifactu).
+ * La rectificativa pasa por el mismo flujo de emitInvoice() (número correlativo, hash encadenado).
+ */
+export async function createRectifyingInvoice(originalInvoiceId, correctionData) {
+  const originalRef = doc(db, COLLECTION, originalInvoiceId);
+  const originalSnap = await getDoc(originalRef);
+  if (!originalSnap.exists()) throw new Error('La factura original no existe');
+  const original = originalSnap.data();
+  
+  if (original.status === 'draft') {
+    throw new Error('No se puede rectificar una factura en borrador. Emítela primero.');
+  }
+
+  const rectifyingData = {
+    invoiceNumber: 'Borrador (Rectificativa)',
+    status: 'draft',
+    year: correctionData.year || original.year,
+    month: correctionData.month || original.month,
+    client: { ...original.client },
+    items: correctionData.items || original.items,
+    subtotal: correctionData.subtotal ?? original.subtotal,
+    taxRate: correctionData.taxRate ?? original.taxRate,
+    taxAmount: correctionData.taxAmount ?? original.taxAmount,
+    totalAmount: correctionData.totalAmount ?? original.totalAmount,
+    paymentMethod: correctionData.paymentMethod || original.paymentMethod,
+    issueDate: null,
+    dueDate: null,
+    // VERIFACTU: Referencia a la factura original
+    rectifiesInvoiceId: originalInvoiceId,
+    rectifiesInvoiceNumber: original.invoiceNumber,
+    createdAt: serverTimestamp()
+  };
+
+  const newRef = await addDoc(collection(db, COLLECTION), rectifyingData);
+  return newRef.id;
+}
+
+// ==================== VERIFACTU: QR ====================
+/**
+ * Construye la URL oficial de la AEAT para el código QR de verificación.
+ * Formato: https://www2.agenciatributaria.es/wlpl/TIKE-CONT/ValidarQR?nif=X&numserie=X&fecha=DD-MM-YYYY&importe=X.XX
+ */
+export function buildVerifactuQrUrl(invoice, billingSettings) {
+  const nif = encodeURIComponent(billingSettings?.nif || 'B04843843');
+  const numserie = encodeURIComponent(invoice.invoiceNumber || '');
+  
+  let fecha = '';
+  if (invoice.issueDate) {
+    const d = invoice.issueDate.toDate ? invoice.issueDate.toDate() : new Date(invoice.issueDate);
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const yyyy = d.getFullYear();
+    fecha = `${dd}-${mm}-${yyyy}`;
+  }
+  
+  const importe = parseFloat(invoice.totalAmount || 0).toFixed(2);
+  
+  return `https://www2.agenciatributaria.es/wlpl/TIKE-CONT/ValidarQR?nif=${nif}&numserie=${numserie}&fecha=${fecha}&importe=${importe}`;
+}

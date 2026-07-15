@@ -18,7 +18,9 @@ import {
   getNextInvoiceNumber,
   uploadInvoicePDFToStorage,
   sendInvoiceEmails,
-  sendGroupedInvoiceEmails
+  sendGroupedInvoiceEmails,
+  buildVerifactuQrUrl,
+  createRectifyingInvoice
 } from '../../services/invoiceService';
 import { getCommunities } from '../../services/communityService';
 import { getAdministrators } from '../../services/administratorService';
@@ -26,6 +28,7 @@ import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { useAuth } from '../../contexts/AuthContext';
 import jsPDF from 'jspdf';
+import QRCode from 'qrcode';
 import JSZip from 'jszip';
 import { generateSepaXML, calculateSepaCreditorId, validateIBAN } from '../../services/sepaGenerator';
 
@@ -1038,6 +1041,32 @@ export default function InvoicesPage() {
       doc.setFontSize(8);
       doc.setTextColor(100, 116, 139);
       doc.text(`Número de Cuenta (IBAN) para transferencia: ${billingSettings.bankAccount}`, startX, msgStartY + 19);
+    }
+    
+    // 8.5 VERIFACTU: Código QR de verificación
+    if (inv.status !== 'draft' && inv.invoiceNumber && inv.invoiceNumber !== 'Borrador') {
+      try {
+        const qrUrl = buildVerifactuQrUrl(inv, billingSettings);
+        const qrDataUrl = await QRCode.toDataURL(qrUrl, { margin: 1, width: 100 });
+        
+        const qrX = startX;
+        const qrY = 212;
+        const qrSize = 25; // 25x25 mm
+        
+        doc.addImage(qrDataUrl, 'PNG', qrX, qrY, qrSize, qrSize);
+        
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(15, 23, 42); // slate-900
+        doc.text('VERI*FACTU', qrX, qrY + qrSize + 4.5);
+        
+        doc.setFont('helvetica', 'italic');
+        doc.setFontSize(7.5);
+        doc.setTextColor(71, 85, 105); // slate-600
+        doc.text('Factura verificable en la Sede electrónica de la AEAT', qrX, qrY + qrSize + 8.5);
+      } catch (qrErr) {
+        console.error("Error generating or adding QR code to PDF:", qrErr);
+      }
     }
     
     // 9. Mercantile Registry Inscription (Bottom Center)

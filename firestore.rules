@@ -233,8 +233,15 @@ service cloud.firestore {
       allow write: if isAdminActive();
     }
 
+    // VERIFACTU: Inmutabilidad — solo se pueden editar/eliminar borradores.
+    // Se permite cambiar solo el campo 'status' (ej. marcar como pagada) en facturas emitidas.
     match /invoices/{invoiceId} {
-      allow read, write: if isAdminActive();
+      allow read, create: if isAdminActive();
+      allow update: if isAdminActive() && (
+        resource.data.status == 'draft' ||
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+      );
+      allow delete: if isAdminActive() && resource.data.status == 'draft';
     }
 
     match /products/{productId} {
