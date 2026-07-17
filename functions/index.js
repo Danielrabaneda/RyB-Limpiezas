@@ -8,7 +8,7 @@
  */
 
 const { onSchedule } = require("firebase-functions/v2/scheduler");
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onCall, HttpsError, onRequest } = require("firebase-functions/v2/https");
 const { onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { logger } = require("firebase-functions");
 const { initializeApp } = require("firebase-admin/app");
@@ -1268,6 +1268,4 @@ exports.onUserDocumentWritten = onDocumentWritten("users/{uid}", async (event) =
   }
   return null;
 });
-
-
 
