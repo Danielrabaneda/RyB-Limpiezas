@@ -173,10 +173,6 @@ export async function getNextInvoiceNumber(year) {
 // Emit Invoice: Change status from draft to pending, assign number atomically
 // VERIFACTU: Calcula y almacena hash encadenado con la factura anterior
 export async function emitInvoice(id) {
-  // Obtener hash de la última factura emitida ANTES de la transacción
-  const lastEmitted = await getLastEmittedInvoice();
-  const previousHash = lastEmitted?.hash || '';
-
   const invoiceRef = doc(db, COLLECTION, id);
   const settingsRef = doc(db, 'settings', 'billing');
   
@@ -193,6 +189,7 @@ export async function emitInvoice(id) {
     const settings = settingsSnap.exists() ? settingsSnap.data() : {};
     const nextSeq = parseInt(settings.nextInvoiceSeq) || 1;
     const fmt = settings.invoiceNumberFormat || 'numeric';
+    const previousHash = settings.lastInvoiceHash || '';
     
     let invoiceNumber;
     if (fmt === 'formatted') {
@@ -239,9 +236,10 @@ export async function emitInvoice(id) {
       tipoFactura: tipoFactura
     });
     
-    // Increment sequence counter atomically
+    // Increment sequence counter and update lastInvoiceHash atomically
     transaction.update(settingsRef, {
-      nextInvoiceSeq: nextSeq + 1
+      nextInvoiceSeq: nextSeq + 1,
+      lastInvoiceHash: hash
     });
   });
 }
@@ -376,10 +374,6 @@ export async function getLastEmittedInvoice() {
 export async function emitAllInvoices(ids) {
   if (!ids || ids.length === 0) return;
 
-  // Obtener hash de la última factura emitida ANTES de la transacción
-  const lastEmitted = await getLastEmittedInvoice();
-  let chainHash = lastEmitted?.hash || '';
-
   const settingsRef = doc(db, 'settings', 'billing');
   
   await runTransaction(db, async (transaction) => {
@@ -387,6 +381,7 @@ export async function emitAllInvoices(ids) {
     const settings = settingsSnap.exists() ? settingsSnap.data() : {};
     let nextSeq = parseInt(settings.nextInvoiceSeq) || 1;
     const fmt = settings.invoiceNumberFormat || 'numeric';
+    let chainHash = settings.lastInvoiceHash || '';
     
     const invoiceSnaps = [];
     for (const id of ids) {
@@ -453,7 +448,8 @@ export async function emitAllInvoices(ids) {
     }
     
     transaction.update(settingsRef, {
-      nextInvoiceSeq: nextSeq
+      nextInvoiceSeq: nextSeq,
+      lastInvoiceHash: chainHash
     });
   });
 }

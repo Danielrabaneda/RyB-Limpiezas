@@ -5,7 +5,7 @@ import {
   signOut, 
   onAuthStateChanged
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
 import { createUserWithoutLogout } from '../services/adminAuthService';
 
@@ -70,12 +70,39 @@ export function AuthProvider({ children }) {
       createdAt: serverTimestamp(),
     };
     await setDoc(doc(db, 'users', cred.user.uid), profile);
+
+    // Esperar reactivamente a que la Cloud Function asigne los claims
+    let claimConfirmed = false;
+    let attempts = 5;
+    let delay = 300; // ms inicial
+
+    for (let i = 0; i < attempts; i++) {
+      try {
+        console.log(`signup: Verificando claims (intento ${i + 1}/${attempts})...`);
+        const tokenResult = await cred.user.getIdTokenResult(true);
+        if (tokenResult.claims && tokenResult.claims.role) {
+          console.log('signup: Claims asignados con éxito:', tokenResult.claims);
+          claimConfirmed = true;
+          break;
+        }
+      } catch (err) {
+        console.error(`signup: Error en intento ${i + 1} de refresco de token:`, err);
+      }
+      await new Promise(resolve => setTimeout(resolve, delay));
+      delay *= 2; // retraso exponencial
+    }
+
+    if (!claimConfirmed) {
+      console.warn('signup: La Cloud Function tardó demasiado en aplicar los claims. Se prosigue con el flujo.');
+    }
+
     setUserProfile(profile);
     return { user: cred.user, profile };
   }, []);
 
   useEffect(() => {
     let active = true;
+    let unsubscribeProfile = null;
 
     // Safety timeout to prevent startup hangs
     const safetyTimer = setTimeout(() => {
@@ -92,50 +119,98 @@ export function AuthProvider({ children }) {
 
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       console.log('Auth state changed:', user ? 'Logged in' : 'Logged out');
+      
+      if (unsubscribeProfile) {
+        unsubscribeProfile();
+        unsubscribeProfile = null;
+      }
+
       if (!active) return;
 
       setCurrentUser(user);
       if (user) {
-        try {
-          const snap = await getDoc(doc(db, 'users', user.uid));
+        // Escuchar el perfil en Firestore en tiempo real para reaccionar a cambios al instante
+        unsubscribeProfile = onSnapshot(doc(db, 'users', user.uid), async (snap) => {
           if (!active) return;
 
           if (snap.exists()) {
             const profile = { uid: user.uid, ...snap.data() };
+            
+            // Si el operario o administrador es desactivado, forzar deslogueo inmediato
             if (profile.active === false) {
               console.warn('AuthContext: User profile inactive. Forcing logout.');
+              if (unsubscribeProfile) {
+                unsubscribeProfile();
+                unsubscribeProfile = null;
+              }
               await signOut(auth);
               if (active) {
                 setUserProfile(null);
                 setCurrentUser(null);
+                setLoading(false);
+                clearTimeout(safetyTimer);
               }
-            } else {
+              return;
+            }
+
+            // Sincronización proactiva de Claims
+            try {
+              const tokenResult = await user.getIdTokenResult();
+              const currentClaimRole = tokenResult.claims.role;
+              const currentClaimActive = tokenResult.claims.active;
+
+              // Si los claims locales no coinciden con la base de datos de Firestore, forzar refresco
+              if (currentClaimRole !== profile.role || currentClaimActive !== profile.active) {
+                console.log('AuthContext: Claims locales desincronizados. Refrescando token...');
+                await user.getIdToken(true);
+                console.log('AuthContext: Token de autenticación refrescado exitosamente.');
+              }
+            } catch (err) {
+              console.error('Error al comprobar o refrescar claims en el cliente:', err);
+            }
+
+            if (active) {
               setUserProfile(profile);
             }
           } else {
             console.warn('AuthContext: User profile not found. Forcing logout.');
+            if (unsubscribeProfile) {
+              unsubscribeProfile();
+              unsubscribeProfile = null;
+            }
             await signOut(auth);
             if (active) {
               setUserProfile(null);
               setCurrentUser(null);
             }
           }
-        } catch (err) {
-          console.error('Error fetching user profile during init:', err);
-        }
+          
+          if (active) {
+            setLoading(false);
+            clearTimeout(safetyTimer);
+          }
+        }, (err) => {
+          console.error('Error en el snapshot del perfil de usuario:', err);
+          if (active) {
+            setLoading(false);
+            clearTimeout(safetyTimer);
+          }
+        });
       } else {
-        setUserProfile(null);
-      }
-      
-      if (active) {
-        setLoading(false);
-        clearTimeout(safetyTimer);
+        if (active) {
+          setUserProfile(null);
+          setLoading(false);
+          clearTimeout(safetyTimer);
+        }
       }
     });
 
     return () => {
       active = false;
       unsubscribe();
+      if (unsubscribeProfile) {
+        unsubscribeProfile();
+      }
       clearTimeout(safetyTimer);
     };
   }, []);

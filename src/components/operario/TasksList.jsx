@@ -23,7 +23,7 @@ export default function TasksList({
             const isUrgent = task?.isUrgent || service?.isUrgent;
             
             const sName = (task?.taskName || '').toLowerCase();
-            const isException = sName.includes('escalera') || sName.includes('portal') || sName.includes('garaje');
+            const isException = sName.includes('escalera') || sName.includes('portal') || sName.includes('garaje') || sName.includes('oficina');
 
             return (
               <button

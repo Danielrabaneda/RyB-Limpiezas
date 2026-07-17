@@ -1,5 +1,5 @@
-import { doc, collection, addDoc, getDoc, deleteDoc } from 'firebase/firestore';
-import { signInWithEmailAndPassword } from 'firebase/auth';
+import { doc, collection, addDoc, getDoc, deleteDoc, setDoc, connectFirestoreEmulator } from 'firebase/firestore';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, connectAuthEmulator } from 'firebase/auth';
 import { db, auth } from '../src/config/firebase.js';
 import { 
   createInvoice, 
@@ -9,15 +9,48 @@ import {
 } from '../src/services/invoiceService.js';
 
 async function main() {
-  console.log('=== INICIANDO TEST DE VERIFACTU ===');
+  const useEmulator = process.env.USE_EMULATOR === 'true';
+
+  if (useEmulator) {
+    console.log('=== INICIANDO TEST DE VERIFACTU EN EL EMULADOR ===');
+    // Conectar a los emuladores locales
+    connectFirestoreEmulator(db, '127.0.0.1', 8080);
+    connectAuthEmulator(auth, 'http://127.0.0.1:9099');
+  } else {
+    console.log('=== INICIANDO TEST DE VERIFACTU EN PRODUCCIÓN ===');
+  }
 
   const invoiceIds = [];
 
   try {
-    // 0. Autenticarse como administrador para cumplir con las reglas de Firestore
-    console.log('Iniciando sesión como administrador...');
-    await signInWithEmailAndPassword(auth, 'admin@ryblimpiezas.com', 'Admin2024!');
-    console.log('Autenticación correcta. Ejecutando test...');
+    if (useEmulator) {
+      // 0. Autenticarse o crear el usuario en el emulador Auth
+      console.log('Iniciando sesión como administrador en el emulador...');
+      try {
+        await createUserWithEmailAndPassword(auth, 'admin@ryblimpiezas.com', 'Admin2024!');
+        console.log('Usuario administrador de prueba creado en el emulador.');
+      } catch (err) {
+        if (err.code !== 'auth/email-already-in-use') {
+          throw err;
+        }
+        console.log('El usuario administrador ya existe en el emulador.');
+      }
+      await signInWithEmailAndPassword(auth, 'admin@ryblimpiezas.com', 'Admin2024!');
+      console.log('Autenticación correcta en el emulador.');
+
+      // Inicializar configuración de facturación para el test
+      console.log('Inicializando configuración de facturación de prueba...');
+      await setDoc(doc(db, 'settings', 'billing'), {
+        nextInvoiceSeq: 354,
+        nif: 'B04843843',
+        invoiceNumberFormat: 'numeric',
+        lastInvoiceHash: ''
+      });
+    } else {
+      console.log('Iniciando sesión como administrador...');
+      await signInWithEmailAndPassword(auth, 'admin@ryblimpiezas.com', 'Admin2024!');
+      console.log('Autenticación correcta. Ejecutando test...');
+    }
 
     // 1. Crear 3 facturas en estado borrador (draft)
     console.log('\n1. Creando 3 facturas de prueba en borrador...');

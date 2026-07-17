@@ -8,6 +8,83 @@ import { calculateDailyMileage } from '../../services/mileageService';
 import { format, subDays, startOfWeek, endOfWeek, isPast, isSameDay } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { getGroupInfo } from '../../utils/dateGrouping';
+import { 
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, 
+  Tooltip, CartesianGrid, Legend, Cell 
+} from 'recharts';
+
+
+// Custom Tooltips for the charts
+const InterannualTooltip = ({ active, payload, label }) => {
+  if (active && payload && payload.length) {
+    return (
+      <div style={{
+        backgroundColor: '#1e293b', padding: '12px', borderRadius: '12px',
+        border: '1px solid #334155', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
+        color: '#f8fafc', fontSize: '12px'
+      }}>
+        <p style={{ fontWeight: 700, margin: '0 0 6px' }}>{label}</p>
+        {payload.map((p, idx) => (
+          <p key={idx} style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', margin: '2px 0', color: p.color }}>
+            <span>{p.name}:</span>
+            <span style={{ fontWeight: 800 }}>{p.value.toFixed(1)} km</span>
+          </p>
+        ))}
+      </div>
+    );
+  }
+  return null;
+};
+
+const OperatorsTooltip = ({ active, payload, label }) => {
+  if (active && payload && payload.length) {
+    const sortedPayload = [...payload].sort((a, b) => b.value - a.value);
+    const total = payload.reduce((sum, p) => sum + p.value, 0);
+    return (
+      <div style={{
+        backgroundColor: '#1e293b', padding: '12px', borderRadius: '12px',
+        border: '1px solid #334155', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
+        color: '#f8fafc', fontSize: '12px', maxHeight: '240px', overflowY: 'auto'
+      }}>
+        <p style={{ fontWeight: 700, margin: '0 0 6px' }}>{label}</p>
+        {sortedPayload.map((p, idx) => (
+          p.value > 0 && (
+            <p key={idx} style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', margin: '2px 0', color: p.color }}>
+              <span>{p.name}:</span>
+              <span style={{ fontWeight: 800 }}>{p.value.toFixed(1)} km</span>
+            </p>
+          )
+        ))}
+        {payload.length > 1 && (
+          <div style={{ borderTop: '1px solid #475569', marginTop: '6px', paddingTop: '6px', display: 'flex', justifyContent: 'space-between', fontWeight: 800, color: '#38bdf8' }}>
+            <span>Total:</span>
+            <span>{total.toFixed(1)} km</span>
+          </div>
+        )}
+      </div>
+    );
+  }
+  return null;
+};
+
+const WeeklyTooltip = ({ active, payload, label }) => {
+  if (active && payload && payload.length) {
+    return (
+      <div style={{
+        backgroundColor: '#1e293b', padding: '12px', borderRadius: '12px',
+        border: '1px solid #334155', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
+        color: '#f8fafc', fontSize: '12px'
+      }}>
+        <p style={{ fontWeight: 700, margin: '0 0 4px' }}>{label}</p>
+        <p style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', margin: 0, color: '#38bdf8', fontWeight: 800 }}>
+          <span>Kilómetros:</span>
+          <span>{payload[0].value.toFixed(1)} km</span>
+        </p>
+      </div>
+    );
+  }
+  return null;
+};
 
 
 export default function KilometrajePage() {
@@ -23,6 +100,8 @@ export default function KilometrajePage() {
   const [recalculating, setRecalculating] = useState(false);
   const [expandedWeeks, setExpandedWeeks] = useState(new Set());
   const [expandedDays, setExpandedDays] = useState(new Set());
+  const [allYearsData, setAllYearsData] = useState([]);
+  const [chartMode, setChartMode] = useState('interannual');
 
   // Auto-expand current week on data load
   useEffect(() => {
@@ -57,16 +136,18 @@ export default function KilometrajePage() {
   async function loadReport() {
     setLoading(true);
     try {
+      const currentYear = new Date(endDate).getFullYear();
+      const queryStart = new Date(`${currentYear - 1}-01-01T00:00:00`);
+      const queryEnd = new Date(`${currentYear}-12-31T23:59:59`);
+      
       const filters = {};
       if (filterOperario) filters.userId = filterOperario;
       
-      let results = await getMileageReport(new Date(startDate), new Date(endDate), filters);
+      let allData = await getMileageReport(queryStart, queryEnd, filters);
 
       // Filtro por comunidad en memoria
       if (filterCommunity) {
-        results = results.filter(r => 
-          // Si es manual, lo mostramos si el usuario está filtrado (ya está filtrado por userId arriba)
-          // O si no hay filtro de usuario, mostramos todos los manuales + los auto que coincidan
+        allData = allData.filter(r => 
           r.type === 'manual' || 
           r.tramos?.some(t => 
             t.origenId === filterCommunity || t.destinoId === filterCommunity
@@ -75,9 +156,20 @@ export default function KilometrajePage() {
       }
       
       // Solo mostrar operarios que hayan generado kilómetros
-      results = results.filter(r => (r.totalKm || 0) > 0);
+      allData = allData.filter(r => (r.totalKm || 0) > 0);
       
-      setMileageData(results);
+      setAllYearsData(allData);
+
+      // Filtrado en memoria para el listado según las fechas del rango seleccionado
+      const startLimit = new Date(`${startDate}T00:00:00`);
+      const endLimit = new Date(`${endDate}T23:59:59`);
+      
+      const rangeData = allData.filter(r => {
+        const rDate = new Date(r.date);
+        return rDate >= startLimit && rDate <= endLimit;
+      });
+      
+      setMileageData(rangeData);
     } catch (err) {
       console.error('[Kilometraje] Error cargando informe:', err);
     } finally {
@@ -424,6 +516,132 @@ export default function KilometrajePage() {
     );
   }
 
+  const renderChart = () => {
+    const filterYear = new Date(endDate).getFullYear();
+    const prevYear = filterYear - 1;
+
+    if (chartMode === 'interannual') {
+      const monthsList = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+      const chartData = monthsList.map((month, index) => {
+        let currentYearKm = 0;
+        let prevYearKm = 0;
+        allYearsData.forEach(record => {
+          const d = new Date(record.date);
+          if (d.getMonth() === index) {
+            if (d.getFullYear() === filterYear) {
+              currentYearKm += (record.totalKm || 0);
+            } else if (d.getFullYear() === prevYear) {
+              prevYearKm += (record.totalKm || 0);
+            }
+          }
+        });
+        return {
+          month,
+          [filterYear]: Math.round(currentYearKm * 100) / 100,
+          [prevYear]: Math.round(prevYearKm * 100) / 100
+        };
+      });
+
+      return (
+        <BarChart data={chartData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+          <XAxis dataKey="month" tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} />
+          <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} />
+          <Tooltip content={<InterannualTooltip />} />
+          <Legend iconType="circle" wrapperStyle={{ fontSize: 10, fontWeight: 700 }} />
+          <Bar dataKey={filterYear.toString()} fill="#3b82f6" radius={[4, 4, 0, 0]} name={`Año ${filterYear}`} />
+          <Bar dataKey={prevYear.toString()} fill="#cbd5e1" radius={[4, 4, 0, 0]} name={`Año ${prevYear}`} />
+        </BarChart>
+      );
+    } else if (chartMode === 'operators') {
+      const monthsList = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+      const activeOpsSet = new Set();
+      allYearsData.forEach(record => {
+        const d = new Date(record.date);
+        if (d.getFullYear() === filterYear && record.totalKm > 0) {
+          activeOpsSet.add(record.userName || getOperarioName(record.userId));
+        }
+      });
+      const activeOpsList = Array.from(activeOpsSet);
+
+      const chartData = monthsList.map((month, index) => {
+        const item = { month };
+        activeOpsList.forEach(opName => {
+          item[opName] = 0;
+        });
+        allYearsData.forEach(record => {
+          const d = new Date(record.date);
+          if (d.getFullYear() === filterYear && d.getMonth() === index) {
+            const opName = record.userName || getOperarioName(record.userId);
+            if (activeOpsList.includes(opName)) {
+              item[opName] += (record.totalKm || 0);
+            }
+          }
+        });
+        activeOpsList.forEach(opName => {
+          item[opName] = Math.round(item[opName] * 100) / 100;
+        });
+        return item;
+      });
+
+      const opColors = [
+        '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899',
+        '#06b6d4', '#f43f5e', '#14b8a6', '#84cc16', '#6366f1'
+      ];
+
+      return (
+        <BarChart data={chartData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+          <XAxis dataKey="month" tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} />
+          <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} />
+          <Tooltip content={<OperatorsTooltip />} />
+          <Legend iconType="circle" wrapperStyle={{ fontSize: 10, fontWeight: 700 }} />
+          {activeOpsList.map((opName, idx) => (
+            <Bar 
+              key={opName} 
+              dataKey={opName} 
+              stackId="opsStack" 
+              fill={opColors[idx % opColors.length]} 
+              name={opName}
+            />
+          ))}
+        </BarChart>
+      );
+    } else {
+      const weeklyDataMap = {};
+      mileageData.forEach(record => {
+        const d = new Date(record.date);
+        const start = startOfWeek(d, { weekStartsOn: 1 });
+        const weekStr = format(start, "dd/MM/yyyy");
+        if (!weeklyDataMap[weekStr]) {
+          weeklyDataMap[weekStr] = {
+            weekStart: start,
+            weekLabel: `Sem. ${format(start, 'dd/MM')}`,
+            kilometers: 0
+          };
+        }
+        weeklyDataMap[weekStr].kilometers += (record.totalKm || 0);
+      });
+
+      const chartData = Object.values(weeklyDataMap)
+        .sort((a, b) => a.weekStart.getTime() - b.weekStart.getTime())
+        .map(item => ({
+          week: item.weekLabel,
+          'Kilómetros': Math.round(item.kilometers * 100) / 100
+        }));
+
+      return (
+        <BarChart data={chartData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+          <XAxis dataKey="week" tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} />
+          <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} />
+          <Tooltip content={<WeeklyTooltip />} />
+          <Bar dataKey="Kilómetros" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+        </BarChart>
+      );
+    }
+  };
+
   return (
     <div className="animate-fadeIn">
       <h2 style={{ fontSize: 'var(--font-2xl)', fontWeight: 800, marginBottom: 'var(--space-6)' }}>🚗 Kilometraje</h2>
@@ -464,25 +682,178 @@ export default function KilometrajePage() {
         )}
       </div>
 
-      {/* Summary stats */}
-      <div className="grid grid-4 gap-4 mb-6">
-        <div className="stat-card">
-          <div className="stat-value" style={{ color: 'var(--color-primary)' }}>{totalKm.toFixed(1)}</div>
-          <div className="stat-label">km totales</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value">{totalDays}</div>
-          <div className="stat-label">Días con registro</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value">{totalTramos}</div>
-          <div className="stat-label">Tramos recorridos</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value" style={{ color: totalSospechosos > 0 ? 'var(--color-danger)' : 'var(--color-success)' }}>
-            {totalSospechosos > 0 ? `⚠️ ${totalSospechosos}` : '✅ 0'}
+      {/* Dashboard de Kilometraje y Métricas */}
+      <div className="card shadow-md mb-6 animate-fadeIn" style={{
+        padding: 'var(--space-6)',
+        borderRadius: 'var(--radius-lg)',
+        backgroundColor: 'var(--color-bg-card)',
+        border: '1px solid var(--color-border)'
+      }}>
+        <div style={{
+          display: 'flex',
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: 'var(--space-4)',
+          marginBottom: 'var(--space-6)',
+          paddingBottom: 'var(--space-4)',
+          borderBottom: '1px solid var(--color-border)'
+        }}>
+          <div>
+            <h3 style={{ fontSize: 'var(--font-lg)', fontWeight: 800, color: 'var(--color-text)', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              📊 Rendimiento y Kilometraje
+            </h3>
+            <p style={{ fontSize: 'var(--font-xs)', color: 'var(--color-text-secondary)', margin: '4px 0 0' }}>Visualiza y compara el rendimiento del kilometraje</p>
           </div>
-          <div className="stat-label">Tramos sospechosos</div>
+          
+          <div style={{
+            display: 'flex',
+            backgroundColor: 'var(--color-bg-input)',
+            padding: '4px',
+            borderRadius: 'var(--radius-md)',
+            border: '1px solid var(--color-border)',
+            gap: '4px'
+          }}>
+            <button 
+              style={{
+                padding: '6px 12px',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: 'var(--font-xs)',
+                fontWeight: 700,
+                border: 'none',
+                cursor: 'pointer',
+                transition: 'all var(--transition-fast)',
+                backgroundColor: chartMode === 'interannual' ? 'var(--color-bg-card)' : 'transparent',
+                color: chartMode === 'interannual' ? 'var(--color-primary)' : 'var(--color-text-secondary)',
+                boxShadow: chartMode === 'interannual' ? 'var(--shadow-sm)' : 'none'
+              }}
+              onClick={() => setChartMode('interannual')}
+            >
+              Comparativa Anual
+            </button>
+            <button 
+              style={{
+                padding: '6px 12px',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: 'var(--font-xs)',
+                fontWeight: 700,
+                border: 'none',
+                cursor: 'pointer',
+                transition: 'all var(--transition-fast)',
+                backgroundColor: chartMode === 'operators' ? 'var(--color-bg-card)' : 'transparent',
+                color: chartMode === 'operators' ? 'var(--color-primary)' : 'var(--color-text-secondary)',
+                boxShadow: chartMode === 'operators' ? 'var(--shadow-sm)' : 'none'
+              }}
+              onClick={() => setChartMode('operators')}
+            >
+              Por Operario
+            </button>
+            <button 
+              style={{
+                padding: '6px 12px',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: 'var(--font-xs)',
+                fontWeight: 700,
+                border: 'none',
+                cursor: 'pointer',
+                transition: 'all var(--transition-fast)',
+                backgroundColor: chartMode === 'weekly' ? 'var(--color-bg-card)' : 'transparent',
+                color: chartMode === 'weekly' ? 'var(--color-primary)' : 'var(--color-text-secondary)',
+                boxShadow: chartMode === 'weekly' ? 'var(--shadow-sm)' : 'none'
+              }}
+              onClick={() => setChartMode('weekly')}
+            >
+              Kms Semanales
+            </button>
+          </div>
+        </div>
+
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+          gap: 'var(--space-6)',
+          alignItems: 'center'
+        }}>
+          <div style={{ height: '300px', width: '100%', minWidth: '0' }}>
+            <ResponsiveContainer width="100%" height="100%">
+              {renderChart()}
+            </ResponsiveContainer>
+          </div>
+
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+            gap: 'var(--space-4)'
+          }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              padding: '16px',
+              borderRadius: 'var(--radius-md)',
+              backgroundColor: 'var(--color-primary-50)',
+              border: '1px solid var(--color-primary-100)'
+            }}>
+              <div style={{ fontSize: '1.5rem' }}>📏</div>
+              <div>
+                <div style={{ fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--color-text-muted)' }}>Kilómetros Totales</div>
+                <div style={{ fontSize: 'var(--font-lg)', fontWeight: 800, color: 'var(--color-primary)' }}>{totalKm.toFixed(1)} km</div>
+              </div>
+            </div>
+
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              padding: '16px',
+              borderRadius: 'var(--radius-md)',
+              backgroundColor: 'var(--color-bg-input)',
+              border: '1px solid var(--color-border)'
+            }}>
+              <div style={{ fontSize: '1.5rem' }}>📅</div>
+              <div>
+                <div style={{ fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--color-text-muted)' }}>Días con Registro</div>
+                <div style={{ fontSize: 'var(--font-lg)', fontWeight: 800, color: 'var(--color-text)' }}>{totalDays}</div>
+              </div>
+            </div>
+
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              padding: '16px',
+              borderRadius: 'var(--radius-md)',
+              backgroundColor: 'var(--color-bg-input)',
+              border: '1px solid var(--color-border)'
+            }}>
+              <div style={{ fontSize: '1.5rem' }}>🚗</div>
+              <div>
+                <div style={{ fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--color-text-muted)' }}>Tramos Recorridos</div>
+                <div style={{ fontSize: 'var(--font-lg)', fontWeight: 800, color: 'var(--color-text)' }}>{totalTramos}</div>
+              </div>
+            </div>
+
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              padding: '16px',
+              borderRadius: 'var(--radius-md)',
+              backgroundColor: totalSospechosos > 0 ? 'var(--color-danger-light)' : 'var(--color-success-light)',
+              border: totalSospechosos > 0 ? '1px solid #fca5a5' : '1px solid #a7f3d0'
+            }}>
+              <div style={{ fontSize: '1.5rem' }}>{totalSospechosos > 0 ? '⚠️' : '✅'}</div>
+              <div>
+                <div style={{ fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--color-text-muted)' }}>Tramos Sospechosos</div>
+                <div style={{ 
+                  fontSize: 'var(--font-lg)', 
+                  fontWeight: 800, 
+                  color: totalSospechosos > 0 ? 'var(--color-danger)' : 'var(--color-success)' 
+                }}>{totalSospechosos}</div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 

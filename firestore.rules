@@ -46,6 +46,30 @@ service cloud.firestore {
     }
 
     // =========================================================================
+    // FUNCIONES DE CONTROL PARALELAS (NUEVAS - BASADAS EN CLAIMS)
+    // =========================================================================
+    function isAdminClaim() {
+      return isAuthenticated() && request.auth.token.role == 'admin';
+    }
+
+    function isEmployeeClaim() {
+      return isAuthenticated() && 
+        (request.auth.token.role == 'admin' || request.auth.token.role == 'operario');
+    }
+
+    function isActiveUserClaim() {
+      return isAuthenticated() && request.auth.token.active == true;
+    }
+
+    function isEmployeeActiveClaim() {
+      return isEmployeeClaim() && isActiveUserClaim();
+    }
+
+    function isAdminActiveClaim() {
+      return isAdminClaim() && isActiveUserClaim();
+    }
+
+    // =========================================================================
     // RULES
     // =========================================================================
     
@@ -124,12 +148,12 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------------------
-    // GPS SUGGESTIONS
+    // GPS SUGGESTIONS (Colección de prueba - Custom Claims)
     // -------------------------------------------------------------------------
     match /gpsSuggestions/{suggestionId} {
-      allow read: if isAdminActive() || (isEmployeeActive() && (resource.data.operarioUid == request.auth.uid || resource.data.userId == request.auth.uid));
-      allow create: if isEmployeeActive();
-      allow update, delete: if isAdminActive();
+      allow read: if isAdminActiveClaim() || (isEmployeeActiveClaim() && (resource.data.operarioUid == request.auth.uid || resource.data.userId == request.auth.uid));
+      allow create: if isEmployeeActiveClaim();
+      allow update, delete: if isAdminActiveClaim();
     }
 
     // -------------------------------------------------------------------------
@@ -150,7 +174,13 @@ service cloud.firestore {
           'scheduledServiceId' in resource.data && 
           resource.data.scheduledServiceId != null && 
           resource.data.scheduledServiceId != '' && 
-          get(/databases/$(database)/documents/scheduledServices/$(resource.data.scheduledServiceId)).data.assignedUserId == request.auth.uid
+          (
+            get(/databases/$(database)/documents/scheduledServices/$(resource.data.scheduledServiceId)).data.assignedUserId == request.auth.uid ||
+            (
+              'companionIds' in get(/databases/$(database)/documents/scheduledServices/$(resource.data.scheduledServiceId)).data &&
+              request.auth.uid in get(/databases/$(database)/documents/scheduledServices/$(resource.data.scheduledServiceId)).data.companionIds
+            )
+          )
         )
       ));
       allow create: if isEmployeeActive() && (
@@ -159,7 +189,13 @@ service cloud.firestore {
           'scheduledServiceId' in request.resource.data && 
           request.resource.data.scheduledServiceId != null && 
           request.resource.data.scheduledServiceId != '' && 
-          get(/databases/$(database)/documents/scheduledServices/$(request.resource.data.scheduledServiceId)).data.assignedUserId == request.auth.uid
+          (
+            get(/databases/$(database)/documents/scheduledServices/$(request.resource.data.scheduledServiceId)).data.assignedUserId == request.auth.uid ||
+            (
+              'companionIds' in get(/databases/$(database)/documents/scheduledServices/$(request.resource.data.scheduledServiceId)).data &&
+              request.auth.uid in get(/databases/$(database)/documents/scheduledServices/$(request.resource.data.scheduledServiceId)).data.companionIds
+            )
+          )
         )
       );
       allow update, delete: if isEmployeeActive() && (
@@ -169,7 +205,13 @@ service cloud.firestore {
           'scheduledServiceId' in resource.data && 
           resource.data.scheduledServiceId != null && 
           resource.data.scheduledServiceId != '' && 
-          get(/databases/$(database)/documents/scheduledServices/$(resource.data.scheduledServiceId)).data.assignedUserId == request.auth.uid
+          (
+            get(/databases/$(database)/documents/scheduledServices/$(resource.data.scheduledServiceId)).data.assignedUserId == request.auth.uid ||
+            (
+              'companionIds' in get(/databases/$(database)/documents/scheduledServices/$(resource.data.scheduledServiceId)).data &&
+              request.auth.uid in get(/databases/$(database)/documents/scheduledServices/$(resource.data.scheduledServiceId)).data.companionIds
+            )
+          )
         )
       );
     }

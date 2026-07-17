@@ -9,18 +9,20 @@
 
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
-const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { logger } = require("firebase-functions");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, Timestamp, FieldValue } = require("firebase-admin/firestore");
 const { getMessaging } = require("firebase-admin/messaging");
 const { getStorage } = require("firebase-admin/storage");
+const { getAuth } = require("firebase-admin/auth");
 const nodemailer = require("nodemailer");
 
 // Inicializar Firebase Admin
 initializeApp();
 const db = getFirestore();
 const messaging = getMessaging();
+const auth = getAuth();
 
 // ============================================================================
 // CONSTANTES
@@ -1225,5 +1227,47 @@ exports.getClientPortalData = onCall(
     };
   }
 );
+
+/**
+ * Trigger de Firestore para mantener actualizados los Custom Claims (role, active) de Firebase Auth.
+ * Se ejecuta al crear, actualizar o borrar un documento en users/{uid}.
+ */
+exports.onUserDocumentWritten = onDocumentWritten("users/{uid}", async (event) => {
+  const uid = event.params.uid;
+  const beforeData = event.data.before.exists ? event.data.before.data() : null;
+  const afterData = event.data.after.exists ? event.data.after.data() : null;
+
+  logger.log(`onUserDocumentWritten disparada para uid: ${uid}`);
+
+  try {
+    const authAdmin = getAuth();
+
+    // Caso 1: El documento de usuario ha sido eliminado
+    if (!afterData) {
+      logger.log(`El usuario ${uid} ha sido eliminado de Firestore. Limpiando custom claims...`);
+      await authAdmin.setCustomUserClaims(uid, null);
+      logger.log(`Custom claims limpiados exitosamente para uid: ${uid}`);
+      return null;
+    }
+
+    // Caso 2: El documento de usuario ha sido creado o actualizado
+    const role = afterData.role || "";
+    const active = afterData.active !== false; // por defecto true si no se especifica
+
+    // Evitamos llamadas innecesarias si los claims ya son los mismos que antes
+    if (beforeData && beforeData.role === role && beforeData.active === active) {
+      logger.log(`No hay cambios en los claims relevantes (role: ${role}, active: ${active}) para uid: ${uid}. Omitiendo actualización.`);
+      return null;
+    }
+
+    logger.log(`Estableciendo custom claims para uid: ${uid} -> role: ${role}, active: ${active}`);
+    await authAdmin.setCustomUserClaims(uid, { role, active });
+    logger.log(`Custom claims establecidos exitosamente para uid: ${uid}`);
+  } catch (error) {
+    logger.error(`Error al establecer custom claims para uid ${uid}:`, error);
+  }
+  return null;
+});
+
 
 

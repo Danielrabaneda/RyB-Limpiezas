@@ -257,7 +257,11 @@ export function useTodayData(userProfile) {
         }
         
         const isOtras = svc.printColor === '#ef4444' && !svc.isGarage;
-        if (isOtras) continue;
+        const hasMainService = optimized.some(s => 
+          s.communityId === svc.communityId && 
+          !(s.printColor === '#ef4444' && !s.isGarage)
+        );
+        if (isOtras && hasMainService) continue;
         const groupKey = `${svc.communityId}_${svc.id}`;
         
         if (seenGroupKeys.has(groupKey)) {

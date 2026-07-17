@@ -1,5 +1,44 @@
 import React from 'react';
 import { CATEGORIES } from '../../../utils/inventoryCategories';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell
+} from 'recharts';
+
+function ModalChartTooltip({ active, payload, unit }) {
+  if (!active || !payload?.length) return null;
+  const data = payload[0].payload;
+  return (
+    <div style={{
+      background: 'rgba(15, 23, 42, 0.95)', backdropFilter: 'blur(8px)',
+      borderRadius: 12, padding: '8px 12px', border: '1px solid rgba(255,255,255,0.1)',
+      boxShadow: '0 8px 32px rgba(0,0,0,0.3)', pointerEvents: 'none'
+    }}>
+      <p style={{ color: '#94a3b8', fontSize: 10, margin: 0, fontWeight: 600 }}>{data.label}</p>
+      <p style={{ color: '#fff', fontSize: 14, margin: '2px 0', fontWeight: 800 }}>
+        {data.value.toFixed(1)} <span style={{ fontSize: 10, color: '#94a3b8' }}>{unit}</span>
+      </p>
+      <p style={{ color: '#64748b', fontSize: 9, margin: 0 }}>{data.count} entregas</p>
+    </div>
+  );
+}
+
+function ModalOperatorTooltip({ active, payload, unit }) {
+  if (!active || !payload?.length) return null;
+  const data = payload[0].payload;
+  return (
+    <div style={{
+      background: 'rgba(15, 23, 42, 0.95)', backdropFilter: 'blur(8px)',
+      borderRadius: 12, padding: '8px 12px', border: '1px solid rgba(255,255,255,0.1)',
+      boxShadow: '0 8px 32px rgba(0,0,0,0.3)', pointerEvents: 'none'
+    }}>
+      <p style={{ color: '#e2e8f0', fontSize: 11, margin: 0, fontWeight: 700 }}>{data.name}</p>
+      <p style={{ color: '#fff', fontSize: 14, margin: '2px 0 0', fontWeight: 800 }}>
+        {data.value.toFixed(1)} <span style={{ fontSize: 10, color: '#94a3b8' }}>{unit}</span>
+      </p>
+    </div>
+  );
+}
+
 
 export default function InventoryModals({
   showAddProduct,
@@ -283,34 +322,40 @@ export default function InventoryModals({
                     </div>
                   ) : (
                     <div className="bg-slate-50/60 p-4 rounded-2xl border border-slate-100">
-                      <div className="h-32 flex items-end gap-1.5 pb-2 border-b border-slate-200 overflow-x-auto">
-                        {chartData.map((item, idx) => {
-                          const heightPercent = (item.value / maxVal) * 100;
-                          const hasConsumption = item.value > 0;
-                          return (
-                            <div key={idx} className="flex-1 min-w-[24px] flex flex-col justify-end items-center h-full group relative cursor-pointer">
-                              {/* Tooltip */}
-                              <div className="absolute bottom-full mb-1.5 bg-slate-800 text-white text-[9px] py-1 px-2 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-20 shadow-md font-bold">
-                                {item.value.toFixed(1)} {statsModal.product.unit} ({item.count} ent.)
-                              </div>
-                              {/* Bar */}
-                              <div 
-                                style={{ height: `${Math.max(heightPercent, 3)}%` }} 
-                                className={`w-full rounded-t-md transition-all duration-300 ${
-                                  hasConsumption ? 'bg-gradient-to-t from-blue-600 to-cyan-400 hover:brightness-105 shadow-sm' : 'bg-slate-200'
-                                }`}
-                              />
-                            </div>
-                          );
-                        })}
-                      </div>
-                      {/* Axis Labels */}
-                      <div className="flex gap-1.5 mt-2">
-                        {chartData.map((item, idx) => (
-                          <div key={idx} className="flex-1 text-[8px] font-bold text-slate-400 text-center truncate" title={item.label}>
-                            {item.label.split(' ')[0]}
-                          </div>
-                        ))}
+                      <div style={{ width: '100%', height: 130 }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={chartData} margin={{ top: 10, right: 0, left: -25, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                            <XAxis
+                              dataKey="label"
+                              tick={{ fontSize: 8, fill: '#94a3b8', fontWeight: 600 }}
+                              axisLine={false}
+                              tickLine={false}
+                              tickFormatter={val => val.split(' ')[0]}
+                            />
+                            <YAxis
+                              tick={{ fontSize: 8, fill: '#94a3b8', fontWeight: 600 }}
+                              axisLine={false}
+                              tickLine={false}
+                            />
+                            <Tooltip content={<ModalChartTooltip unit={statsModal.product.unit} />} cursor={{ fill: 'rgba(59, 130, 246, 0.04)' }} />
+                            <Bar dataKey="value" radius={[4, 4, 0, 0]} animationDuration={500}>
+                              {chartData.map((entry, index) => (
+                                <Cell
+                                  key={`cell-${index}`}
+                                  fill={entry.value > 0 ? 'url(#modalBarGradient)' : '#e2e8f0'}
+                                />
+                              ))}
+                            </Bar>
+                            {/* Gradient definition */}
+                            <defs>
+                              <linearGradient id="modalBarGradient" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor="#3b82f6" />
+                                <stop offset="100%" stopColor="#06b6d4" />
+                              </linearGradient>
+                            </defs>
+                          </BarChart>
+                        </ResponsiveContainer>
                       </div>
                     </div>
                   )}
@@ -327,23 +372,37 @@ export default function InventoryModals({
                     </div>
                   ) : (
                     <div className="flex flex-col gap-3 bg-slate-50/40 p-4 border border-slate-100 rounded-2xl">
-                      {stats.topOperators.map((op, idx) => {
-                        const percent = stats.totalConsumed > 0 ? (op.value / stats.totalConsumed) * 100 : 0;
-                        return (
-                          <div key={op.uid} className="flex flex-col gap-1">
-                            <div className="flex justify-between items-center text-xs">
-                              <span className="font-semibold text-slate-600">{idx + 1}. {op.name}</span>
-                              <span className="font-bold text-slate-800">{op.value.toFixed(1)} {statsModal.product.unit} ({percent.toFixed(0)}%)</span>
-                            </div>
-                            <div className="w-full bg-slate-200/80 h-2 rounded-full overflow-hidden">
-                              <div 
-                                className="progress-bar-fill h-full rounded-full transition-all duration-500" 
-                                style={{ width: `${percent}%` }}
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
+                      <div style={{ width: '100%', height: Math.max(stats.topOperators.length * 32, 100) }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart
+                            data={stats.topOperators}
+                            layout="vertical"
+                            margin={{ top: 0, right: 35, left: -25, bottom: 0 }}
+                          >
+                            <XAxis type="number" hide />
+                            <YAxis
+                              type="category"
+                              dataKey="name"
+                              tick={{ fontSize: 9, fill: '#475569', fontWeight: 600 }}
+                              axisLine={false}
+                              tickLine={false}
+                              width={80}
+                            />
+                            <Tooltip content={<ModalOperatorTooltip unit={statsModal.product.unit} />} cursor={{ fill: 'rgba(59, 130, 246, 0.04)' }} />
+                            <Bar
+                              dataKey="value"
+                              radius={[0, 4, 4, 0]}
+                              animationDuration={500}
+                              label={{ position: 'right', fontSize: 9, fontWeight: 700, fill: '#475569', formatter: val => `${val.toFixed(1)} ${statsModal.product.unit}` }}
+                            >
+                              {stats.topOperators.map((entry, index) => {
+                                const colors = ['#3b82f6', '#6366f1', '#8b5cf6', '#a78bfa', '#818cf8'];
+                                return <Cell key={`cell-op-${index}`} fill={colors[index % colors.length]} />;
+                              })}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
                     </div>
                   )}
                 </div>

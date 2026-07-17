@@ -71,7 +71,8 @@ export default function TodayPage() {
     setManualKm,
     handleSetCompanion,
     handleToggleCar,
-    hasCarConflict
+    hasCarConflict,
+    companionInfo
   } = carAndCompanion;
 
   // Hook de ciclo de vida de la jornada (Paso 3)

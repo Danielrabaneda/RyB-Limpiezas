@@ -151,18 +151,7 @@ export default function TodayServiceCard({
             );
           })}
         </div>
-        {svc.isCompanion ? (
-          <button 
-            className="btn btn-secondary"
-            style={{ borderRadius: '9999px', padding: '6px 18px', fontSize: '13px', fontWeight: 'bold', whiteSpace: 'nowrap' }}
-            onClick={(e) => {
-              e.stopPropagation();
-              navigate(`/operario/servicio/${svc.id}`);
-            }}
-          >
-            Ver detalles
-          </button>
-        ) : (!svc.status || svc.status === 'pending') && (
+        {(!svc.status || svc.status === 'pending') && (
           <button 
             className="btn btn-primary"
             style={{ borderRadius: '9999px', padding: '6px 18px', fontSize: '13px', fontWeight: 'bold', boxShadow: '0 4px 6px -1px rgba(37, 99, 235, 0.3)', whiteSpace: 'nowrap' }}

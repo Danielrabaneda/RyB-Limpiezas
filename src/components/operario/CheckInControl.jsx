@@ -37,7 +37,7 @@ export default function CheckInControl({
   handleForceComplete
 }) {
   // If titular has another active check-in, warn them
-  if (otherActiveCheckIn && !isCompleted && isTitular) {
+  if (otherActiveCheckIn && !isCompleted) {
     return (
       <div className="card mb-4" style={{ border: '2px solid var(--color-warning)', background: 'var(--color-warning-light)' }}>
         <p className="text-sm font-bold text-warning-dark mb-2">
@@ -56,8 +56,8 @@ export default function CheckInControl({
     );
   }
 
-  // Only display check-in controls if service is not completed and user is titular OR if already checked in
-  const canShowControls = ((!isCompleted && isTitular) || isCheckedIn) && !otherActiveCheckIn;
+  // Only display check-in controls if service is not completed OR if already checked in
+  const canShowControls = (!isCompleted || isCheckedIn) && !otherActiveCheckIn;
   if (!canShowControls) return null;
 
   return (

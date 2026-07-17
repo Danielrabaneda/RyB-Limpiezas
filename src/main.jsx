@@ -7,7 +7,16 @@ import { registerSW } from 'virtual:pwa-register';
 // Register service worker for PWA only if not in a client portal,
 // otherwise unregister any existing service worker to avoid caching issues on client portals.
 if (!window.location.pathname.includes('/portal/')) {
-  registerSW({ immediate: true });
+  const updateSW = registerSW({
+    immediate: true,
+    onNeedRefresh() {
+      // Automatically update to the new service worker version
+      updateSW(true);
+    },
+    onOfflineReady() {
+      console.log('App lista para uso offline.');
+    }
+  });
 } else {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.getRegistrations().then(function(registrations) {

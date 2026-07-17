@@ -292,22 +292,34 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
       const currentGroup = groupedServices.length > 0 ? groupedServices : [service];
       for (const s of currentGroup) {
         await updateScheduledServiceStatus(s.id, 'in_progress');
-      }
-
-      if (activeWorkday?.currentCompanionId) {
-        for (const s of currentGroup) {
+        if (s.assignedUserId !== userProfile.uid) {
+          if (!s.companionIds?.includes(userProfile.uid)) {
+            await addCompanionToService(s.id, userProfile.uid);
+          }
+        }
+        if (activeWorkday?.currentCompanionId) {
           if (!s.companionIds?.includes(activeWorkday.currentCompanionId)) {
             await addCompanionToService(s.id, activeWorkday.currentCompanionId);
           }
         }
       }
 
-      const companionsToCheckIn = [...(service.companionIds || [])];
-      if (activeWorkday?.currentCompanionId && !companionsToCheckIn.includes(activeWorkday.currentCompanionId)) {
-        companionsToCheckIn.push(activeWorkday.currentCompanionId);
+      const otherUsers = new Set();
+      if (service.assignedUserId && service.assignedUserId !== userProfile.uid) {
+        otherUsers.add(service.assignedUserId);
+      }
+      if (service.companionIds && Array.isArray(service.companionIds)) {
+        service.companionIds.forEach(cid => {
+          if (cid && cid !== userProfile.uid) {
+            otherUsers.add(cid);
+          }
+        });
+      }
+      if (activeWorkday?.currentCompanionId && activeWorkday.currentCompanionId !== userProfile.uid) {
+        otherUsers.add(activeWorkday.currentCompanionId);
       }
 
-      for (const companionId of companionsToCheckIn) {
+      for (const companionId of otherUsers) {
         try {
           await createCheckIn({
             userId: companionId,
@@ -461,7 +473,7 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
         const exec = taskExecutions.find(e => e.communityTaskId === s.communityTaskId);
         const specificTask = tasks.find(t => t.id === s.communityTaskId);
         const sName = (s.taskName || specificTask?.taskName || '').toLowerCase();
-        const isException = sName.includes('escalera') || sName.includes('portal') || sName.includes('garaje');
+        const isException = sName.includes('escalera') || sName.includes('portal') || sName.includes('garaje') || sName.includes('oficina');
         const isDone = exec && exec.status === 'completed';
         
         if (!isDone && !isException) {
@@ -561,7 +573,7 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
           
           const specificTask = tasks.find(t => t.id === s.communityTaskId);
           const sName = (s.taskName || specificTask?.taskName || '').toLowerCase();
-          const isException = sName.includes('escalera') || sName.includes('portal') || sName.includes('garaje');
+          const isException = sName.includes('escalera') || sName.includes('portal') || sName.includes('garaje') || sName.includes('oficina');
           const isGarage = sName.includes('garaje');
 
           if ((exec && exec.status === 'completed') || isException) {
@@ -633,12 +645,22 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
 
       await completeCheckOut(checkInId, pos.lat, pos.lng, exitDate, clientSignature);
 
-      const companionsToCheckIn = [...(service.companionIds || [])];
-      if (activeWorkday?.currentCompanionId && !companionsToCheckIn.includes(activeWorkday.currentCompanionId)) {
-        companionsToCheckIn.push(activeWorkday.currentCompanionId);
+      const otherUsers = new Set();
+      if (service.assignedUserId && service.assignedUserId !== userProfile.uid) {
+        otherUsers.add(service.assignedUserId);
+      }
+      if (service.companionIds && Array.isArray(service.companionIds)) {
+        service.companionIds.forEach(cid => {
+          if (cid && cid !== userProfile.uid) {
+            otherUsers.add(cid);
+          }
+        });
+      }
+      if (activeWorkday?.currentCompanionId && activeWorkday.currentCompanionId !== userProfile.uid) {
+        otherUsers.add(activeWorkday.currentCompanionId);
       }
 
-      for (const companionId of companionsToCheckIn) {
+      for (const companionId of otherUsers) {
         try {
           const compCheckInId = await createCheckIn({
             userId: companionId,
@@ -666,6 +688,11 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
         } else {
           await updateScheduledServiceStatus(s.id, 'completed');
         }
+        if (s.assignedUserId !== userProfile.uid) {
+          if (!s.companionIds?.includes(userProfile.uid)) {
+            await addCompanionToService(s.id, userProfile.uid);
+          }
+        }
       }
 
       localStorage.removeItem(`detected_entry_${serviceId}`);
@@ -692,7 +719,7 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
         const exec = taskExecutions.find(e => e.communityTaskId === s.communityTaskId);
         const specificTask = tasks.find(t => t.id === s.communityTaskId);
         const sName = (s.taskName || specificTask?.taskName || '').toLowerCase();
-        const isException = sName.includes('escalera') || sName.includes('portal') || sName.includes('garaje');
+        const isException = sName.includes('escalera') || sName.includes('portal') || sName.includes('garaje') || sName.includes('oficina');
         const isDone = exec && exec.status === 'completed';
         
         if (!isDone && !isException) {
@@ -719,7 +746,7 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
             const exec = taskExecutions.find(e => e.communityTaskId === s.communityTaskId);
             const specificTask = tasks.find(t => t.id === s.communityTaskId);
             const sName = (s.taskName || specificTask?.taskName || '').toLowerCase();
-            const isException = sName.includes('escalera') || sName.includes('portal') || sName.includes('garaje');
+            const isException = sName.includes('escalera') || sName.includes('portal') || sName.includes('garaje') || sName.includes('oficina');
             const isGarage = sName.includes('garaje');
 
             if ((exec && exec.status === 'completed') || isException) {
