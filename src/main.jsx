@@ -6,7 +6,7 @@ import { registerSW } from 'virtual:pwa-register';
 
 // Register service worker for PWA only if not in a client portal,
 // otherwise unregister any existing service worker to avoid caching issues on client portals.
-if (!window.location.pathname.includes('/portal/')) {
+if (!window.location.pathname.startsWith('/portal/')) {
   const updateSW = registerSW({
     immediate: true,
     onNeedRefresh() {

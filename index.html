@@ -25,7 +25,7 @@
       // Esto evita que navegadores móviles (como Safari en iOS) detecten el modo WebApp en el HTML estático
       // de los portales de clientes y fuercen a que "Añadir a pantalla de inicio" o "Compartir" apunte a la raíz (/)
       // instalando la app completa. Para los portales de cliente, esto asegura que se cree un marcador web estándar a la URL actual.
-      if (!window.location.pathname.includes('/portal/')) {
+      if (!window.location.pathname.startsWith('/portal/')) {
         var link = document.createElement('link');
         link.rel = 'manifest';
         link.href = '/manifest.json';
