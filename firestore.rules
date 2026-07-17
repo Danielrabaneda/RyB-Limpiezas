@@ -10,63 +10,35 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // Role check: Admin
-    // Using a get() to the users collection ensures we check the actual DB role
-    function isAdmin() {
-      return isAuthenticated() && 
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
-    }
-
     // Check if the document belongs to the requesting user
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    // Check if the user is a registered employee (admin or operario)
-    function isEmployee() {
-      return isAuthenticated() && 
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'operario');
-    }
-
-    // Check if the user is active in the database
-    function isActiveUser() {
-      return isAuthenticated() &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true;
-    }
-
-    // Helper to check if the user is an active employee
-    function isEmployeeActive() {
-      return isEmployee() && isActiveUser();
-    }
-
-    // Helper to check if the user is an active admin
-    function isAdminActive() {
-      return isAdmin() && isActiveUser();
-    }
-
-    // =========================================================================
-    // FUNCIONES DE CONTROL PARALELAS (NUEVAS - BASADAS EN CLAIMS)
-    // =========================================================================
-    function isAdminClaim() {
+    // Role check: Admin (Claims)
+    function isAdmin() {
       return isAuthenticated() && request.auth.token.role == 'admin';
     }
 
-    function isEmployeeClaim() {
+    // Role check: Employee (Claims)
+    function isEmployee() {
       return isAuthenticated() && 
         (request.auth.token.role == 'admin' || request.auth.token.role == 'operario');
     }
 
-    function isActiveUserClaim() {
+    // Check if the user is active (Claims)
+    function isActiveUser() {
       return isAuthenticated() && request.auth.token.active == true;
     }
 
-    function isEmployeeActiveClaim() {
-      return isEmployeeClaim() && isActiveUserClaim();
+    // Helper to check if the user is an active employee (Claims)
+    function isEmployeeActive() {
+      return isEmployee() && isActiveUser();
     }
 
-    function isAdminActiveClaim() {
-      return isAdminClaim() && isActiveUserClaim();
+    // Helper to check if the user is an active admin (Claims)
+    function isAdminActive() {
+      return isAdmin() && isActiveUser();
     }
 
     // =========================================================================
@@ -82,27 +54,27 @@ service cloud.firestore {
     // GEO DETECTIONS & FCM TOKENS
     // -------------------------------------------------------------------------
     match /geoDetections/{detectionId} {
-      allow read: if isAdminActiveClaim() || (isEmployeeActiveClaim() && resource.data.userId == request.auth.uid);
-      allow create, update: if isEmployeeActiveClaim() && request.resource.data.userId == request.auth.uid;
-      allow delete: if isAdminActiveClaim();
+      allow read: if isAdminActive() || (isEmployeeActive() && resource.data.userId == request.auth.uid);
+      allow create, update: if isEmployeeActive() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAdminActive();
     }
 
     match /fcmTokens/{tokenId} {
-      allow read: if isAdminActiveClaim() || (isEmployeeActiveClaim() && resource.data.userId == request.auth.uid);
-      allow create, update: if isEmployeeActiveClaim() && request.resource.data.userId == request.auth.uid;
-      allow delete: if isAdminActiveClaim() || (isEmployeeActiveClaim() && resource.data.userId == request.auth.uid);
+      allow read: if isAdminActive() || (isEmployeeActive() && resource.data.userId == request.auth.uid);
+      allow create, update: if isEmployeeActive() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAdminActive() || (isEmployeeActive() && resource.data.userId == request.auth.uid);
     }
 
     match /users/{userId} {
       // Admins can do anything
       // Operarios need to read the list of other operarios to select companions
-      allow read: if isEmployeeActiveClaim(); 
+      allow read: if isEmployeeActive(); 
       // Permitir la creación de perfiles si el usuario se registra a sí mismo como operario o si es un admin activo
-      allow create: if isAdminActiveClaim() || (isAuthenticated() && isOwner(userId) && request.resource.data.role == 'operario');
-      allow delete: if isAdminActiveClaim();
+      allow create: if isAdminActive() || (isAuthenticated() && isOwner(userId) && request.resource.data.role == 'operario');
+      allow delete: if isAdminActive();
       // Users can update their own profile (e.g. push tokens, active status), 
       // but preventing role escalation would require checking request.resource.data.role
-      allow update: if isAdminActiveClaim() || (isEmployeeActiveClaim() && isOwner(userId) && request.resource.data.role == resource.data.role);
+      allow update: if isAdminActive() || (isEmployeeActive() && isOwner(userId) && request.resource.data.role == resource.data.role);
     }
 
     // -------------------------------------------------------------------------
@@ -112,30 +84,30 @@ service cloud.firestore {
       // Permitir a cualquiera comprobar si un código específico es válido (get)
       // pero no listar todos los códigos (list) ni modificarlos (write)
       allow get: if true;
-      allow list, write: if isAdminActiveClaim();
+      allow list, write: if isAdminActive();
     }
 
     // -------------------------------------------------------------------------
     // COMMUNITIES & TASKS (Global Config)
     // -------------------------------------------------------------------------
     match /communities/{communityId} {
-      allow read: if isEmployeeActiveClaim();
-      allow write: if isAdminActiveClaim();
+      allow read: if isEmployeeActive();
+      allow write: if isAdminActive();
     }
 
     match /taskTemplates/{templateId} {
-      allow read: if isEmployeeActiveClaim();
-      allow write: if isAdminActiveClaim();
+      allow read: if isEmployeeActive();
+      allow write: if isAdminActive();
     }
 
     match /communityTasks/{taskId} {
-      allow read: if isEmployeeActiveClaim();
-      allow write: if isAdminActiveClaim();
+      allow read: if isEmployeeActive();
+      allow write: if isAdminActive();
     }
 
     match /assignments/{assignmentId} {
-      allow read: if isEmployeeActiveClaim();
-      allow write: if isAdminActiveClaim();
+      allow read: if isEmployeeActive();
+      allow write: if isAdminActive();
     }
 
     // -------------------------------------------------------------------------
@@ -143,17 +115,17 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     match /scheduledServices/{serviceId} {
       // Only authenticated users can read schedules
-      allow read, update: if isEmployeeActiveClaim();
-      allow create, delete: if isAdminActiveClaim();
+      allow read, update: if isEmployeeActive();
+      allow create, delete: if isAdminActive();
     }
 
     // -------------------------------------------------------------------------
     // GPS SUGGESTIONS (Colección de prueba - Custom Claims)
     // -------------------------------------------------------------------------
     match /gpsSuggestions/{suggestionId} {
-      allow read: if isAdminActiveClaim() || (isEmployeeActiveClaim() && (resource.data.operarioUid == request.auth.uid || resource.data.userId == request.auth.uid));
-      allow create: if isEmployeeActiveClaim();
-      allow update, delete: if isAdminActiveClaim();
+      allow read: if isAdminActive() || (isEmployeeActive() && (resource.data.operarioUid == request.auth.uid || resource.data.userId == request.auth.uid));
+      allow create: if isEmployeeActive();
+      allow update, delete: if isAdminActive();
     }
 
     // -------------------------------------------------------------------------
@@ -161,14 +133,14 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     
     match /workdays/{workdayId} {
-      allow read: if isAdminActiveClaim() || (isEmployeeActiveClaim() && (isOwner(resource.data.userId) || resource.data.currentCompanionId == request.auth.uid));
-      allow create: if isEmployeeActiveClaim() && isOwner(request.resource.data.userId);
-      allow update: if isAdminActiveClaim() || (isEmployeeActiveClaim() && isOwner(resource.data.userId));
-      allow delete: if isAdminActiveClaim();
+      allow read: if isAdminActive() || (isEmployeeActive() && (isOwner(resource.data.userId) || resource.data.currentCompanionId == request.auth.uid));
+      allow create: if isEmployeeActive() && isOwner(request.resource.data.userId);
+      allow update: if isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId));
+      allow delete: if isAdminActive();
     }
 
     match /checkIns/{checkInId} {
-      allow read: if isAdminActiveClaim() || (isEmployeeActiveClaim() && (
+      allow read: if isAdminActive() || (isEmployeeActive() && (
         isOwner(resource.data.userId) ||
         (
           'scheduledServiceId' in resource.data && 
@@ -183,7 +155,7 @@ service cloud.firestore {
           )
         )
       ));
-      allow create: if isEmployeeActiveClaim() && (
+      allow create: if isEmployeeActive() && (
         isOwner(request.resource.data.userId) ||
         (
           'scheduledServiceId' in request.resource.data && 
@@ -205,8 +177,8 @@ service cloud.firestore {
           )
         )
       );
-      allow update, delete: if isEmployeeActiveClaim() && (
-        isAdminActiveClaim() || 
+      allow update, delete: if isEmployeeActive() && (
+        isAdminActive() || 
         isOwner(resource.data.userId) ||
         (
           'scheduledServiceId' in resource.data && 
@@ -224,115 +196,115 @@ service cloud.firestore {
     }
 
     match /dailyMileage/{mileageId} {
-      allow read: if isAdminActiveClaim() || (isEmployeeActiveClaim() && isOwner(resource.data.userId));
-      allow create: if isEmployeeActiveClaim() && isOwner(request.resource.data.userId);
-      allow update: if isAdminActiveClaim() || (isEmployeeActiveClaim() && isOwner(resource.data.userId));
-      allow delete: if isAdminActiveClaim();
+      allow read: if isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId));
+      allow create: if isEmployeeActive() && isOwner(request.resource.data.userId);
+      allow update: if isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId));
+      allow delete: if isAdminActive();
     }
 
     match /materialRequests/{requestId} {
-      allow read: if isAdminActiveClaim() || (isEmployeeActiveClaim() && isOwner(resource.data.userId));
-      allow create: if isEmployeeActiveClaim() && isOwner(request.resource.data.userId);
-      allow update: if isAdminActiveClaim() || (isEmployeeActiveClaim() && isOwner(resource.data.userId));
-      allow delete: if isAdminActiveClaim();
+      allow read: if isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId));
+      allow create: if isEmployeeActive() && isOwner(request.resource.data.userId);
+      allow update: if isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId));
+      allow delete: if isAdminActive();
     }
 
     match /reports/{reportId} {
-      allow read, write: if isAdminActiveClaim();
+      allow read, write: if isAdminActive();
     }
 
     match /transfers/{transferId} {
-      allow read: if isAdminActiveClaim() || 
-                  (isEmployeeActiveClaim() && (
+      allow read: if isAdminActive() || 
+                  (isEmployeeActive() && (
                     resource.data.fromUserId == request.auth.uid || 
                     resource.data.toUserId == request.auth.uid || 
                     resource.data.userId == request.auth.uid
                   ));
       
-      allow create: if isAdminActiveClaim() || (isEmployeeActiveClaim() && 
+      allow create: if isAdminActive() || (isEmployeeActive() && 
                     (
                       request.resource.data.fromUserId == request.auth.uid || 
                       request.resource.data.toUserId == request.auth.uid || 
                       request.resource.data.userId == request.auth.uid
                     ));
       
-      allow update: if isAdminActiveClaim() || 
-                  (isEmployeeActiveClaim() && (
+      allow update: if isAdminActive() || 
+                  (isEmployeeActive() && (
                     resource.data.fromUserId == request.auth.uid || 
                     resource.data.toUserId == request.auth.uid || 
                     resource.data.userId == request.auth.uid
                   ));
       
-      allow delete: if isAdminActiveClaim();
+      allow delete: if isAdminActive();
     }
 
     match /systemNotifications/{notificationId} {
-      allow read: if isAdminActiveClaim() || (isEmployeeActiveClaim() && isOwner(resource.data.userId));
-      allow create: if isAdminActiveClaim() || (isEmployeeActiveClaim() && isOwner(request.resource.data.userId));
-      allow update: if isAdminActiveClaim() || (isEmployeeActiveClaim() && isOwner(resource.data.userId));
-      allow delete: if isAdminActiveClaim();
+      allow read: if isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId));
+      allow create: if isAdminActive() || (isEmployeeActive() && isOwner(request.resource.data.userId));
+      allow update: if isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId));
+      allow delete: if isAdminActive();
     }
 
     match /taskExecutions/{executionId} {
-      allow read, write: if isEmployeeActiveClaim();
+      allow read, write: if isEmployeeActive();
     }
 
     match /settings/{settingId} {
-      allow read: if settingId == 'global' ? isEmployeeActiveClaim() : isAdminActiveClaim();
-      allow write: if isAdminActiveClaim();
+      allow read: if settingId == 'global' ? isEmployeeActive() : isAdminActive();
+      allow write: if isAdminActive();
     }
 
     // VERIFACTU: Inmutabilidad — solo se pueden editar/eliminar borradores.
     // Se permite cambiar solo el campo 'status' (ej. marcar como pagada) en facturas emitidas.
     match /invoices/{invoiceId} {
-      allow read, create: if isAdminActiveClaim();
-      allow update: if isAdminActiveClaim() && (
+      allow read, create: if isAdminActive();
+      allow update: if isAdminActive() && (
         resource.data.status == 'draft' ||
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
       );
-      allow delete: if isAdminActiveClaim() && resource.data.status == 'draft';
+      allow delete: if isAdminActive() && resource.data.status == 'draft';
     }
 
     match /products/{productId} {
-      allow read: if isEmployeeActiveClaim();
-      allow write: if isAdminActiveClaim();
+      allow read: if isEmployeeActive();
+      allow write: if isAdminActive();
     }
 
     match /stockMovements/{movementId} {
-      allow read, write: if isAdminActiveClaim();
+      allow read, write: if isAdminActive();
     }
 
     match /absences/{absenceId} {
-      allow read: if isEmployeeActiveClaim();
-      allow create: if isEmployeeActiveClaim() && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if isAdminActiveClaim();
+      allow read: if isEmployeeActive();
+      allow create: if isEmployeeActive() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAdminActive();
     }
 
     match /invoice_templates/{templateId} {
-      allow read, write: if isAdminActiveClaim();
+      allow read, write: if isAdminActive();
     }
 
     match /documentVault/{documentId} {
-      allow read: if isEmployeeActiveClaim();
-      allow write: if isAdminActiveClaim();
+      allow read: if isEmployeeActive();
+      allow write: if isAdminActive();
     }
 
     match /evidenceReports/{reportId} {
-      allow read: if isAdminActiveClaim() || (isEmployeeActiveClaim() && resource.data.userId == request.auth.uid);
-      allow create: if isEmployeeActiveClaim();
-      allow update, delete: if isAdminActiveClaim();
+      allow read: if isAdminActive() || (isEmployeeActive() && resource.data.userId == request.auth.uid);
+      allow create: if isEmployeeActive();
+      allow update, delete: if isAdminActive();
     }
 
     match /publicPortals/{token} {
       allow get: if true;
-      allow write, list: if isAdminActiveClaim();
+      allow write, list: if isAdminActive();
     }
 
     // -------------------------------------------------------------------------
     // ADMINISTRADORES DE FINCAS
     // -------------------------------------------------------------------------
     match /administrators/{adminId} {
-      allow read, write: if isAdminActiveClaim();
+      allow read, write: if isAdminActive();
     }
 
     // -------------------------------------------------------------------------
@@ -345,7 +317,7 @@ service cloud.firestore {
                     && request.resource.data.contactName is string && request.resource.data.contactName.size() < 200
                     && request.resource.data.email is string && request.resource.data.email.size() < 200
                     && request.resource.data.phone is string && request.resource.data.phone.size() < 50;
-      allow read, update, delete: if isAdminActiveClaim();
+      allow read, update, delete: if isAdminActive();
     }
 
     // -------------------------------------------------------------------------
