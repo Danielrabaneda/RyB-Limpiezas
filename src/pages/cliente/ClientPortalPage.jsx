@@ -76,11 +76,35 @@ export default function ClientPortalPage() {
     return operariosMap[uid] || 'Operario RyB';
   };
 
+  const parseTimestamp = (timestamp) => {
+    if (!timestamp) return null;
+    
+    // Case 1: Firestore Timestamp object (with toDate method)
+    if (typeof timestamp.toDate === 'function') {
+      return timestamp.toDate();
+    }
+    
+    // Case 2: Serialized Firestore Timestamp object { seconds, nanoseconds }
+    if (typeof timestamp.seconds === 'number') {
+      return new Date(timestamp.seconds * 1000);
+    }
+    if (typeof timestamp._seconds === 'number') {
+      return new Date(timestamp._seconds * 1000);
+    }
+    
+    // Case 3: ISO string, millisecond number, or other date string
+    const date = new Date(timestamp);
+    if (!isNaN(date.getTime())) {
+      return date;
+    }
+    
+    return null;
+  };
+
   const getFormattedDate = (timestamp) => {
-    if (!timestamp) return '';
+    const date = parseTimestamp(timestamp);
+    if (!date) return '';
     try {
-      const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-      if (isNaN(date.getTime())) return '';
       return format(date, "EEEE, dd 'de' MMMM 'de' yyyy", { locale: es });
     } catch (e) {
       return '';
@@ -88,10 +112,9 @@ export default function ClientPortalPage() {
   };
 
   const getFormattedDateShort = (timestamp) => {
-    if (!timestamp) return '';
+    const date = parseTimestamp(timestamp);
+    if (!date) return '';
     try {
-      const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-      if (isNaN(date.getTime())) return '';
       return format(date, "EEEE dd 'de' MMMM", { locale: es });
     } catch (e) {
       return '';
@@ -99,10 +122,9 @@ export default function ClientPortalPage() {
   };
 
   const getFormattedTime = (timestamp) => {
-    if (!timestamp) return '';
+    const date = parseTimestamp(timestamp);
+    if (!date) return '';
     try {
-      const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-      if (isNaN(date.getTime())) return '';
       return format(date, 'HH:mm');
     } catch (e) {
       return '';
