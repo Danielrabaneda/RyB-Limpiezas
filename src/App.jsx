@@ -122,12 +122,32 @@ function ProtectedRoute({ children, requiredRole }) {
         <div style={{ fontSize: '3rem' }}>🔍</div>
         <h3 className="font-bold mt-4">Perfil no encontrado</h3>
         <p className="text-sm text-muted mb-6">No hemos podido cargar tus datos de usuario.</p>
-        <button 
-          className="btn btn-primary"
-          onClick={() => window.location.reload()}
-        >
-          🔄 Reintentar conexión
-        </button>
+        <div className="flex flex-col sm:flex-row gap-3 justify-center">
+          <button 
+            className="btn btn-primary"
+            onClick={() => window.location.reload()}
+          >
+            🔄 Reintentar conexión
+          </button>
+          <button 
+            className="btn btn-secondary"
+            onClick={async () => {
+              try {
+                localStorage.clear();
+                sessionStorage.clear();
+                const { signOut } = await import('firebase/auth');
+                const { auth } = await import('./config/firebase');
+                await signOut(auth);
+                window.location.href = '/login';
+              } catch (e) {
+                console.error(e);
+                window.location.href = '/login';
+              }
+            }}
+          >
+            🚪 Cerrar Sesión
+          </button>
+        </div>
       </div>
     );
   }
