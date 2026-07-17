@@ -80,7 +80,19 @@ export default function ClientPortalPage() {
     if (!timestamp) return '';
     try {
       const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+      if (isNaN(date.getTime())) return '';
       return format(date, "EEEE, dd 'de' MMMM 'de' yyyy", { locale: es });
+    } catch (e) {
+      return '';
+    }
+  };
+
+  const getFormattedDateShort = (timestamp) => {
+    if (!timestamp) return '';
+    try {
+      const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+      if (isNaN(date.getTime())) return '';
+      return format(date, "EEEE dd 'de' MMMM", { locale: es });
     } catch (e) {
       return '';
     }
@@ -90,6 +102,7 @@ export default function ClientPortalPage() {
     if (!timestamp) return '';
     try {
       const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+      if (isNaN(date.getTime())) return '';
       return format(date, 'HH:mm');
     } catch (e) {
       return '';
@@ -299,7 +312,7 @@ export default function ClientPortalPage() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid #f1f5f9', paddingBottom: '12px', marginBottom: '12px' }}>
                     <div>
                       <p style={{ margin: '0 0 2px 0', fontSize: '14px', fontWeight: 'bold', color: '#0f172a', textTransform: 'capitalize' }}>
-                        {format((rep.checkInTime || rep.createdAt)?.toDate ? (rep.checkInTime || rep.createdAt).toDate() : new Date(rep.checkInTime || rep.createdAt), "EEEE dd 'de' MMMM", { locale: es })}
+                        {getFormattedDateShort(rep.checkInTime || rep.createdAt)}
                       </p>
                     </div>
                     <span style={{ fontSize: '11px', fontWeight: 'bold', background: '#ecfdf5', color: '#10b981', padding: '2px 8px', borderRadius: '12px' }}>✓ Finalizado</span>
