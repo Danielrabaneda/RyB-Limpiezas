@@ -195,6 +195,13 @@ service cloud.firestore {
               'companionIds' in get(/databases/$(database)/documents/scheduledServices/$(request.resource.data.scheduledServiceId)).data &&
               request.auth.uid in get(/databases/$(database)/documents/scheduledServices/$(request.resource.data.scheduledServiceId)).data.companionIds
             )
+          ) &&
+          (
+            request.resource.data.userId == get(/databases/$(database)/documents/scheduledServices/$(request.resource.data.scheduledServiceId)).data.assignedUserId ||
+            (
+              'companionIds' in get(/databases/$(database)/documents/scheduledServices/$(request.resource.data.scheduledServiceId)).data &&
+              request.resource.data.userId in get(/databases/$(database)/documents/scheduledServices/$(request.resource.data.scheduledServiceId)).data.companionIds
+            )
           )
         )
       );
