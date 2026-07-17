@@ -1,35 +1,44 @@
-import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
-import { db } from '../config/firebase';
-import { getOperarios } from './authService';
-import { checkUserAbsenceForDate } from './absenceService';
-import { getDistance } from '../utils/geolocation';
-import { getAllOpenCheckIns } from './checkInService';
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  doc,
+  getDoc,
+} from "firebase/firestore";
+import { db } from "../config/firebase";
+import { getOperarios } from "./authService";
+import { checkUserAbsenceForDate } from "./absenceService";
+import { getDistance } from "../utils/geolocation";
+import { getAllOpenCheckIns } from "./checkInService";
 
 /**
  * Busca y sugiere operarios sustitutos disponibles para un servicio afectado en una fecha.
- * 
+ *
  * @param {string} serviceId - ID del servicio programado que necesita cobertura.
  * @param {Date} date - Fecha en la que se realiza la sustitución.
  * @returns {Promise<Array>} Lista de operarios candidatos ordenados por distancia al servicio.
  */
 export async function findSubstitutesForService({ serviceId, date }) {
   // 1. Obtener detalles del servicio afectado
-  const serviceSnap = await getDoc(doc(db, 'scheduledServices', serviceId));
+  const serviceSnap = await getDoc(doc(db, "scheduledServices", serviceId));
   if (!serviceSnap.exists()) {
-    throw new Error('Servicio no encontrado');
+    throw new Error("Servicio no encontrado");
   }
   const serviceData = serviceSnap.data();
   const communityId = serviceData.communityId;
 
   // 2. Obtener la ubicación de la comunidad
-  const communitySnap = await getDoc(doc(db, 'communities', communityId));
+  const communitySnap = await getDoc(doc(db, "communities", communityId));
   if (!communitySnap.exists()) {
-    throw new Error('Comunidad asociada no encontrada');
+    throw new Error("Comunidad asociada no encontrada");
   }
   const communityData = communitySnap.data();
   const location = communityData.location;
   if (!location) {
-    throw new Error('La comunidad afectada no tiene coordenadas de geolocalización registradas.');
+    throw new Error(
+      "La comunidad afectada no tiene coordenadas de geolocalización registradas.",
+    );
   }
 
   const targetLat = location._lat || location.latitude;
@@ -51,15 +60,15 @@ export async function findSubstitutesForService({ serviceId, date }) {
 
     // C. Comprobar si ya tiene otro servicio asignado en el mismo rango de hora (colisión horaria)
     // Para simplificar, buscamos si tiene servicios el mismo día
-    const dateStr = date.toISOString().split('T')[0];
+    const dateStr = date.toISOString().split("T")[0];
     const collisionQuery = query(
-      collection(db, 'scheduledServices'),
-      where('assignedUserId', '==', op.uid),
-      where('date', '==', dateStr),
-      where('status', 'in', ['pending', 'in_progress'])
+      collection(db, "scheduledServices"),
+      where("assignedUserId", "==", op.uid),
+      where("date", "==", dateStr),
+      where("status", "in", ["pending", "in_progress"]),
     );
     const collisionSnap = await getDocs(collisionQuery);
-    
+
     // Si queremos verificar colisiones de franja horaria más precisas, comparamos las horas:
     const preferredTime = communityData.preferredTime || null;
     let hasTimeConflict = false;
@@ -68,7 +77,9 @@ export async function findSubstitutesForService({ serviceId, date }) {
       for (const d of collisionSnap.docs) {
         const otherSvc = d.data();
         // Obtener detalles de la otra comunidad para saber su hora preferida
-        const otherCommSnap = await getDoc(doc(db, 'communities', otherSvc.communityId));
+        const otherCommSnap = await getDoc(
+          doc(db, "communities", otherSvc.communityId),
+        );
         if (otherCommSnap.exists()) {
           const otherComm = otherCommSnap.data();
           if (otherComm.preferredTime === preferredTime) {
@@ -90,7 +101,9 @@ export async function findSubstitutesForService({ serviceId, date }) {
 
     if (activeCheckIns.length > 0) {
       const activeCheckIn = activeCheckIns[0];
-      const activeCommSnap = await getDoc(doc(db, 'communities', activeCheckIn.communityId));
+      const activeCommSnap = await getDoc(
+        doc(db, "communities", activeCheckIn.communityId),
+      );
       if (activeCommSnap.exists() && activeCommSnap.data().location) {
         const loc = activeCommSnap.data().location;
         opLat = loc._lat || loc.latitude;
@@ -101,7 +114,9 @@ export async function findSubstitutesForService({ serviceId, date }) {
     // Si no está haciendo un servicio ahora, buscamos la ubicación de su primer servicio del día
     if ((opLat === null || opLng === null) && !collisionSnap.empty) {
       const firstSvc = collisionSnap.docs[0].data();
-      const firstCommSnap = await getDoc(doc(db, 'communities', firstSvc.communityId));
+      const firstCommSnap = await getDoc(
+        doc(db, "communities", firstSvc.communityId),
+      );
       if (firstCommSnap.exists() && firstCommSnap.data().location) {
         const loc = firstCommSnap.data().location;
         opLat = loc._lat || loc.latitude;
@@ -118,7 +133,7 @@ export async function findSubstitutesForService({ serviceId, date }) {
     candidates.push({
       ...op,
       distance, // en metros, o null si no se puede estimar
-      distanceKm: distance !== null ? (distance / 1000).toFixed(1) : '—'
+      distanceKm: distance !== null ? (distance / 1000).toFixed(1) : "—",
     });
   }
 

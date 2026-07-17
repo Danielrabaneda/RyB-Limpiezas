@@ -1,31 +1,42 @@
-import { 
-  collection, doc, addDoc, updateDoc, deleteDoc, getDocs, getDoc,
-  query, where, orderBy, serverTimestamp, GeoPoint, writeBatch
-} from 'firebase/firestore';
-import { db } from '../config/firebase';
-import { deleteScheduledServicesByCommunity } from './scheduleService';
+import {
+  collection,
+  doc,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  getDocs,
+  getDoc,
+  query,
+  where,
+  orderBy,
+  serverTimestamp,
+  GeoPoint,
+  writeBatch,
+} from "firebase/firestore";
+import { db } from "../config/firebase";
+import { deleteScheduledServicesByCommunity } from "./scheduleService";
 
-const COLLECTION = 'communities';
+const COLLECTION = "communities";
 
 export async function createCommunity(data) {
   const docData = {
     name: data.name,
     address: data.address,
     location: new GeoPoint(data.lat || 0, data.lng || 0),
-    type: data.type || 'comunidad',
-    contactPerson: data.contactPerson || '',
-    contactPhone: data.contactPhone || '',
+    type: data.type || "comunidad",
+    contactPerson: data.contactPerson || "",
+    contactPhone: data.contactPhone || "",
     preferredTime: data.preferredTime || null,
     individualTimeTracking: !!data.individualTimeTracking,
-    billingCif: data.billingCif || '',
-    billingAddress: data.billingAddress || '',
+    billingCif: data.billingCif || "",
+    billingAddress: data.billingAddress || "",
     basePrice: parseFloat(data.basePrice) || 0,
-    paymentMethod: data.paymentMethod || 'transferencia',
-    billingEmail: data.billingEmail || '',
-    billingIban: data.billingIban || '',
-    billingMandateRef: data.billingMandateRef || '',
-    billingMandateDate: data.billingMandateDate || '',
-    administratorId: data.administratorId || '',
+    paymentMethod: data.paymentMethod || "transferencia",
+    billingEmail: data.billingEmail || "",
+    billingIban: data.billingIban || "",
+    billingMandateRef: data.billingMandateRef || "",
+    billingMandateDate: data.billingMandateDate || "",
+    administratorId: data.administratorId || "",
     active: true,
     createdAt: serverTimestamp(),
   };
@@ -46,16 +57,22 @@ export async function updateCommunity(id, data) {
 export async function deleteCommunity(id) {
   // 1. Inactivar la comunidad
   await updateDoc(doc(db, COLLECTION, id), { active: false });
-  
+
   // 2. Eliminar servicios programados pendientes
   await deleteScheduledServicesByCommunity(id);
 
   // 3. Inactivar tareas de esta comunidad (para que el generador no las use)
-  const tasksQ = query(collection(db, 'communityTasks'), where('communityId', '==', id));
+  const tasksQ = query(
+    collection(db, "communityTasks"),
+    where("communityId", "==", id),
+  );
   const tasksSnap = await getDocs(tasksQ);
-  
+
   // 4. Inactivar asignaciones de esta comunidad
-  const assignQ = query(collection(db, 'assignments'), where('communityId', '==', id));
+  const assignQ = query(
+    collection(db, "assignments"),
+    where("communityId", "==", id),
+  );
   const assignSnap = await getDocs(assignQ);
 
   // Actualizar todo en lotes de 400 para evitar los límites de Firestore writeBatch
@@ -64,15 +81,19 @@ export async function deleteCommunity(id) {
   for (let i = 0; i < allDocs.length; i += CHUNK_SIZE) {
     const chunk = allDocs.slice(i, i + CHUNK_SIZE);
     const batch = writeBatch(db);
-    chunk.forEach(d => batch.update(d.ref, { active: false }));
+    chunk.forEach((d) => batch.update(d.ref, { active: false }));
     await batch.commit();
   }
 }
 
 export async function getCommunities() {
-  const q = query(collection(db, COLLECTION), where('active', '==', true), orderBy('name'));
+  const q = query(
+    collection(db, COLLECTION),
+    where("active", "==", true),
+    orderBy("name"),
+  );
   const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
 export async function getCommunity(id) {
@@ -82,15 +103,15 @@ export async function getCommunity(id) {
 
 export async function getCommunitiesForOperario(userId) {
   const assignQ = query(
-    collection(db, 'assignments'), 
-    where('userId', '==', userId),
-    where('active', '==', true)
+    collection(db, "assignments"),
+    where("userId", "==", userId),
+    where("active", "==", true),
   );
   const assignSnap = await getDocs(assignQ);
-  const communityIds = assignSnap.docs.map(d => d.data().communityId);
-  
+  const communityIds = assignSnap.docs.map((d) => d.data().communityId);
+
   if (communityIds.length === 0) return [];
-  
+
   const communities = [];
   for (const cId of communityIds) {
     const comm = await getCommunity(cId);

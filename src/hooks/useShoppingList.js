@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
-import { addStock } from '../services/materialService';
-import { format } from 'date-fns';
+import { useState, useEffect } from "react";
+import { addStock } from "../services/materialService";
+import { format } from "date-fns";
 
 export function useShoppingList({
   products,
@@ -9,16 +9,16 @@ export function useShoppingList({
   userProfile,
   setActionLoading,
   loadData,
-  setActiveTab
+  setActiveTab,
 }) {
   const [shoppingItems, setShoppingItems] = useState([]);
 
   // Auto-synchronize low stock items when switching to shopping tab
   useEffect(() => {
-    if (activeTab === 'shopping' && products.length > 0) {
+    if (activeTab === "shopping" && products.length > 0) {
       const lowStockItems = products
-        .filter(p => (p.currentStock || 0) <= (p.minStock || 0))
-        .map(p => {
+        .filter((p) => (p.currentStock || 0) <= (p.minStock || 0))
+        .map((p) => {
           const diff = (p.minStock || 0) - (p.currentStock || 0);
           const defaultQty = diff > 0 ? diff : 5;
           return {
@@ -30,7 +30,7 @@ export function useShoppingList({
             category: p.category,
             quantityToBuy: defaultQty,
             checked: true,
-            isManual: false
+            isManual: false,
           };
         });
       setShoppingItems(lowStockItems);
@@ -39,14 +39,14 @@ export function useShoppingList({
 
   const handleAddManualItem = (productId) => {
     if (!productId) return;
-    const p = products.find(prod => prod.id === productId);
+    const p = products.find((prod) => prod.id === productId);
     if (!p) return;
-    
-    if (shoppingItems.some(item => item.id === p.id)) {
-      alert('El producto ya está en la lista de compra');
+
+    if (shoppingItems.some((item) => item.id === p.id)) {
+      alert("El producto ya está en la lista de compra");
       return;
     }
-    
+
     const newItem = {
       id: p.id,
       name: p.name,
@@ -56,40 +56,49 @@ export function useShoppingList({
       category: p.category,
       quantityToBuy: 5,
       checked: true,
-      isManual: true
+      isManual: true,
     };
     setShoppingItems([...shoppingItems, newItem]);
   };
 
   const handleCopyShoppingList = () => {
-    const selected = shoppingItems.filter(item => item.checked && item.quantityToBuy > 0);
+    const selected = shoppingItems.filter(
+      (item) => item.checked && item.quantityToBuy > 0,
+    );
     if (selected.length === 0) {
-      alert('No hay productos seleccionados en la lista');
+      alert("No hay productos seleccionados en la lista");
       return;
     }
-    
+
     let text = `🛒 *RyB LIMPIEZAS - LISTA DE COMPRA*\n`;
-    text += `Fecha: ${format(new Date(), 'dd/MM/yyyy')}\n\n`;
+    text += `Fecha: ${format(new Date(), "dd/MM/yyyy")}\n\n`;
     selected.forEach((item, idx) => {
       text += `${idx + 1}. *${item.name}*: ${item.quantityToBuy} ${item.unit} (Stock act: ${item.currentStock} ${item.unit})\n`;
     });
-    
-    navigator.clipboard.writeText(text)
-      .then(() => alert('📋 Lista de compra copiada al portapapeles'))
-      .catch(err => alert('Error al copiar la lista'));
+
+    navigator.clipboard
+      .writeText(text)
+      .then(() => alert("📋 Lista de compra copiada al portapapeles"))
+      .catch((err) => alert("Error al copiar la lista"));
   };
 
   const handleCompletePurchase = async () => {
-    const selected = shoppingItems.filter(item => item.checked && item.quantityToBuy > 0);
+    const selected = shoppingItems.filter(
+      (item) => item.checked && item.quantityToBuy > 0,
+    );
     if (selected.length === 0) {
-      alert('No hay productos seleccionados para comprar');
+      alert("No hay productos seleccionados para comprar");
       return;
     }
-    
-    if (!confirm(`¿Registrar la entrada de stock para los ${selected.length} productos seleccionados?`)) {
+
+    if (
+      !confirm(
+        `¿Registrar la entrada de stock para los ${selected.length} productos seleccionados?`,
+      )
+    ) {
       return;
     }
-    
+
     setActionLoading(true);
     try {
       for (const item of selected) {
@@ -98,16 +107,16 @@ export function useShoppingList({
           item.name,
           item.quantityToBuy,
           currentUser.uid,
-          userProfile?.name || 'Admin',
-          'Entrada automática desde Lista de Compra'
+          userProfile?.name || "Admin",
+          "Entrada automática desde Lista de Compra",
         );
       }
-      alert('✅ Entrada de stock registrada con éxito');
+      alert("✅ Entrada de stock registrada con éxito");
       await loadData();
-      setActiveTab('catalog');
+      setActiveTab("catalog");
     } catch (err) {
-      console.error('[useShoppingList] Error completing purchase:', err);
-      alert('Error al registrar la compra');
+      console.error("[useShoppingList] Error completing purchase:", err);
+      alert("Error al registrar la compra");
     } finally {
       setActionLoading(false);
     }
@@ -118,6 +127,6 @@ export function useShoppingList({
     setShoppingItems,
     handleAddManualItem,
     handleCopyShoppingList,
-    handleCompletePurchase
+    handleCompletePurchase,
   };
 }

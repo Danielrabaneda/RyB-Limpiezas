@@ -1,11 +1,24 @@
-import { useState, useEffect } from 'react';
-import { 
-  format, startOfMonth, endOfMonth, eachDayOfInterval, 
-  isSameMonth, isSameDay, addMonths, subMonths, startOfWeek, endOfWeek,
-  getDay, isToday
-} from 'date-fns';
-import { es } from 'date-fns/locale';
-import { getScheduledServicesRange, generateServicesForMonth, syncServicesForMonth } from '../../services/scheduleService';
+import { useState, useEffect } from "react";
+import {
+  format,
+  startOfMonth,
+  endOfMonth,
+  eachDayOfInterval,
+  isSameMonth,
+  isSameDay,
+  addMonths,
+  subMonths,
+  startOfWeek,
+  endOfWeek,
+  getDay,
+  isToday,
+} from "date-fns";
+import { es } from "date-fns/locale";
+import {
+  getScheduledServicesRange,
+  generateServicesForMonth,
+  syncServicesForMonth,
+} from "../../services/scheduleService";
 
 export default function DashboardCalendar({ operarios }) {
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -33,28 +46,40 @@ export default function DashboardCalendar({ operarios }) {
   }
 
   async function handleGenerate() {
-    if (!confirm(`¿Generar servicios para todo el mes de ${format(currentMonth, 'MMMM', { locale: es })}?`)) return;
+    if (
+      !confirm(
+        `¿Generar servicios para todo el mes de ${format(currentMonth, "MMMM", { locale: es })}?`,
+      )
+    )
+      return;
     setGenerating(true);
     try {
       const created = await generateServicesForMonth(currentMonth);
       alert(`Se han generado ${created} nuevos servicios.`);
       await loadMonthData();
     } catch (err) {
-      alert('Error generis servicios');
+      alert("Error generis servicios");
     } finally {
       setGenerating(false);
     }
   }
 
   async function handleSync() {
-    if (!confirm(`¿Actualizar y sincronizar servicios para todo el mes de ${format(currentMonth, 'MMMM', { locale: es })}?`)) return;
+    if (
+      !confirm(
+        `¿Actualizar y sincronizar servicios para todo el mes de ${format(currentMonth, "MMMM", { locale: es })}?`,
+      )
+    )
+      return;
     setGenerating(true);
     try {
       const result = await syncServicesForMonth(currentMonth);
-      alert(`Sincronización completada:\n${result.createdCount} creados.\n${result.deletedCount} obsoletos eliminados.`);
+      alert(
+        `Sincronización completada:\n${result.createdCount} creados.\n${result.deletedCount} obsoletos eliminados.`,
+      );
       await loadMonthData();
     } catch (err) {
-      alert('Error al actualizar servicios');
+      alert("Error al actualizar servicios");
     } finally {
       setGenerating(false);
     }
@@ -62,12 +87,16 @@ export default function DashboardCalendar({ operarios }) {
 
   const days = eachDayOfInterval({
     start: startOfWeek(startOfMonth(currentMonth), { weekStartsOn: 1 }),
-    end: endOfWeek(endOfMonth(currentMonth), { weekStartsOn: 1 })
+    end: endOfWeek(endOfMonth(currentMonth), { weekStartsOn: 1 }),
   });
 
   const getServicesForDay = (date) => {
-    return monthServices.filter(s => {
-      const sDate = s.scheduledDate?.toDate ? s.scheduledDate.toDate() : (s.scheduledDate ? new Date(s.scheduledDate) : null);
+    return monthServices.filter((s) => {
+      const sDate = s.scheduledDate?.toDate
+        ? s.scheduledDate.toDate()
+        : s.scheduledDate
+          ? new Date(s.scheduledDate)
+          : null;
       if (!sDate || isNaN(sDate.getTime())) return false;
       return isSameDay(sDate, date);
     });
@@ -76,10 +105,10 @@ export default function DashboardCalendar({ operarios }) {
   const selectedDayServices = getServicesForDay(selectedDate);
   // Group by operario
   const groupedByOperario = {};
-  operarios.forEach(op => {
+  operarios.forEach((op) => {
     groupedByOperario[op.uid] = {
       name: op.name,
-      services: selectedDayServices.filter(s => s.assignedUserId === op.uid)
+      services: selectedDayServices.filter((s) => s.assignedUserId === op.uid),
     };
   });
 
@@ -90,57 +119,71 @@ export default function DashboardCalendar({ operarios }) {
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-4">
             <h3 className="text-xl font-bold capitalize">
-              {format(currentMonth, 'MMMM yyyy', { locale: es })}
+              {format(currentMonth, "MMMM yyyy", { locale: es })}
             </h3>
             <div className="flex gap-1">
-              <button className="btn btn-ghost btn-sm" onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}>◀</button>
-              <button className="btn btn-ghost btn-sm" onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}>▶</button>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}
+              >
+                ◀
+              </button>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}
+              >
+                ▶
+              </button>
             </div>
           </div>
           <div className="flex gap-2">
-            <button 
+            <button
               className="btn btn-primary btn-sm"
               onClick={handleGenerate}
               disabled={generating}
               title="Genera servicios faltantes sin borrar nada"
             >
-              {generating ? '⌛...' : '📅 Generar mes'}
+              {generating ? "⌛..." : "📅 Generar mes"}
             </button>
-            <button 
+            <button
               className="btn btn-outline btn-sm"
               onClick={handleSync}
               disabled={generating}
               title="Sincroniza: quita servicios obsoletos y añade modificaciones"
             >
-              {generating ? '⌛...' : '🔄 Actualizar mes'}
+              {generating ? "⌛..." : "🔄 Actualizar mes"}
             </button>
           </div>
         </div>
 
         <div className="calendar-grid">
-          {['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'].map(d => (
-            <div key={d} className="calendar-header-cell">{d}</div>
+          {["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"].map((d) => (
+            <div key={d} className="calendar-header-cell">
+              {d}
+            </div>
           ))}
-          {days.map(day => {
+          {days.map((day) => {
             const daySvcs = getServicesForDay(day);
             const isSelected = isSameDay(day, selectedDate);
             const isCurrentMonth = isSameMonth(day, currentMonth);
             const today = isToday(day);
 
             return (
-              <div 
-                key={day.toISOString()} 
-                className={`calendar-day-cell ${!isCurrentMonth ? 'outside' : ''} ${isSelected ? 'selected' : ''} ${today ? 'today' : ''}`}
+              <div
+                key={day.toISOString()}
+                className={`calendar-day-cell ${!isCurrentMonth ? "outside" : ""} ${isSelected ? "selected" : ""} ${today ? "today" : ""}`}
                 onClick={() => setSelectedDate(day)}
               >
-                <span className="day-number">{format(day, 'd')}</span>
+                <span className="day-number">{format(day, "d")}</span>
                 {daySvcs.length > 0 && (
                   <div className="day-indicators">
                     <span className="svc-count">{daySvcs.length}</span>
                     <div className="svc-dots">
-                      {Array.from({ length: Math.min(daySvcs.length, 3) }).map((_, i) => (
-                        <div key={i} className="svc-dot"></div>
-                      ))}
+                      {Array.from({ length: Math.min(daySvcs.length, 3) }).map(
+                        (_, i) => (
+                          <div key={i} className="svc-dot"></div>
+                        ),
+                      )}
                     </div>
                   </div>
                 )}
@@ -156,11 +199,16 @@ export default function DashboardCalendar({ operarios }) {
           <h4 className="font-bold text-lg">
             {format(selectedDate, "EEEE, d 'de' MMMM", { locale: es })}
           </h4>
-          <p className="text-sm text-muted">{selectedDayServices.length} servicios totales</p>
+          <p className="text-sm text-muted">
+            {selectedDayServices.length} servicios totales
+          </p>
         </div>
 
-        <div className="flex flex-col gap-4 overflow-y-auto" style={{ maxHeight: '500px' }}>
-          {operarios.map(op => {
+        <div
+          className="flex flex-col gap-4 overflow-y-auto"
+          style={{ maxHeight: "500px" }}
+        >
+          {operarios.map((op) => {
             const opSvcs = groupedByOperario[op.uid].services;
             if (opSvcs.length === 0) return null;
 
@@ -171,14 +219,25 @@ export default function DashboardCalendar({ operarios }) {
                     {op.name.charAt(0)}
                   </div>
                   <span className="font-semibold text-sm">{op.name}</span>
-                  <span className="badge badge-primary scale-75 ml-auto">{opSvcs.length}</span>
+                  <span className="badge badge-primary scale-75 ml-auto">
+                    {opSvcs.length}
+                  </span>
                 </div>
                 <div className="flex flex-col gap-2 pl-4 border-l-2 border-slate-100">
-                  {opSvcs.map(s => (
-                    <div key={s.id} className="text-xs p-2 rounded border border-slate-50 shadow-sm bg-white">
-                    <div className="font-medium">Comunidad: {s.communityName || 'Cargando...'}</div>
-                    <div className={`mt-1 font-bold ${s.status === 'completed' ? 'text-green-600' : 'text-orange-500'}`}>
-                        {s.status === 'completed' ? '✓ Completado' : '○ Pendiente'}
+                  {opSvcs.map((s) => (
+                    <div
+                      key={s.id}
+                      className="text-xs p-2 rounded border border-slate-50 shadow-sm bg-white"
+                    >
+                      <div className="font-medium">
+                        Comunidad: {s.communityName || "Cargando..."}
+                      </div>
+                      <div
+                        className={`mt-1 font-bold ${s.status === "completed" ? "text-green-600" : "text-orange-500"}`}
+                      >
+                        {s.status === "completed"
+                          ? "✓ Completado"
+                          : "○ Pendiente"}
                       </div>
                     </div>
                   ))}
@@ -189,7 +248,9 @@ export default function DashboardCalendar({ operarios }) {
           {selectedDayServices.length === 0 && (
             <div className="text-center py-12">
               <span className="text-4xl mb-4 block">🏝️</span>
-              <p className="text-muted text-sm">No hay servicios programados para este día</p>
+              <p className="text-muted text-sm">
+                No hay servicios programados para este día
+              </p>
             </div>
           )}
         </div>

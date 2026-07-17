@@ -1,4 +1,4 @@
-const admin = require('firebase-admin');
+const admin = require("firebase-admin");
 
 // Configurar obligatoriamente el proyecto del emulador
 process.env.GCLOUD_PROJECT = "ryb-limpiezas-app";
@@ -19,14 +19,14 @@ async function setup() {
     const adminUser = await auth.createUser({
       email: "test-admin@test.com",
       password: "password123",
-      displayName: "Test Admin"
+      displayName: "Test Admin",
     });
 
     console.log("Creando usuario operario en Auth...");
     const operarioUser = await auth.createUser({
       email: "test-operario@test.com",
       password: "password123",
-      displayName: "Test Operario"
+      displayName: "Test Operario",
     });
 
     // 2. Crear perfiles en Firestore del emulador
@@ -35,20 +35,22 @@ async function setup() {
       name: "Test Admin",
       email: "test-admin@test.com",
       role: "admin",
-      active: true
+      active: true,
     });
 
     await db.collection("users").doc(operarioUser.uid).set({
       name: "Test Operario",
       email: "test-operario@test.com",
       role: "operario",
-      active: true
+      active: true,
     });
 
     console.log("\nUsuarios de prueba creados con éxito:");
     console.log(`- Admin UID: ${adminUser.uid}`);
     console.log(`- Operario UID: ${operarioUser.uid}`);
-    console.log("\nNota: Inicialmente estos usuarios se crean SIN Custom Claims en Firebase Auth.");
+    console.log(
+      "\nNota: Inicialmente estos usuarios se crean SIN Custom Claims en Firebase Auth.",
+    );
     process.exit(0);
   } catch (err) {
     console.error("Error al configurar usuarios de prueba:", err);

@@ -1,6 +1,16 @@
-const { initializeApp } = require('firebase/app');
-const { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, connectAuthEmulator } = require('firebase/auth');
-const { getFirestore, collection, getDocs, connectFirestoreEmulator } = require('firebase/firestore');
+const { initializeApp } = require("firebase/app");
+const {
+  getAuth,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  connectAuthEmulator,
+} = require("firebase/auth");
+const {
+  getFirestore,
+  collection,
+  getDocs,
+  connectFirestoreEmulator,
+} = require("firebase/firestore");
 
 // Configuración de Firebase para el emulador (valores ficticios válidos)
 const firebaseConfig = {
@@ -9,7 +19,7 @@ const firebaseConfig = {
   projectId: "ryb-limpiezas-app",
   storageBucket: "ryb-limpiezas-app.appspot.com",
   messagingSenderId: "12345",
-  appId: "1:12345:web:fake"
+  appId: "1:12345:web:fake",
 };
 
 const app = initializeApp(firebaseConfig);
@@ -21,48 +31,77 @@ connectAuthEmulator(auth, "http://127.0.0.1:9099", { disableWarnings: true });
 connectFirestoreEmulator(db, "127.0.0.1", 8080);
 
 async function runTests() {
-  console.log("=== INICIANDO PRUEBAS DE REGLAS DE SEGURIDAD EN EL EMULADOR ===");
+  console.log(
+    "=== INICIANDO PRUEBAS DE REGLAS DE SEGURIDAD EN EL EMULADOR ===",
+  );
 
   try {
     // Caso 1: Probar acceso con el Admin de pruebas (que YA tiene claims asignados por el backfill)
     console.log("\nIniciando sesión como test-admin@test.com...");
-    const adminCred = await signInWithEmailAndPassword(auth, "test-admin@test.com", "password123");
+    const adminCred = await signInWithEmailAndPassword(
+      auth,
+      "test-admin@test.com",
+      "password123",
+    );
     console.log(`Usuario autenticado con UID: ${adminCred.user.uid}`);
 
     // Comprobar token ID para asegurar que tiene claims
     const tokenResult = await adminCred.user.getIdTokenResult();
-    console.log(`Claims detectados en el token del Admin: role = '${tokenResult.claims.role}', active = ${tokenResult.claims.active}`);
+    console.log(
+      `Claims detectados en el token del Admin: role = '${tokenResult.claims.role}', active = ${tokenResult.claims.active}`,
+    );
 
     console.log("Intentando leer de /gpsSuggestions (migrada a claims)...");
     try {
       const snap = await getDocs(collection(db, "gpsSuggestions"));
-      console.log(`✅ ÉXITO: Lectura permitida. Documentos encontrados: ${snap.size}`);
+      console.log(
+        `✅ ÉXITO: Lectura permitida. Documentos encontrados: ${snap.size}`,
+      );
     } catch (err) {
-      console.error(`❌ ERROR: Lectura denegada en /gpsSuggestions:`, err.message);
+      console.error(
+        `❌ ERROR: Lectura denegada en /gpsSuggestions:`,
+        err.message,
+      );
     }
 
     // Caso 2: Crear un usuario nuevo (signup) que NO tiene claims en Firestore en este momento
     const tempEmail = `temp-${Date.now()}@test.com`;
     console.log(`\nRegistrando usuario nuevo sin claims: ${tempEmail}...`);
-    const tempCred = await createUserWithEmailAndPassword(auth, tempEmail, "password123");
+    const tempCred = await createUserWithEmailAndPassword(
+      auth,
+      tempEmail,
+      "password123",
+    );
     console.log(`Usuario temporal creado con UID: ${tempCred.user.uid}`);
 
-    console.log("Intentando leer de /gpsSuggestions con el usuario temporal (debería denegarse)...");
+    console.log(
+      "Intentando leer de /gpsSuggestions con el usuario temporal (debería denegarse)...",
+    );
     try {
       await getDocs(collection(db, "gpsSuggestions"));
-      console.log(`❌ ERROR: ¡Lectura permitida! Esto no debería ocurrir, el usuario no tiene claims asignados.`);
+      console.log(
+        `❌ ERROR: ¡Lectura permitida! Esto no debería ocurrir, el usuario no tiene claims asignados.`,
+      );
     } catch (err) {
-      console.log(`✅ ÉXITO: Lectura denegada correctamente. Mensaje: ${err.code} - ${err.message}`);
+      console.log(
+        `✅ ÉXITO: Lectura denegada correctamente. Mensaje: ${err.code} - ${err.message}`,
+      );
     }
 
     // Caso 3: Probar acceso a una colección no migrada (que usa get() en Firestore)
     // p.ej., /settings
-    console.log("\nIntentando leer de /settings (no migrada a claims, usa get() en Firestore)...");
+    console.log(
+      "\nIntentando leer de /settings (no migrada a claims, usa get() en Firestore)...",
+    );
     try {
       await getDocs(collection(db, "settings"));
-      console.log(`❌ ERROR: Lectura permitida. (Debería denegarse para este usuario temporal porque no está en la colección de usuarios de Firestore)`);
+      console.log(
+        `❌ ERROR: Lectura permitida. (Debería denegarse para este usuario temporal porque no está en la colección de usuarios de Firestore)`,
+      );
     } catch (err) {
-      console.log(`✅ ÉXITO: Lectura denegada correctamente por get() en Firestore. Mensaje: ${err.code} - ${err.message}`);
+      console.log(
+        `✅ ÉXITO: Lectura denegada correctamente por get() en Firestore. Mensaje: ${err.code} - ${err.message}`,
+      );
     }
 
     console.log("\n=== PRUEBAS CONCLUIDAS CON ÉXITO ===");

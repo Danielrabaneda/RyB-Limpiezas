@@ -1,11 +1,11 @@
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import App from './App.jsx'
-import './index.css'
-import { registerSW } from 'virtual:pwa-register';
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import App from "./App.jsx";
+import "./index.css";
+import { registerSW } from "virtual:pwa-register";
 
 // Register service worker for PWA only if not in a client portal.
-if (!window.location.pathname.startsWith('/portal/')) {
+if (!window.location.pathname.startsWith("/portal/")) {
   const updateSW = registerSW({
     immediate: true,
     onNeedRefresh() {
@@ -13,16 +13,16 @@ if (!window.location.pathname.startsWith('/portal/')) {
       updateSW(true);
     },
     onOfflineReady() {
-      console.log('App lista para uso offline.');
-    }
+      console.log("App lista para uso offline.");
+    },
   });
 }
 
-createRoot(document.getElementById('root')).render(
+createRoot(document.getElementById("root")).render(
   <StrictMode>
     <App />
   </StrictMode>,
 );
 
 // Señalizar que la aplicación se ha montado correctamente
-window.dispatchEvent(new CustomEvent('app-mounted'));
+window.dispatchEvent(new CustomEvent("app-mounted"));

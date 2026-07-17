@@ -1,4 +1,4 @@
-const admin = require('firebase-admin');
+const admin = require("firebase-admin");
 
 // Configurar obligatoriamente el proyecto del emulador
 process.env.GCLOUD_PROJECT = "ryb-limpiezas-app";
@@ -15,7 +15,10 @@ async function verify() {
     console.log(`- Admin (${adminUser.email}):`, adminUser.customClaims);
 
     const operarioUser = await auth.getUserByEmail("test-operario@test.com");
-    console.log(`- Operario (${operarioUser.email}):`, operarioUser.customClaims);
+    console.log(
+      `- Operario (${operarioUser.email}):`,
+      operarioUser.customClaims,
+    );
   } catch (err) {
     console.error("Error al verificar claims:", err.message);
   }

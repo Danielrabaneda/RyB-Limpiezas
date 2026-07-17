@@ -1,7 +1,10 @@
-const admin = require('firebase-admin');
+const admin = require("firebase-admin");
 
 // Si se detectan variables de emulación en el entorno, inicializamos descriptivamente
-if (process.env.FIREBASE_AUTH_EMULATOR_HOST || process.env.FIRESTORE_EMULATOR_HOST) {
+if (
+  process.env.FIREBASE_AUTH_EMULATOR_HOST ||
+  process.env.FIRESTORE_EMULATOR_HOST
+) {
   console.log("Iniciando en modo EMULADOR local:");
   console.log("- Auth Emulator:", process.env.FIREBASE_AUTH_EMULATOR_HOST);
   console.log("- Firestore Emulator:", process.env.FIRESTORE_EMULATOR_HOST);
@@ -26,26 +29,33 @@ async function backfillClaims() {
 
     let successCount = 0;
     let failedUsers = [];
-    
+
     for (const doc of snap.docs) {
       const userData = doc.data();
       const uid = doc.id;
-      
+
       // Determinar los claims correctos basándose en el perfil actual
       const role = userData.role || "operario";
       const active = userData.active !== false;
 
       try {
-        console.log(`Actualizando claims de ${userData.email || uid} -> { role: '${role}', active: ${active} }`);
+        console.log(
+          `Actualizando claims de ${userData.email || uid} -> { role: '${role}', active: ${active} }`,
+        );
         await auth.setCustomUserClaims(uid, { role, active });
         successCount++;
       } catch (err) {
-        console.error(`❌ Fallo al asignar claims a ${userData.email || uid}:`, err.message);
+        console.error(
+          `❌ Fallo al asignar claims a ${userData.email || uid}:`,
+          err.message,
+        );
         failedUsers.push({ uid, email: userData.email, error: err.message });
       }
     }
 
-    console.log(`\nSincronización finalizada: ${successCount}/${snap.size} correctos.`);
+    console.log(
+      `\nSincronización finalizada: ${successCount}/${snap.size} correctos.`,
+    );
     if (failedUsers.length > 0) {
       console.log(`⚠️ ${failedUsers.length} usuarios fallaron:`, failedUsers);
     }

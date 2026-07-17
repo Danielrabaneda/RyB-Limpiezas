@@ -1,163 +1,189 @@
-import { 
-  collection, doc, addDoc, updateDoc, getDocs, deleteDoc,
-  query, where, orderBy, serverTimestamp, Timestamp, GeoPoint,
-  getDoc
-} from 'firebase/firestore';
-import { db } from '../config/firebase';
-import { startOfDay, endOfDay, differenceInMinutes } from 'date-fns';
-import { getDistance } from '../utils/geolocation';
+import {
+  collection,
+  doc,
+  addDoc,
+  updateDoc,
+  getDocs,
+  query,
+  where,
+  orderBy,
+  serverTimestamp,
+  Timestamp,
+  GeoPoint,
+  getDoc,
+} from "firebase/firestore";
+import { db, functions } from "../config/firebase";
+import { httpsCallable } from "firebase/functions";
+import { startOfDay, endOfDay, differenceInMinutes } from "date-fns";
+import { getDistance } from "../utils/geolocation";
 
 // ==================== CHECK-INS ====================
 export async function createCheckIn(data) {
-  const checkInTime = data.manualTime ? Timestamp.fromDate(new Date(data.manualTime)) : serverTimestamp();
-  const ref = await addDoc(collection(db, 'checkIns'), {
-    userId: data.userId,
-    communityId: data.communityId,
-    scheduledServiceId: data.scheduledServiceId || '',
-    checkInTime,
-    checkInLocation: new GeoPoint(data.lat, data.lng),
-    checkOutTime: null,
-    checkOutLocation: null,
-    durationMinutes: 0,
-    createdAt: serverTimestamp(),
-  });
-  return ref.id;
+  try {
+    const secureCheckIn = httpsCallable(functions, "secureCheckIn");
+    const res = await secureCheckIn({
+      userId: data.userId,
+      scheduledServiceId: data.scheduledServiceId || "",
+      lat: typeof data.lat === "number" ? data.lat : null,
+      lng: typeof data.lng === "number" ? data.lng : null,
+      accuracy: typeof data.accuracy === "number" ? data.accuracy : null,
+      speed: typeof data.speed === "number" ? data.speed : null,
+      timestamp: typeof data.timestamp === "number" ? data.timestamp : null,
+      manualTime: data.manualTime || null,
+      exceptionReason: data.exceptionReason || null,
+      force: data.force || false,
+    });
+    return res.data.checkInId;
+  } catch (err) {
+    console.error("[checkInService] Error en secureCheckIn:", err);
+    throw err;
+  }
 }
 
-export async function completeCheckOut(checkInId, lat, lng, manualTime = null, signatureData = null) {
+export async function completeCheckOut(
+  checkInId,
+  lat,
+  lng,
+  manualTime = null,
+  signatureData = null,
+  telemetry = null,
+) {
   if (!checkInId) {
-    console.warn('[completeCheckOut] checkInId is invalid:', checkInId);
+    console.warn("[completeCheckOut] checkInId is invalid:", checkInId);
     return { duration: 0 };
   }
 
-  const checkOutTime = manualTime ? new Date(manualTime) : new Date();
-  
-  // Get checkin data to calculate duration
-  const checkInRef = doc(db, 'checkIns', checkInId);
-  let duration = 0;
-  
   try {
-    const snap = await getDoc(checkInRef);
-    if (snap.exists()) {
-      const data = snap.data();
-      if (data.checkInTime) {
-        const checkInDate = data.checkInTime.toDate ? data.checkInTime.toDate() : new Date(data.checkInTime);
-        duration = differenceInMinutes(checkOutTime, checkInDate);
-      }
-    }
-  } catch (readErr) {
-    console.warn('[completeCheckOut] Error reading check-in document:', readErr);
+    const secureCheckOut = httpsCallable(functions, "secureCheckOut");
+    const res = await secureCheckOut({
+      checkInId,
+      lat:
+        typeof lat === "number"
+          ? lat
+          : telemetry && typeof telemetry.lat === "number"
+            ? telemetry.lat
+            : null,
+      lng:
+        typeof lng === "number"
+          ? lng
+          : telemetry && typeof telemetry.lng === "number"
+            ? telemetry.lng
+            : null,
+      accuracy:
+        telemetry && typeof telemetry.accuracy === "number"
+          ? telemetry.accuracy
+          : null,
+      speed:
+        telemetry && typeof telemetry.speed === "number"
+          ? telemetry.speed
+          : null,
+      timestamp:
+        telemetry && typeof telemetry.timestamp === "number"
+          ? telemetry.timestamp
+          : null,
+      manualTime: manualTime || null,
+      exceptionReason: (telemetry && telemetry.exceptionReason) || null,
+      signatureData: signatureData || null,
+    });
+    return { duration: res.data.duration };
+  } catch (err) {
+    console.error("[checkInService] Error en secureCheckOut:", err);
+    throw err;
   }
-  
-  let cleanLat = (typeof lat === 'number' && !isNaN(lat)) ? lat : 0;
-  let cleanLng = (typeof lng === 'number' && !isNaN(lng)) ? lng : 0;
-  
-  // Clamp latitude to [-90, 90] and longitude to [-180, 180]
-  if (cleanLat < -90) cleanLat = -90;
-  if (cleanLat > 90) cleanLat = 90;
-  if (cleanLng < -180) cleanLng = -180;
-  if (cleanLng > 180) cleanLng = 180;
-  
-  const updateData = {
-    checkOutTime: Timestamp.fromDate(checkOutTime),
-    checkOutLocation: new GeoPoint(cleanLat, cleanLng),
-    durationMinutes: Math.max(0, duration),
-  };
-
-  if (signatureData) {
-    updateData.signature = {
-      imageUrl: signatureData.imageUrl,
-      signerName: signatureData.signerName,
-      signedAt: Timestamp.fromDate(signatureData.signedAt || new Date()),
-    };
-  }
-  
-  await updateDoc(checkInRef, updateData);
-  
-  return { duration };
 }
 
 export async function getCheckInsForDate(userId, date) {
   const start = Timestamp.fromDate(startOfDay(date));
   const end = Timestamp.fromDate(endOfDay(date));
-  
+
   const q = query(
-    collection(db, 'checkIns'),
-    where('userId', '==', userId),
-    where('checkInTime', '>=', start),
-    where('checkInTime', '<=', end),
-    orderBy('checkInTime', 'desc')
+    collection(db, "checkIns"),
+    where("userId", "==", userId),
+    where("checkInTime", ">=", start),
+    where("checkInTime", "<=", end),
+    orderBy("checkInTime", "desc"),
   );
   const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
 export async function getCheckInsRange(startDate, endDate, filters = {}) {
   const start = Timestamp.fromDate(startOfDay(startDate));
   const end = Timestamp.fromDate(endOfDay(endDate));
-  
+
   let q;
   if (filters.userId) {
     q = query(
-      collection(db, 'checkIns'),
-      where('userId', '==', filters.userId),
-      where('checkInTime', '>=', start),
-      where('checkInTime', '<=', end),
-      orderBy('checkInTime', 'desc')
+      collection(db, "checkIns"),
+      where("userId", "==", filters.userId),
+      where("checkInTime", ">=", start),
+      where("checkInTime", "<=", end),
+      orderBy("checkInTime", "desc"),
     );
   } else {
     q = query(
-      collection(db, 'checkIns'),
-      where('checkInTime', '>=', start),
-      where('checkInTime', '<=', end),
-      orderBy('checkInTime', 'desc')
+      collection(db, "checkIns"),
+      where("checkInTime", ">=", start),
+      where("checkInTime", "<=", end),
+      orderBy("checkInTime", "desc"),
     );
   }
-  
-  let results = (await getDocs(q)).docs.map(d => ({ id: d.id, ...d.data() }));
-  
+
+  let results = (await getDocs(q)).docs.map((d) => ({ id: d.id, ...d.data() }));
+
   if (filters.communityId) {
-    results = results.filter(r => r.communityId === filters.communityId);
+    results = results.filter((r) => r.communityId === filters.communityId);
   }
-  
+
   return results;
 }
 
 export async function deleteCheckIn(id) {
-  await deleteDoc(doc(db, 'checkIns', id));
+  const secureDeleteCheckIn = httpsCallable(functions, "secureDeleteCheckIn");
+  await secureDeleteCheckIn({ checkInId: id });
 }
 
 export async function getAllOpenCheckIns(userId) {
   const q = query(
-    collection(db, 'checkIns'),
-    where('userId', '==', userId),
-    where('checkOutTime', '==', null)
+    collection(db, "checkIns"),
+    where("userId", "==", userId),
+    where("checkOutTime", "==", null),
   );
   const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }));
+  return snap.docs.map((d) => ({
+    id: d.id,
+    ...d.data({ serverTimestamps: "estimate" }),
+  }));
 }
 
 export async function getActiveCheckIn(userId) {
   const open = await getAllOpenCheckIns(userId);
   if (open.length === 0) return null;
-  
+
   // Return the most recent one
   return open.sort((a, b) => {
-    const aTime = a.checkInTime ? (a.checkInTime.toDate ? a.checkInTime.toDate() : new Date(a.checkInTime)) : new Date();
-    const bTime = b.checkInTime ? (b.checkInTime.toDate ? b.checkInTime.toDate() : new Date(b.checkInTime)) : new Date();
+    const aTime = a.checkInTime
+      ? a.checkInTime.toDate
+        ? a.checkInTime.toDate()
+        : new Date(a.checkInTime)
+      : new Date();
+    const bTime = b.checkInTime
+      ? b.checkInTime.toDate
+        ? b.checkInTime.toDate()
+        : new Date(b.checkInTime)
+      : new Date();
     return bTime - aTime;
   })[0];
 }
 
-
 // ==================== TASK EXECUTIONS ====================
 export async function createTaskExecution(data) {
-  const ref = await addDoc(collection(db, 'taskExecutions'), {
+  const ref = await addDoc(collection(db, "taskExecutions"), {
     scheduledServiceId: data.scheduledServiceId,
     communityTaskId: data.communityTaskId,
     userId: data.userId,
-    status: 'pending',
-    notes: '',
+    status: "pending",
+    notes: "",
     photoUrls: [],
     createdAt: serverTimestamp(),
   });
@@ -165,7 +191,7 @@ export async function createTaskExecution(data) {
 }
 
 export async function updateTaskExecution(id, data) {
-  await updateDoc(doc(db, 'taskExecutions', id), {
+  await updateDoc(doc(db, "taskExecutions", id), {
     ...data,
     updatedAt: serverTimestamp(),
   });
@@ -173,35 +199,41 @@ export async function updateTaskExecution(id, data) {
 
 export async function getTaskExecutionsForService(scheduledServiceId) {
   const q = query(
-    collection(db, 'taskExecutions'),
-    where('scheduledServiceId', '==', scheduledServiceId)
+    collection(db, "taskExecutions"),
+    where("scheduledServiceId", "==", scheduledServiceId),
   );
   const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
 export async function getTaskExecutionsRange(startDate, endDate, filters = {}) {
   const start = Timestamp.fromDate(startOfDay(startDate));
   const end = Timestamp.fromDate(endOfDay(endDate));
-  
+
   const q = query(
-    collection(db, 'taskExecutions'),
-    where('createdAt', '>=', start),
-    where('createdAt', '<=', end),
-    orderBy('createdAt', 'desc')
+    collection(db, "taskExecutions"),
+    where("createdAt", ">=", start),
+    where("createdAt", "<=", end),
+    orderBy("createdAt", "desc"),
   );
-  
-  let results = (await getDocs(q)).docs.map(d => ({ id: d.id, ...d.data() }));
-  
+
+  let results = (await getDocs(q)).docs.map((d) => ({ id: d.id, ...d.data() }));
+
   if (filters.userId) {
-    results = results.filter(r => r.userId === filters.userId);
+    results = results.filter((r) => r.userId === filters.userId);
   }
-  
+
   return results;
 }
 
 // ==================== DISTANCE VALIDATION ====================
-export function isWithinRange(userLat, userLng, communityLat, communityLng, maxMeters = 500) {
+export function isWithinRange(
+  userLat,
+  userLng,
+  communityLat,
+  communityLng,
+  maxMeters = 500,
+) {
   const distance = getDistance(userLat, userLng, communityLat, communityLng);
   return { withinRange: distance <= maxMeters, distance: Math.round(distance) };
 }

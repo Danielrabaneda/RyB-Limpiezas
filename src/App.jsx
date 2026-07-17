@@ -1,10 +1,30 @@
-import React, { useState, useEffect, lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { NotificationProvider, useNotifications } from './contexts/NotificationContext';
-import { collection, query, where, limit, getDocs, onSnapshot, doc } from 'firebase/firestore';
-import { db } from './config/firebase';
-import './index.css';
+import React, { useState, useEffect, lazy, Suspense } from "react";
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Navigate,
+  NavLink,
+  Outlet,
+  useNavigate,
+  useLocation,
+} from "react-router-dom";
+import { AuthProvider, useAuth } from "./contexts/AuthContext";
+import {
+  NotificationProvider,
+  useNotifications,
+} from "./contexts/NotificationContext";
+import {
+  collection,
+  query,
+  where,
+  limit,
+  getDocs,
+  onSnapshot,
+  doc,
+} from "firebase/firestore";
+import { db } from "./config/firebase";
+import "./index.css";
 
 // ==================== ERROR BOUNDARY ====================
 class ErrorBoundary extends React.Component {
@@ -22,10 +42,12 @@ class ErrorBoundary extends React.Component {
     if (this.state.hasError) {
       return (
         <div className="flex flex-col items-center justify-center p-10 text-center h-screen bg-slate-50">
-          <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>⚠️</div>
+          <div style={{ fontSize: "4rem", marginBottom: "1rem" }}>⚠️</div>
           <h2 className="font-bold text-xl mb-4">¡Vaya! Algo ha fallado</h2>
-          <p className="text-muted mb-6">La aplicación ha encontrado un error inesperado.</p>
-          <button 
+          <p className="text-muted mb-6">
+            La aplicación ha encontrado un error inesperado.
+          </p>
+          <button
             className="btn btn-primary"
             onClick={() => window.location.reload()}
           >
@@ -42,39 +64,55 @@ class ErrorBoundary extends React.Component {
 }
 
 // Lazy loaded pages
-const LandingPage = lazy(() => import('./pages/LandingPage'));
-const LoginPage = lazy(() => import('./pages/auth/LoginPage'));
-const RegisterPage = lazy(() => import('./pages/auth/RegisterPage'));
-const DashboardPage = lazy(() => import('./pages/admin/DashboardPage'));
-const CommunitiesPage = lazy(() => import('./pages/admin/CommunitiesPage'));
-const OperariosPage = lazy(() => import('./pages/admin/OperariosPage'));
-const ReportsPage = lazy(() => import('./pages/admin/ReportsPage'));
-const InvoicesPage = lazy(() => import('./pages/admin/InvoicesPage'));
-const KilometrajePage = lazy(() => import('./pages/admin/KilometrajePage'));
-const InventoryPage = lazy(() => import('./pages/admin/InventoryPage'));
-const ControlHorarioPage = lazy(() => import('./pages/admin/ControlHorarioPage'));
-const TodayPage = lazy(() => import('./pages/operario/TodayPage'));
-const ServiceDetailPage = lazy(() => import('./pages/operario/ServiceDetailPage'));
-const HistoryPage = lazy(() => import('./pages/operario/HistoryPage'));
-const MaterialRequestPage = lazy(() => import('./pages/operario/MaterialRequestPage'));
-const SettingsPage = lazy(() => import('./pages/admin/SettingsPage'));
-const EvidenceReportsPage = lazy(() => import('./pages/admin/EvidenceReportsPage'));
-const AbsencesPage = lazy(() => import('./pages/operario/AbsencesPage'));
-const AbsencesAdminPage = lazy(() => import('./pages/admin/AbsencesAdminPage'));
-const ClientPortalPage = lazy(() => import('./pages/cliente/ClientPortalPage'));
-const CompanyRequestsPage = lazy(() => import('./pages/admin/CompanyRequestsPage'));
+const LandingPage = lazy(() => import("./pages/LandingPage"));
+const LoginPage = lazy(() => import("./pages/auth/LoginPage"));
+const RegisterPage = lazy(() => import("./pages/auth/RegisterPage"));
+const DashboardPage = lazy(() => import("./pages/admin/DashboardPage"));
+const CommunitiesPage = lazy(() => import("./pages/admin/CommunitiesPage"));
+const OperariosPage = lazy(() => import("./pages/admin/OperariosPage"));
+const ReportsPage = lazy(() => import("./pages/admin/ReportsPage"));
+const InvoicesPage = lazy(() => import("./pages/admin/InvoicesPage"));
+const KilometrajePage = lazy(() => import("./pages/admin/KilometrajePage"));
+const InventoryPage = lazy(() => import("./pages/admin/InventoryPage"));
+const ControlHorarioPage = lazy(
+  () => import("./pages/admin/ControlHorarioPage"),
+);
+const TodayPage = lazy(() => import("./pages/operario/TodayPage"));
+const ServiceDetailPage = lazy(
+  () => import("./pages/operario/ServiceDetailPage"),
+);
+const HistoryPage = lazy(() => import("./pages/operario/HistoryPage"));
+const MaterialRequestPage = lazy(
+  () => import("./pages/operario/MaterialRequestPage"),
+);
+const SettingsPage = lazy(() => import("./pages/admin/SettingsPage"));
+const EvidenceReportsPage = lazy(
+  () => import("./pages/admin/EvidenceReportsPage"),
+);
+const AbsencesPage = lazy(() => import("./pages/operario/AbsencesPage"));
+const AbsencesAdminPage = lazy(() => import("./pages/admin/AbsencesAdminPage"));
+const ClientPortalPage = lazy(() => import("./pages/cliente/ClientPortalPage"));
+const CompanyRequestsPage = lazy(
+  () => import("./pages/admin/CompanyRequestsPage"),
+);
 
 // Legal pages
-const AvisoLegalPage = lazy(() => import('./pages/legal/AvisoLegalPage'));
-const PoliticaPrivacidadPage = lazy(() => import('./pages/legal/PoliticaPrivacidadPage'));
-const PoliticaCookiesPage = lazy(() => import('./pages/legal/PoliticaCookiesPage'));
+const AvisoLegalPage = lazy(() => import("./pages/legal/AvisoLegalPage"));
+const PoliticaPrivacidadPage = lazy(
+  () => import("./pages/legal/PoliticaPrivacidadPage"),
+);
+const PoliticaCookiesPage = lazy(
+  () => import("./pages/legal/PoliticaCookiesPage"),
+);
 
 // Components
-import CookieBanner from './components/CookieBanner';
-const GeolocationTracker = lazy(() => import('./components/operario/GeolocationTracker'));
-const PermissionsCheck = lazy(() => import('./components/operario/PermissionsCheck'));
-
-
+import CookieBanner from "./components/CookieBanner";
+const GeolocationTracker = lazy(
+  () => import("./components/operario/GeolocationTracker"),
+);
+const PermissionsCheck = lazy(
+  () => import("./components/operario/PermissionsCheck"),
+);
 
 // ==================== ROUTE GUARDS ====================
 function ProtectedRoute({ children, requiredRole }) {
@@ -98,8 +136,10 @@ function ProtectedRoute({ children, requiredRole }) {
         <p className="text-muted">Iniciando sesión...</p>
         {showEmergencyButton && (
           <div className="mt-8 animate-fadeIn text-center px-6">
-            <p className="text-xs text-red-500 mb-4">¿Tarda demasiado? La conexión puede ser inestable.</p>
-            <button 
+            <p className="text-xs text-red-500 mb-4">
+              ¿Tarda demasiado? La conexión puede ser inestable.
+            </p>
+            <button
               className="btn btn-secondary btn-sm"
               onClick={() => window.location.reload()}
             >
@@ -115,33 +155,35 @@ function ProtectedRoute({ children, requiredRole }) {
   }
 
   if (!currentUser) return <Navigate to="/login" />;
-  
+
   if (!userProfile && !loading) {
     return (
       <div className="loading-page px-6 text-center">
-        <div style={{ fontSize: '3rem' }}>🔍</div>
+        <div style={{ fontSize: "3rem" }}>🔍</div>
         <h3 className="font-bold mt-4">Perfil no encontrado</h3>
-        <p className="text-sm text-muted mb-6">No hemos podido cargar tus datos de usuario.</p>
+        <p className="text-sm text-muted mb-6">
+          No hemos podido cargar tus datos de usuario.
+        </p>
         <div className="flex flex-col sm:flex-row gap-3 justify-center">
-          <button 
+          <button
             className="btn btn-primary"
             onClick={() => window.location.reload()}
           >
             🔄 Reintentar conexión
           </button>
-          <button 
+          <button
             className="btn btn-secondary"
             onClick={async () => {
               try {
                 localStorage.clear();
                 sessionStorage.clear();
-                const { signOut } = await import('firebase/auth');
-                const { auth } = await import('./config/firebase');
+                const { signOut } = await import("firebase/auth");
+                const { auth } = await import("./config/firebase");
                 await signOut(auth);
-                window.location.href = '/login';
+                window.location.href = "/login";
               } catch (e) {
                 console.error(e);
-                window.location.href = '/login';
+                window.location.href = "/login";
               }
             }}
           >
@@ -154,10 +196,12 @@ function ProtectedRoute({ children, requiredRole }) {
 
   if (requiredRole && userProfile?.role !== requiredRole) {
     // Admins can access operario pages too
-    if (requiredRole === 'operario' && userProfile?.role === 'admin') {
+    if (requiredRole === "operario" && userProfile?.role === "admin") {
       // Allow admin to access operario pages
     } else {
-      return <Navigate to={userProfile?.role === 'admin' ? '/admin' : '/operario'} />;
+      return (
+        <Navigate to={userProfile?.role === "admin" ? "/admin" : "/operario"} />
+      );
     }
   }
 
@@ -167,7 +211,7 @@ function ProtectedRoute({ children, requiredRole }) {
 function SuperAdminRoute({ children }) {
   const { userProfile, loading } = useAuth();
   if (loading) return null;
-  if (userProfile?.email !== 'admin@ryblimpiezas.com') {
+  if (userProfile?.email !== "admin@ryblimpiezas.com") {
     return <Navigate to="/admin" />;
   }
   return children;
@@ -187,8 +231,9 @@ function AdminLayout() {
     const handleFullscreenChange = () => {
       setIsFullscreen(!!document.fullscreenElement);
     };
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () =>
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
   }, []);
 
   const toggleFullscreen = () => {
@@ -206,7 +251,7 @@ function AdminLayout() {
   const [pendingLeads, setPendingLeads] = useState(0);
 
   useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'settings', 'global'), (docSnap) => {
+    const unsub = onSnapshot(doc(db, "settings", "global"), (docSnap) => {
       if (docSnap.exists()) {
         setGlobalSettings(docSnap.data());
       }
@@ -215,7 +260,10 @@ function AdminLayout() {
   }, []);
 
   useEffect(() => {
-    const q = query(collection(db, 'transfers'), where('status', '==', 'pending'));
+    const q = query(
+      collection(db, "transfers"),
+      where("status", "==", "pending"),
+    );
     const unsub = onSnapshot(q, (snap) => {
       setPendingValidations(snap.size);
     });
@@ -223,7 +271,10 @@ function AdminLayout() {
   }, []);
 
   useEffect(() => {
-    const q = query(collection(db, 'gpsSuggestions'), where('status', '==', 'pending'));
+    const q = query(
+      collection(db, "gpsSuggestions"),
+      where("status", "==", "pending"),
+    );
     const unsub = onSnapshot(q, (snap) => {
       setPendingGPS(snap.size);
     });
@@ -231,7 +282,10 @@ function AdminLayout() {
   }, []);
 
   useEffect(() => {
-    const q = query(collection(db, 'materialRequests'), where('status', '==', 'pending'));
+    const q = query(
+      collection(db, "materialRequests"),
+      where("status", "==", "pending"),
+    );
     const unsub = onSnapshot(q, (snap) => {
       setPendingOrders(snap.size);
     });
@@ -239,7 +293,10 @@ function AdminLayout() {
   }, []);
 
   useEffect(() => {
-    const q = query(collection(db, 'companyRequests'), where('status', '==', 'pending'));
+    const q = query(
+      collection(db, "companyRequests"),
+      where("status", "==", "pending"),
+    );
     const unsub = onSnapshot(q, (snap) => {
       setPendingLeads(snap.size);
     });
@@ -248,65 +305,87 @@ function AdminLayout() {
 
   async function handleLogout() {
     await logout();
-    navigate('/login');
+    navigate("/login");
   }
 
-  const isMasterAdmin = userProfile?.email === 'admin@ryblimpiezas.com';
+  const isMasterAdmin = userProfile?.email === "admin@ryblimpiezas.com";
 
   const navItems = [
-    { path: '/admin', icon: '📊', label: 'Dashboard', exact: true },
-    { path: '/admin/comunidades', icon: '🏢', label: 'Comunidades' },
-    { path: '/admin/operarios', icon: '👷', label: 'Operarios' },
-    { path: '/admin/control-horario', icon: '⏱️', label: 'Control Horario' },
-    { path: '/admin/ausencias', icon: '🌴', label: 'Ausencias' },
-    { path: '/admin/informes', icon: '📈', label: 'Informes' },
-    { path: '/admin/facturas', icon: '📄', label: 'Facturación' },
-    { path: '/admin/evidencias', icon: '📸', label: 'Evidencias' },
-    { path: '/admin/kilometraje', icon: '🚗', label: 'Kilometraje' },
-    { path: '/admin/inventory', icon: '📦', label: 'Materiales' },
-    ...(isMasterAdmin ? [{ path: '/admin/solicitudes', icon: '📩', label: 'Solicitudes' }] : []),
-    { path: '/admin/ajustes', icon: '⚙️', label: 'Ajustes' },
+    { path: "/admin", icon: "📊", label: "Dashboard", exact: true },
+    { path: "/admin/comunidades", icon: "🏢", label: "Comunidades" },
+    { path: "/admin/operarios", icon: "👷", label: "Operarios" },
+    { path: "/admin/control-horario", icon: "⏱️", label: "Control Horario" },
+    { path: "/admin/ausencias", icon: "🌴", label: "Ausencias" },
+    { path: "/admin/informes", icon: "📈", label: "Informes" },
+    { path: "/admin/facturas", icon: "📄", label: "Facturación" },
+    { path: "/admin/evidencias", icon: "📸", label: "Evidencias" },
+    { path: "/admin/kilometraje", icon: "🚗", label: "Kilometraje" },
+    { path: "/admin/inventory", icon: "📦", label: "Materiales" },
+    ...(isMasterAdmin
+      ? [{ path: "/admin/solicitudes", icon: "📩", label: "Solicitudes" }]
+      : []),
+    { path: "/admin/ajustes", icon: "⚙️", label: "Ajustes" },
   ];
 
   return (
     <div className="admin-layout">
       {/* Sidebar overlay (mobile) */}
       <div
-        className={`sidebar-overlay ${sidebarOpen ? 'active' : ''}`}
+        className={`sidebar-overlay ${sidebarOpen ? "active" : ""}`}
         onClick={() => setSidebarOpen(false)}
       />
 
       {/* Sidebar */}
-      <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
+      <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="sidebar-brand">
           {globalSettings?.logoUrl ? (
-            <img src={globalSettings.logoUrl} alt="Logo" style={{ width: '40px', height: '40px', objectFit: 'contain', borderRadius: '4px', background: '#fff' }} />
+            <img
+              src={globalSettings.logoUrl}
+              alt="Logo"
+              style={{
+                width: "40px",
+                height: "40px",
+                objectFit: "contain",
+                borderRadius: "4px",
+                background: "#fff",
+              }}
+            />
           ) : (
             <div className="sidebar-brand-icon">RyB</div>
           )}
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="sidebar-brand-text truncate">{globalSettings?.companyName || 'RyB Limpiezas'}</div>
+            <div className="sidebar-brand-text truncate">
+              {globalSettings?.companyName || "RyB Limpiezas"}
+            </div>
             <div className="sidebar-brand-sub">Panel de gestión</div>
           </div>
-          <button 
-            onClick={() => window.dispatchEvent(new CustomEvent('ryb-open-cookie-settings'))}
+          <button
+            onClick={() =>
+              window.dispatchEvent(new CustomEvent("ryb-open-cookie-settings"))
+            }
             className="btn btn-ghost btn-sm"
             title="Configuración de privacidad y cookies"
-            style={{ 
-              color: 'rgba(255,255,255,0.6)', 
-              padding: '6px 8px', 
-              borderRadius: 'var(--radius-sm)',
-              fontSize: '1.05rem',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              transition: 'all 0.2s',
-              background: 'rgba(255,255,255,0.03)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              cursor: 'pointer'
+            style={{
+              color: "rgba(255,255,255,0.6)",
+              padding: "6px 8px",
+              borderRadius: "var(--radius-sm)",
+              fontSize: "1.05rem",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transition: "all 0.2s",
+              background: "rgba(255,255,255,0.03)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              cursor: "pointer",
             }}
-            onMouseOver={(e) => { e.currentTarget.style.color = '#fff'; e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; }}
-            onMouseOut={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.6)'; e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.color = "#fff";
+              e.currentTarget.style.background = "rgba(255,255,255,0.08)";
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.color = "rgba(255,255,255,0.6)";
+              e.currentTarget.style.background = "rgba(255,255,255,0.03)";
+            }}
           >
             🍪
           </button>
@@ -314,50 +393,70 @@ function AdminLayout() {
 
         <nav className="sidebar-nav">
           <div className="sidebar-section-title">Principal</div>
-          {navItems.map(item => (
+          {navItems.map((item) => (
             <NavLink
               key={item.path}
               to={item.path}
               end={item.exact}
-              className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''} flex items-center justify-between`}
+              className={({ isActive }) =>
+                `sidebar-link ${isActive ? "active" : ""} flex items-center justify-between`
+              }
               onClick={() => setSidebarOpen(false)}
             >
               <div className="flex items-center gap-3">
                 <span className="sidebar-link-icon">{item.icon}</span>
                 {item.label}
               </div>
-              {item.path === '/admin' && (pendingValidations > 0 || pendingGPS > 0) && (
-                <div className="flex gap-1">
-                  {pendingValidations > 0 && (
-                    <span className="badge bg-amber-500 text-white border-0 text-xs px-2 py-0.5 shadow-sm animate-pulse" title="Traspasos pendientes">
-                      {pendingValidations}
-                    </span>
-                  )}
-                  {pendingGPS > 0 && (
-                    <span className="badge bg-blue-500 text-white border-0 text-xs px-2 py-0.5 shadow-sm animate-pulse" title="Ubicaciones GPS sugeridas">
-                      {pendingGPS}
-                    </span>
-                  )}
-                </div>
-              )}
-              {item.path === '/admin/inventory' && pendingOrders > 0 && (
-                <span className="badge bg-red-500 text-white border-0 text-xs px-2 py-0.5 shadow-sm animate-pulse" title="Pedidos pendientes">
+              {item.path === "/admin" &&
+                (pendingValidations > 0 || pendingGPS > 0) && (
+                  <div className="flex gap-1">
+                    {pendingValidations > 0 && (
+                      <span
+                        className="badge bg-amber-500 text-white border-0 text-xs px-2 py-0.5 shadow-sm animate-pulse"
+                        title="Traspasos pendientes"
+                      >
+                        {pendingValidations}
+                      </span>
+                    )}
+                    {pendingGPS > 0 && (
+                      <span
+                        className="badge bg-blue-500 text-white border-0 text-xs px-2 py-0.5 shadow-sm animate-pulse"
+                        title="Ubicaciones GPS sugeridas"
+                      >
+                        {pendingGPS}
+                      </span>
+                    )}
+                  </div>
+                )}
+              {item.path === "/admin/inventory" && pendingOrders > 0 && (
+                <span
+                  className="badge bg-red-500 text-white border-0 text-xs px-2 py-0.5 shadow-sm animate-pulse"
+                  title="Pedidos pendientes"
+                >
                   {pendingOrders}
                 </span>
               )}
-              {item.path === '/admin/solicitudes' && pendingLeads > 0 && (
-                <span className="badge bg-emerald-500 text-white border-0 text-xs px-2 py-0.5 shadow-sm animate-pulse" title="Solicitudes de empresa pendientes">
+              {item.path === "/admin/solicitudes" && pendingLeads > 0 && (
+                <span
+                  className="badge bg-emerald-500 text-white border-0 text-xs px-2 py-0.5 shadow-sm animate-pulse"
+                  title="Solicitudes de empresa pendientes"
+                >
                   {pendingLeads}
                 </span>
               )}
             </NavLink>
           ))}
-          
-          <div style={{ margin: '15px 12px 5px', borderTop: '1px solid rgba(255, 255, 255, 0.1)' }} />
+
+          <div
+            style={{
+              margin: "15px 12px 5px",
+              borderTop: "1px solid rgba(255, 255, 255, 0.1)",
+            }}
+          />
           <NavLink
             to="/operario"
             className="sidebar-link flex items-center justify-between"
-            style={{ color: '#3b82f6', fontWeight: 'bold' }}
+            style={{ color: "#3b82f6", fontWeight: "bold" }}
             onClick={() => setSidebarOpen(false)}
           >
             <div className="flex items-center gap-3">
@@ -369,16 +468,23 @@ function AdminLayout() {
 
         <div className="sidebar-footer">
           <div className="sidebar-user">
-            <div className="sidebar-avatar">{userProfile?.name?.charAt(0) || 'A'}</div>
+            <div className="sidebar-avatar">
+              {userProfile?.name?.charAt(0) || "A"}
+            </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div className="sidebar-user-name">{userProfile?.name || 'Admin'}</div>
+              <div className="sidebar-user-name">
+                {userProfile?.name || "Admin"}
+              </div>
               <div className="sidebar-user-role">Administrador</div>
             </div>
           </div>
           <button
             className="btn btn-ghost w-full mt-2"
             onClick={handleLogout}
-            style={{ justifyContent: 'flex-start', color: 'var(--color-text-muted)' }}
+            style={{
+              justifyContent: "flex-start",
+              color: "var(--color-text-muted)",
+            }}
           >
             🚪 Cerrar sesión
           </button>
@@ -387,42 +493,84 @@ function AdminLayout() {
 
       {/* Main */}
       <div className="admin-main">
-        <header className="admin-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <header
+          className="admin-header"
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
           <div className="flex items-center gap-3">
-            <button className="hamburger" onClick={() => setSidebarOpen(!sidebarOpen)}>☰</button>
+            <button
+              className="hamburger"
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+            >
+              ☰
+            </button>
             <h1 className="admin-header-title">
-              {navItems.find(n => 
-                n.exact ? location.pathname === n.path : location.pathname.startsWith(n.path) && n.path !== '/admin'
-              )?.label || 'Dashboard'}
+              {navItems.find((n) =>
+                n.exact
+                  ? location.pathname === n.path
+                  : location.pathname.startsWith(n.path) && n.path !== "/admin",
+              )?.label || "Dashboard"}
             </h1>
           </div>
           <div className="flex items-center gap-3 pr-4">
             <button
               onClick={toggleFullscreen}
               className="p-2 text-slate-500 hover:bg-slate-100 rounded-full transition-colors flex items-center justify-center"
-              title={isFullscreen ? "Salir de pantalla completa" : "Pantalla completa"}
-              style={{ border: 'none', background: 'transparent', cursor: 'pointer' }}
+              title={
+                isFullscreen
+                  ? "Salir de pantalla completa"
+                  : "Pantalla completa"
+              }
+              style={{
+                border: "none",
+                background: "transparent",
+                cursor: "pointer",
+              }}
             >
               {isFullscreen ? (
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14l-7 7" />
                 </svg>
               ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3" />
                 </svg>
               )}
             </button>
             {unreadCount > 0 && (
-              <button 
+              <button
                 onClick={() => {
                   dismissAll();
-                  navigate('/admin/inventory');
+                  navigate("/admin/inventory");
                 }}
                 className="relative p-2 text-slate-600 hover:bg-slate-100 rounded-full transition-colors"
                 title={`${unreadCount} avisos pendientes`}
               >
-                <span style={{ fontSize: '1.2rem' }}>🔔</span>
+                <span style={{ fontSize: "1.2rem" }}>🔔</span>
                 <span className="absolute top-0 right-0 inline-flex items-center justify-center px-2 py-1 text-xs font-bold leading-none text-white transform translate-x-1/4 -translate-y-1/4 bg-red-600 rounded-full animate-pulse">
                   {unreadCount}
                 </span>
@@ -448,7 +596,7 @@ function OperarioLayout() {
   const [globalSettings, setGlobalSettings] = useState(null);
 
   useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'settings', 'global'), (docSnap) => {
+    const unsub = onSnapshot(doc(db, "settings", "global"), (docSnap) => {
       if (docSnap.exists()) {
         setGlobalSettings(docSnap.data());
       }
@@ -459,12 +607,13 @@ function OperarioLayout() {
   // Escuchar mensajes del Service Worker para navegación desde notificaciones
   useEffect(() => {
     const handleSWMessage = (event) => {
-      if (event.data?.type === 'NAVIGATE' && event.data.url) {
+      if (event.data?.type === "NAVIGATE" && event.data.url) {
         navigate(event.data.url);
       }
     };
-    navigator.serviceWorker?.addEventListener('message', handleSWMessage);
-    return () => navigator.serviceWorker?.removeEventListener('message', handleSWMessage);
+    navigator.serviceWorker?.addEventListener("message", handleSWMessage);
+    return () =>
+      navigator.serviceWorker?.removeEventListener("message", handleSWMessage);
   }, [navigate]);
 
   // Evitar que la barra de navegación inferior estorbe cuando el teclado está abierto
@@ -472,30 +621,39 @@ function OperarioLayout() {
     const handleVisualViewportResize = () => {
       if (!window.visualViewport) return;
       const activeEl = document.activeElement;
-      const isInput = activeEl && 
-        (['INPUT', 'TEXTAREA'].includes(activeEl.tagName) || activeEl.isContentEditable);
-      
-      const isKeyboardVisible = window.innerHeight - window.visualViewport.height > 150;
-      
+      const isInput =
+        activeEl &&
+        (["INPUT", "TEXTAREA"].includes(activeEl.tagName) ||
+          activeEl.isContentEditable);
+
+      const isKeyboardVisible =
+        window.innerHeight - window.visualViewport.height > 150;
+
       if (isKeyboardVisible && isInput) {
-        document.body.classList.add('keyboard-open');
+        document.body.classList.add("keyboard-open");
       } else {
-        document.body.classList.remove('keyboard-open');
+        document.body.classList.remove("keyboard-open");
       }
     };
 
     if (window.visualViewport) {
-      window.visualViewport.addEventListener('resize', handleVisualViewportResize);
+      window.visualViewport.addEventListener(
+        "resize",
+        handleVisualViewportResize,
+      );
       return () => {
-        window.visualViewport.removeEventListener('resize', handleVisualViewportResize);
-        document.body.classList.remove('keyboard-open');
+        window.visualViewport.removeEventListener(
+          "resize",
+          handleVisualViewportResize,
+        );
+        document.body.classList.remove("keyboard-open");
       };
     }
   }, []);
 
   async function handleLogout() {
     await logout();
-    navigate('/login');
+    navigate("/login");
   }
 
   return (
@@ -505,39 +663,72 @@ function OperarioLayout() {
         <GeolocationTracker />
       </Suspense>
       <header className="operario-header">
-        <div className="flex items-center gap-2" style={{ minWidth: 0, flex: 1 }}>
+        <div
+          className="flex items-center gap-2"
+          style={{ minWidth: 0, flex: 1 }}
+        >
           {globalSettings?.logoUrl && (
-            <img src={globalSettings.logoUrl} alt="Logo" style={{ width: '28px', height: '28px', objectFit: 'contain', borderRadius: '4px', background: '#fff' }} />
+            <img
+              src={globalSettings.logoUrl}
+              alt="Logo"
+              style={{
+                width: "28px",
+                height: "28px",
+                objectFit: "contain",
+                borderRadius: "4px",
+                background: "#fff",
+              }}
+            />
           )}
-          <div className="operario-header-title truncate">{globalSettings?.companyName || 'RyB Limpiezas'}</div>
+          <div className="operario-header-title truncate">
+            {globalSettings?.companyName || "RyB Limpiezas"}
+          </div>
         </div>
         <div className="flex items-center gap-3">
-          <span style={{ fontSize: 'var(--font-xs)', opacity: 0.8 }}>{userProfile?.name}</span>
+          <span style={{ fontSize: "var(--font-xs)", opacity: 0.8 }}>
+            {userProfile?.name}
+          </span>
           {unreadCount > 0 && (
-            <button 
+            <button
               onClick={() => {
                 dismissAll();
-                alert('Todos los avisos marcados como leídos.');
+                alert("Todos los avisos marcados como leídos.");
               }}
               className="relative p-2 text-white hover:bg-slate-700 rounded-full transition-colors flex items-center justify-center"
-              style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: '4px' }}
+              style={{
+                border: "none",
+                background: "transparent",
+                cursor: "pointer",
+                padding: "4px",
+              }}
               title={`${unreadCount} avisos pendientes`}
             >
-              <span style={{ fontSize: '1.1rem' }}>🔔</span>
+              <span style={{ fontSize: "1.1rem" }}>🔔</span>
               <span className="absolute top-0 right-0 inline-flex items-center justify-center px-1.5 py-0.5 text-[8px] font-bold leading-none text-white transform translate-x-1/3 -translate-y-1/3 bg-red-600 rounded-full animate-pulse">
                 {unreadCount}
               </span>
             </button>
           )}
-          <button 
-            onClick={() => window.dispatchEvent(new CustomEvent('ryb-open-cookie-settings'))}
+          <button
+            onClick={() =>
+              window.dispatchEvent(new CustomEvent("ryb-open-cookie-settings"))
+            }
             className="btn btn-ghost btn-sm"
             title="Configuración de privacidad y cookies"
-            style={{ color: 'white', padding: '4px 8px', fontSize: '1rem', cursor: 'pointer' }}
+            style={{
+              color: "white",
+              padding: "4px 8px",
+              fontSize: "1rem",
+              cursor: "pointer",
+            }}
           >
             🍪
           </button>
-          <button className="btn btn-ghost btn-sm" onClick={handleLogout} style={{ color: 'white', padding: '4px 8px' }}>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={handleLogout}
+            style={{ color: "white", padding: "4px 8px" }}
+          >
             🚪
           </button>
         </div>
@@ -551,28 +742,36 @@ function OperarioLayout() {
         <NavLink
           to="/operario"
           end
-          className={({ isActive }) => `operario-nav-link ${isActive ? 'active' : ''}`}
+          className={({ isActive }) =>
+            `operario-nav-link ${isActive ? "active" : ""}`
+          }
         >
           <span className="operario-nav-icon">📋</span>
           Hoy
         </NavLink>
         <NavLink
           to="/operario/materiales"
-          className={({ isActive }) => `operario-nav-link ${isActive ? 'active' : ''}`}
+          className={({ isActive }) =>
+            `operario-nav-link ${isActive ? "active" : ""}`
+          }
         >
           <span className="operario-nav-icon">📦</span>
           Materiales
         </NavLink>
         <NavLink
           to="/operario/ausencias"
-          className={({ isActive }) => `operario-nav-link ${isActive ? 'active' : ''}`}
+          className={({ isActive }) =>
+            `operario-nav-link ${isActive ? "active" : ""}`
+          }
         >
           <span className="operario-nav-icon">🌴</span>
           Ausencias
         </NavLink>
         <NavLink
           to="/operario/historial"
-          className={({ isActive }) => `operario-nav-link ${isActive ? 'active' : ''}`}
+          className={({ isActive }) =>
+            `operario-nav-link ${isActive ? "active" : ""}`
+          }
         >
           <span className="operario-nav-icon">📅</span>
           Historial
@@ -590,11 +789,15 @@ function RootRedirect() {
   useEffect(() => {
     async function checkAdmins() {
       try {
-        const q = query(collection(db, 'users'), where('role', '==', 'admin'), limit(1));
+        const q = query(
+          collection(db, "users"),
+          where("role", "==", "admin"),
+          limit(1),
+        );
         const snap = await getDocs(q);
         setHasAdmins(!snap.empty);
       } catch (err) {
-        console.error('CheckAdmins error:', err);
+        console.error("CheckAdmins error:", err);
         // Si hay error de permisos (porque las reglas de seguridad ya están activas y bloquean lecturas públicas),
         // significa que el sistema ya está configurado y seguro. Por tanto, asumimos que existen admins y redirigimos a login.
         setHasAdmins(true);
@@ -606,22 +809,25 @@ function RootRedirect() {
   }, [loading, currentUser]);
 
   if (loading || (hasAdmins === null && !currentUser)) {
-    return <div className="loading-page"><div className="spinner"></div><p className="text-muted">Iniciando aplicación...</p></div>;
+    return (
+      <div className="loading-page">
+        <div className="spinner"></div>
+        <p className="text-muted">Iniciando aplicación...</p>
+      </div>
+    );
   }
 
   if (!currentUser) {
     return hasAdmins ? <LandingPage /> : <Navigate to="/setup" />;
   }
-  
-  if (userProfile?.role === 'admin') {
+
+  if (userProfile?.role === "admin") {
     // If the admin logs in on a mobile screen (width < 768px), redirect them to operario view by default
     const isMobile = window.innerWidth < 768;
-    return <Navigate to={isMobile ? '/operario' : '/admin'} />;
+    return <Navigate to={isMobile ? "/operario" : "/admin"} />;
   }
   return <Navigate to="/operario" />;
 }
-
-
 
 // ==================== APP ====================
 export default function App() {
@@ -630,22 +836,30 @@ export default function App() {
       <BrowserRouter>
         <AuthProvider>
           <NotificationProvider>
-            <Suspense fallback={
-              <div className="loading-page">
-                <div className="spinner"></div>
-                <p className="text-muted">Cargando sección...</p>
-              </div>
-            }>
+            <Suspense
+              fallback={
+                <div className="loading-page">
+                  <div className="spinner"></div>
+                  <p className="text-muted">Cargando sección...</p>
+                </div>
+              }
+            >
               <Routes>
                 {/* Public */}
                 <Route path="/login" element={<LoginPage />} />
                 <Route path="/register" element={<RegisterPage />} />
                 <Route path="/portal/:token" element={<ClientPortalPage />} />
-                
+
                 {/* Legal Pages */}
                 <Route path="/aviso-legal" element={<AvisoLegalPage />} />
-                <Route path="/politica-de-privacidad" element={<PoliticaPrivacidadPage />} />
-                <Route path="/politica-de-cookies" element={<PoliticaCookiesPage />} />
+                <Route
+                  path="/politica-de-privacidad"
+                  element={<PoliticaPrivacidadPage />}
+                />
+                <Route
+                  path="/politica-de-cookies"
+                  element={<PoliticaCookiesPage />}
+                />
 
                 {/* Root */}
                 <Route path="/" element={<RootRedirect />} />
@@ -662,7 +876,10 @@ export default function App() {
                   <Route index element={<DashboardPage />} />
                   <Route path="comunidades" element={<CommunitiesPage />} />
                   <Route path="operarios" element={<OperariosPage />} />
-                  <Route path="control-horario" element={<ControlHorarioPage />} />
+                  <Route
+                    path="control-horario"
+                    element={<ControlHorarioPage />}
+                  />
                   <Route path="informes" element={<ReportsPage />} />
                   <Route path="facturas" element={<InvoicesPage />} />
                   <Route path="evidencias" element={<EvidenceReportsPage />} />
@@ -670,13 +887,13 @@ export default function App() {
                   <Route path="inventory" element={<InventoryPage />} />
                   <Route path="ajustes" element={<SettingsPage />} />
                   <Route path="ausencias" element={<AbsencesAdminPage />} />
-                  <Route 
-                    path="solicitudes" 
+                  <Route
+                    path="solicitudes"
                     element={
                       <SuperAdminRoute>
                         <CompanyRequestsPage />
                       </SuperAdminRoute>
-                    } 
+                    }
                   />
                 </Route>
 
@@ -690,7 +907,10 @@ export default function App() {
                   }
                 >
                   <Route index element={<TodayPage />} />
-                  <Route path="servicio/:serviceId" element={<ServiceDetailPage />} />
+                  <Route
+                    path="servicio/:serviceId"
+                    element={<ServiceDetailPage />}
+                  />
                   <Route path="materiales" element={<MaterialRequestPage />} />
                   <Route path="ausencias" element={<AbsencesPage />} />
                   <Route path="historial" element={<HistoryPage />} />

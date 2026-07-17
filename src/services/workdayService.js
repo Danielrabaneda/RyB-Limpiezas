@@ -1,25 +1,43 @@
-import { 
-  collection, doc, addDoc, updateDoc, getDocs, getDoc,
-  query, where, orderBy, serverTimestamp, Timestamp, limit, deleteDoc, arrayUnion
-} from 'firebase/firestore';
-import { db } from '../config/firebase';
-import { startOfDay, endOfDay, differenceInMinutes, format, isSameDay } from 'date-fns';
-import { calculateDailyMileage } from './mileageService';
+import {
+  collection,
+  doc,
+  addDoc,
+  updateDoc,
+  getDocs,
+  getDoc,
+  query,
+  where,
+  orderBy,
+  serverTimestamp,
+  Timestamp,
+  limit,
+  deleteDoc,
+  arrayUnion,
+} from "firebase/firestore";
+import { db } from "../config/firebase";
+import {
+  startOfDay,
+  endOfDay,
+  differenceInMinutes,
+  format,
+  isSameDay,
+} from "date-fns";
+import { calculateDailyMileage } from "./mileageService";
 
-const COLLECTION_NAME = 'workdays';
+const COLLECTION_NAME = "workdays";
 
 export function safeParseDate(value) {
   if (!value) return new Date();
-  if (typeof value.toDate === 'function') return value.toDate();
+  if (typeof value.toDate === "function") return value.toDate();
   const d = new Date(value);
   return isNaN(d.getTime()) ? new Date() : d;
 }
 
-export async function startWorkday(userId, userName = 'Operario') {
+export async function startWorkday(userId, userName = "Operario") {
   // Verificación de seguridad: No permitir iniciar si ya hay una activa
   const existing = await getActiveWorkday(userId);
   if (existing) {
-    console.log('Ya existe una jornada activa para este usuario');
+    console.log("Ya existe una jornada activa para este usuario");
     return existing.id;
   }
 
@@ -31,21 +49,29 @@ export async function startWorkday(userId, userName = 'Operario') {
     startTime: serverTimestamp(),
     endTime: null,
     totalMinutes: 0,
-    status: 'active',
+    status: "active",
     currentCompanionId: null, // <--- Added to track global companion
     createdAt: serverTimestamp(),
   });
   return ref.id;
 }
 
-
-export async function endWorkday(workdayId, breadcrumbs = [], customEndTime = null) {
-  const endTime = customEndTime instanceof Date ? customEndTime : (customEndTime ? new Date(customEndTime) : new Date());
+export async function endWorkday(
+  workdayId,
+  breadcrumbs = [],
+  customEndTime = null,
+) {
+  const endTime =
+    customEndTime instanceof Date
+      ? customEndTime
+      : customEndTime
+        ? new Date(customEndTime)
+        : new Date();
   const workdayRef = doc(db, COLLECTION_NAME, workdayId);
-  
+
   // Get workday data to calculate duration
   const workdaySnap = await getDoc(workdayRef);
-  
+
   let duration = 0;
   let workdayData = null;
   if (workdaySnap.exists()) {
@@ -56,58 +82,65 @@ export async function endWorkday(workdayId, breadcrumbs = [], customEndTime = nu
       if (duration < 0) duration = 0;
     }
   }
-  
+
   // Auto-close active car session if any
   let updatedCarSessions = workdayData?.carSessions || [];
   if (workdayData?.carActive) {
-    updatedCarSessions = updatedCarSessions.map(session => {
+    updatedCarSessions = updatedCarSessions.map((session) => {
       if (!session.endTime) {
         const startTimeDate = safeParseDate(session.startTime);
-        
-        const sessionBreadcrumbs = breadcrumbs.filter(b => {
-          const bTime = typeof b.timestamp === 'number' ? b.timestamp : new Date(b.timestamp).getTime();
+
+        const sessionBreadcrumbs = breadcrumbs.filter((b) => {
+          const bTime =
+            typeof b.timestamp === "number"
+              ? b.timestamp
+              : new Date(b.timestamp).getTime();
           return bTime >= startTimeDate.getTime() && bTime <= endTime.getTime();
         });
 
-        return { 
-          ...session, 
+        return {
+          ...session,
           endTime: Timestamp.fromDate(endTime),
-          breadcrumbs: sessionBreadcrumbs
+          breadcrumbs: sessionBreadcrumbs,
         };
       }
       return session;
     });
   }
-  
+
   await updateDoc(workdayRef, {
     endTime: Timestamp.fromDate(endTime),
     totalMinutes: duration,
-    status: 'completed',
+    status: "completed",
     carActive: false,
     carSessions: updatedCarSessions,
     retroactiveClosed: !!customEndTime,
-    originalEndTime: customEndTime ? Timestamp.fromDate(new Date()) : null
+    originalEndTime: customEndTime ? Timestamp.fromDate(new Date()) : null,
   });
-  
+
   // Trigger mileage calculation
-  // Usamos la fecha "lógica" de la jornada (workdayData.date) para que el kilometraje 
+  // Usamos la fecha "lógica" de la jornada (workdayData.date) para que el kilometraje
   // se guarde en el día correcto, incluso si la jornada termina después de medianoche.
-  const logicalDate = workdayData?.date?.toDate ? workdayData.date.toDate() : endTime;
-  
+  const logicalDate = workdayData?.date?.toDate
+    ? workdayData.date.toDate()
+    : endTime;
+
   if (workdayData?.userId) {
     try {
       await calculateDailyMileage(
         workdayData.userId,
         logicalDate,
-        workdayData.userName || 'Operario',
-        updatedCarSessions
+        workdayData.userName || "Operario",
+        updatedCarSessions,
       );
-      console.log('[Workday] Kilometraje procesado automáticamente al finalizar jornada');
+      console.log(
+        "[Workday] Kilometraje procesado automáticamente al finalizar jornada",
+      );
     } catch (err) {
-      console.error('[Workday] Error calculando kilometraje:', err);
+      console.error("[Workday] Error calculando kilometraje:", err);
     }
   }
-  
+
   return { duration };
 }
 
@@ -115,37 +148,35 @@ export async function getActiveWorkday(userId) {
   // Optimización: consulta directa por userId y status activo
   const q = query(
     collection(db, COLLECTION_NAME),
-    where('userId', '==', userId),
-    where('status', '==', 'active')
+    where("userId", "==", userId),
+    where("status", "==", "active"),
   );
-  
+
   const snap = await getDocs(q);
   if (snap.empty) return null;
-  
+
   return { id: snap.docs[0].id, ...snap.docs[0].data() };
 }
-
-
 
 export async function getWorkdaysForAdmin(startDate, endDate, userId = null) {
   try {
     const start = Timestamp.fromDate(startOfDay(startDate));
     const end = Timestamp.fromDate(endOfDay(endDate));
-    
+
     // Consulta base: por rango de fechas (esto solo requiere un índice simple que suele estar auto-generado)
     const q = query(
       collection(db, COLLECTION_NAME),
-      where('date', '>=', start),
-      where('date', '<=', end),
-      orderBy('date', 'desc')
+      where("date", ">=", start),
+      where("date", "<=", end),
+      orderBy("date", "desc"),
     );
-    
+
     const snap = await getDocs(q);
-    let results = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    let results = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
     // Si hay un userId, filtramos en memoria para evitar errores de índices compuestos
     if (userId) {
-      results = results.filter(wd => wd.userId === userId);
+      results = results.filter((wd) => wd.userId === userId);
     }
 
     return results;
@@ -154,7 +185,7 @@ export async function getWorkdaysForAdmin(startDate, endDate, userId = null) {
     // Si falla por ordenación/índices, intentamos una carga ultra-simple sin ordenar para que al menos no se rompa la App
     const qSimple = query(collection(db, COLLECTION_NAME));
     const snapSimple = await getDocs(qSimple);
-    return snapSimple.docs.map(d => ({ id: d.id, ...d.data() }));
+    return snapSimple.docs.map((d) => ({ id: d.id, ...d.data() }));
   }
 }
 
@@ -167,18 +198,18 @@ export async function getWorkdaysForOperario(userId, startDate, endDate) {
   try {
     const start = Timestamp.fromDate(startOfDay(startDate));
     const end = Timestamp.fromDate(endOfDay(endDate));
-    
+
     // Optimización: consulta directa por rango utilizando el índice compuesto
     const q = query(
       collection(db, COLLECTION_NAME),
-      where('userId', '==', userId),
-      where('date', '>=', start),
-      where('date', '<=', end),
-      orderBy('date', 'desc')
+      where("userId", "==", userId),
+      where("date", ">=", start),
+      where("date", "<=", end),
+      orderBy("date", "desc"),
     );
-    
+
     const snap = await getDocs(q);
-    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
   } catch (error) {
     console.error("Error in getWorkdaysForOperario:", error);
     return [];
@@ -196,21 +227,21 @@ export async function getWorkdaysSummaryForDate(userId, date = new Date()) {
   // Optimización: consulta directa por rango del día para hoy
   const q = query(
     collection(db, COLLECTION_NAME),
-    where('userId', '==', userId),
-    where('date', '>=', start),
-    where('date', '<=', end)
+    where("userId", "==", userId),
+    where("date", ">=", start),
+    where("date", "<=", end),
   );
-  
+
   const snap = await getDocs(q);
-  const todayWorkdays = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  
+  const todayWorkdays = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
   let totalMinutes = 0;
   let hasActive = false;
   let activeWorkday = null;
   let firstStartTime = null;
-  
+
   const now = new Date();
-  
+
   // Sort by startTime to find the absolute first start of the day
   const sortedWorkdays = [...todayWorkdays].sort((a, b) => {
     const aTime = safeParseDate(a.startTime);
@@ -234,27 +265,30 @@ export async function getWorkdaysSummaryForDate(userId, date = new Date()) {
   }
 
   for (const wd of todayWorkdays) {
-    if (wd.status === 'active') {
+    if (wd.status === "active") {
       const startTime = safeParseDate(wd.startTime);
       totalMinutes += Math.max(0, differenceInMinutes(now, startTime));
     } else {
-      totalMinutes += (Number(wd.totalMinutes) || 0);
+      totalMinutes += Number(wd.totalMinutes) || 0;
     }
   }
 
   // Si la jornada activa es de días anteriores, calcular sus minutos también para mostrar en UI
-  if (globalActiveWd && !todayWorkdays.find(w => w.id === globalActiveWd.id)) {
+  if (
+    globalActiveWd &&
+    !todayWorkdays.find((w) => w.id === globalActiveWd.id)
+  ) {
     const startTime = safeParseDate(globalActiveWd.startTime);
     totalMinutes += Math.max(0, differenceInMinutes(now, startTime));
   }
-  
+
   return {
     totalMinutes,
     hasActive,
     activeWorkday,
     firstStartTime,
     count: todayWorkdays.length,
-    allSessions: todayWorkdays // Optional: return all sessions for detailed UI
+    allSessions: todayWorkdays, // Optional: return all sessions for detailed UI
   };
 }
 
@@ -262,7 +296,7 @@ export async function updateWorkdayCompanion(workdayId, companionId) {
   const workdayRef = doc(db, COLLECTION_NAME, workdayId);
   await updateDoc(workdayRef, {
     currentCompanionId: companionId,
-    updatedAt: serverTimestamp()
+    updatedAt: serverTimestamp(),
   });
 }
 
@@ -272,12 +306,12 @@ export async function updateWorkdayCompanion(workdayId, companionId) {
 export async function getActiveWorkdaysForCompanion(userId) {
   const q = query(
     collection(db, COLLECTION_NAME),
-    where('currentCompanionId', '==', userId),
-    where('status', '==', 'active')
+    where("currentCompanionId", "==", userId),
+    where("status", "==", "active"),
   );
-  
+
   const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
 // ==================== CAR SESSION MANAGEMENT ====================
@@ -289,12 +323,12 @@ export async function getActiveWorkdaysForCompanion(userId) {
 export async function activateCar(workdayId) {
   const workdayRef = doc(db, COLLECTION_NAME, workdayId);
   const now = Timestamp.fromDate(new Date());
-  
+
   await updateDoc(workdayRef, {
     carActive: true,
     carActiveSince: now,
     carSessions: arrayUnion({ startTime: now, endTime: null }),
-    updatedAt: serverTimestamp()
+    updatedAt: serverTimestamp(),
   });
 }
 
@@ -305,35 +339,40 @@ export async function activateCar(workdayId) {
 export async function deactivateCar(workdayId, breadcrumbs = []) {
   const workdayRef = doc(db, COLLECTION_NAME, workdayId);
   const now = new Date();
-  
+
   // Get current sessions and close the open one
   const workdaySnap = await getDoc(workdayRef);
   if (!workdaySnap.exists()) return;
-  
+
   const data = workdaySnap.data();
-  const updatedSessions = (data.carSessions || []).map(session => {
+  const updatedSessions = (data.carSessions || []).map((session) => {
     if (!session.endTime) {
-      const startTimeDate = session.startTime?.toDate ? session.startTime.toDate() : new Date(session.startTime);
-      
-      const sessionBreadcrumbs = breadcrumbs.filter(b => {
-        const bTime = typeof b.timestamp === 'number' ? b.timestamp : new Date(b.timestamp).getTime();
+      const startTimeDate = session.startTime?.toDate
+        ? session.startTime.toDate()
+        : new Date(session.startTime);
+
+      const sessionBreadcrumbs = breadcrumbs.filter((b) => {
+        const bTime =
+          typeof b.timestamp === "number"
+            ? b.timestamp
+            : new Date(b.timestamp).getTime();
         return bTime >= startTimeDate.getTime() && bTime <= now.getTime();
       });
 
-      return { 
-        ...session, 
+      return {
+        ...session,
         endTime: Timestamp.fromDate(now),
-        breadcrumbs: sessionBreadcrumbs 
+        breadcrumbs: sessionBreadcrumbs,
       };
     }
     return session;
   });
-  
+
   await updateDoc(workdayRef, {
     carActive: false,
     carActiveSince: null,
     carSessions: updatedSessions,
-    updatedAt: serverTimestamp()
+    updatedAt: serverTimestamp(),
   });
 }
 
@@ -349,20 +388,20 @@ export async function findLastActivityForUser(userId, date, workdayId = null) {
   try {
     const start = Timestamp.fromDate(startOfDay(date));
     const end = Timestamp.fromDate(endOfDay(date));
-    
+
     // 1. Get check-ins where user is the titular
     const qCheckIns = query(
-      collection(db, 'checkIns'),
-      where('userId', '==', userId),
-      where('checkInTime', '>=', start),
-      where('checkInTime', '<=', end)
+      collection(db, "checkIns"),
+      where("userId", "==", userId),
+      where("checkInTime", ">=", start),
+      where("checkInTime", "<=", end),
     );
     const snapCheckIns = await getDocs(qCheckIns);
-    const checkIns = snapCheckIns.docs.map(d => d.data());
-    
+    const checkIns = snapCheckIns.docs.map((d) => d.data());
+
     let lastTime = null;
-    
-    checkIns.forEach(ci => {
+
+    checkIns.forEach((ci) => {
       const time = ci.checkOutTime || ci.checkInTime;
       if (time) {
         const dateObj = time.toDate ? time.toDate() : new Date(time);
@@ -379,17 +418,24 @@ export async function findLastActivityForUser(userId, date, workdayId = null) {
       if (wdSnap.exists()) {
         const wdData = wdSnap.data();
         const sessions = wdData.carSessions || [];
-        sessions.forEach(s => {
+        sessions.forEach((s) => {
           const breadcrumbs = s.breadcrumbs || [];
-          breadcrumbs.forEach(b => {
-            const bTime = typeof b.timestamp === 'number' ? new Date(b.timestamp) : (b.timestamp?.toDate ? b.timestamp.toDate() : new Date(b.timestamp));
+          breadcrumbs.forEach((b) => {
+            const bTime =
+              typeof b.timestamp === "number"
+                ? new Date(b.timestamp)
+                : b.timestamp?.toDate
+                  ? b.timestamp.toDate()
+                  : new Date(b.timestamp);
             if (!lastTime || bTime > lastTime) {
               lastTime = bTime;
             }
           });
           // Also check startTime/endTime of car sessions
           if (s.endTime) {
-            const et = s.endTime.toDate ? s.endTime.toDate() : new Date(s.endTime);
+            const et = s.endTime.toDate
+              ? s.endTime.toDate()
+              : new Date(s.endTime);
             if (!lastTime || et > lastTime) lastTime = et;
           }
         });
@@ -400,36 +446,50 @@ export async function findLastActivityForUser(userId, date, workdayId = null) {
     // This covers the case where the user accompanied another operario
     try {
       const qCompanionServices = query(
-        collection(db, 'scheduledServices'),
-        where('companionIds', 'array-contains', userId)
+        collection(db, "scheduledServices"),
+        where("companionIds", "array-contains", userId),
       );
       const snapCompanion = await getDocs(qCompanionServices);
-      
+
       for (const docSnap of snapCompanion.docs) {
         const svcData = docSnap.data();
-        
+
         // Filter to today's services only
-        const svcDate = svcData.scheduledDate?.toDate ? svcData.scheduledDate.toDate() : new Date(svcData.scheduledDate);
+        const svcDate = svcData.scheduledDate?.toDate
+          ? svcData.scheduledDate.toDate()
+          : new Date(svcData.scheduledDate);
         if (!isSameDay(svcDate, date)) continue;
-        
+
         // Check companionLogs for this user's leftAt time
         const companionLogs = svcData.companionLogs || [];
         for (const log of companionLogs) {
           if (log.userId !== userId) continue;
-          
+
           if (log.leftAt) {
-            const leftDate = typeof log.leftAt === 'string' ? new Date(log.leftAt) : (log.leftAt?.toDate ? log.leftAt.toDate() : new Date(log.leftAt));
+            const leftDate =
+              typeof log.leftAt === "string"
+                ? new Date(log.leftAt)
+                : log.leftAt?.toDate
+                  ? log.leftAt.toDate()
+                  : new Date(log.leftAt);
             if (!lastTime || leftDate > lastTime) lastTime = leftDate;
           }
           if (log.joinedAt) {
-            const joinedDate = typeof log.joinedAt === 'string' ? new Date(log.joinedAt) : (log.joinedAt?.toDate ? log.joinedAt.toDate() : new Date(log.joinedAt));
+            const joinedDate =
+              typeof log.joinedAt === "string"
+                ? new Date(log.joinedAt)
+                : log.joinedAt?.toDate
+                  ? log.joinedAt.toDate()
+                  : new Date(log.joinedAt);
             if (!lastTime || joinedDate > lastTime) lastTime = joinedDate;
           }
         }
 
         // Also check the service's updatedAt / completedAt if the service is completed
-        if (svcData.status === 'completed' && svcData.updatedAt) {
-          const updatedDate = svcData.updatedAt?.toDate ? svcData.updatedAt.toDate() : new Date(svcData.updatedAt);
+        if (svcData.status === "completed" && svcData.updatedAt) {
+          const updatedDate = svcData.updatedAt?.toDate
+            ? svcData.updatedAt.toDate()
+            : new Date(svcData.updatedAt);
           if (isSameDay(updatedDate, date)) {
             if (!lastTime || updatedDate > lastTime) lastTime = updatedDate;
           }
@@ -441,17 +501,19 @@ export async function findLastActivityForUser(userId, date, workdayId = null) {
       const titularIdsFromCompanionServices = new Set();
       for (const docSnap of snapCompanion.docs) {
         const svcData = docSnap.data();
-        const svcDate = svcData.scheduledDate?.toDate ? svcData.scheduledDate.toDate() : new Date(svcData.scheduledDate);
+        const svcDate = svcData.scheduledDate?.toDate
+          ? svcData.scheduledDate.toDate()
+          : new Date(svcData.scheduledDate);
         if (!isSameDay(svcDate, date) || !svcData.assignedUserId) continue;
         titularIdsFromCompanionServices.add(svcData.assignedUserId);
       }
 
       for (const titularId of titularIdsFromCompanionServices) {
         const qTitularCheckIns = query(
-          collection(db, 'checkIns'),
-          where('userId', '==', titularId),
-          where('checkInTime', '>=', start),
-          where('checkInTime', '<=', end)
+          collection(db, "checkIns"),
+          where("userId", "==", titularId),
+          where("checkInTime", ">=", start),
+          where("checkInTime", "<=", end),
         );
         const snapTitular = await getDocs(qTitularCheckIns);
         for (const ciDoc of snapTitular.docs) {
@@ -466,7 +528,10 @@ export async function findLastActivityForUser(userId, date, workdayId = null) {
         }
       }
     } catch (companionErr) {
-      console.warn('[findLastActivity] Error checking companion services:', companionErr);
+      console.warn(
+        "[findLastActivity] Error checking companion services:",
+        companionErr,
+      );
     }
 
     return lastTime;
@@ -482,24 +547,24 @@ export async function findLastActivityForUser(userId, date, workdayId = null) {
 export async function closeStaleWorkday(workdayId, suggestedEndTime) {
   const workdayRef = doc(db, COLLECTION_NAME, workdayId);
   const workdaySnap = await getDoc(workdayRef);
-  
+
   if (!workdaySnap.exists()) throw new Error("Workday not found");
   const workdayData = workdaySnap.data();
-  
+
   const endTime = suggestedEndTime || new Date();
   const startTime = safeParseDate(workdayData.startTime);
-  
+
   // Calculate duration correctly
   let duration = differenceInMinutes(endTime, startTime);
   if (duration < 0) duration = 0; // Should not happen but for safety
 
   // Close any open car session
-  const updatedCarSessions = (workdayData.carSessions || []).map(session => {
+  const updatedCarSessions = (workdayData.carSessions || []).map((session) => {
     if (!session.endTime) {
-      return { 
-        ...session, 
+      return {
+        ...session,
         endTime: Timestamp.fromDate(endTime),
-        breadcrumbs: session.breadcrumbs || []
+        breadcrumbs: session.breadcrumbs || [],
       };
     }
     return session;
@@ -508,23 +573,26 @@ export async function closeStaleWorkday(workdayId, suggestedEndTime) {
   await updateDoc(workdayRef, {
     endTime: Timestamp.fromDate(endTime),
     totalMinutes: duration,
-    status: 'completed',
+    status: "completed",
     carActive: false,
     carSessions: updatedCarSessions,
     autoClosed: true, // Flag for admin audit
-    closedReason: 'Sistema: Resolución por inactividad detectada el día siguiente',
+    closedReason:
+      "Sistema: Resolución por inactividad detectada el día siguiente",
     originalSuggestedTime: Timestamp.fromDate(endTime),
-    updatedAt: serverTimestamp()
+    updatedAt: serverTimestamp(),
   });
 
   // Calculate mileage for that day
   try {
-    const logicalDate = workdayData.date?.toDate ? workdayData.date.toDate() : startTime;
+    const logicalDate = workdayData.date?.toDate
+      ? workdayData.date.toDate()
+      : startTime;
     await calculateDailyMileage(
       workdayData.userId,
       logicalDate,
-      workdayData.userName || 'Operario',
-      updatedCarSessions
+      workdayData.userName || "Operario",
+      updatedCarSessions,
     );
   } catch (err) {
     console.error("Error calculating mileage for auto-closed workday:", err);
@@ -539,13 +607,14 @@ export async function closeStaleWorkday(workdayId, suggestedEndTime) {
 export async function updateWorkdayTimes(workdayId, newStartTime, newEndTime) {
   const workdayRef = doc(db, COLLECTION_NAME, workdayId);
   const workdaySnap = await getDoc(workdayRef);
-  
+
   if (!workdaySnap.exists()) throw new Error("Workday not found");
   const workdayData = workdaySnap.data();
-  
-  const startTime = newStartTime instanceof Date ? newStartTime : newStartTime.toDate();
+
+  const startTime =
+    newStartTime instanceof Date ? newStartTime : newStartTime.toDate();
   const endTime = newEndTime instanceof Date ? newEndTime : newEndTime.toDate();
-  
+
   let duration = differenceInMinutes(endTime, startTime);
   if (duration < 0) duration = 0;
 
@@ -554,18 +623,20 @@ export async function updateWorkdayTimes(workdayId, newStartTime, newEndTime) {
     endTime: Timestamp.fromDate(endTime),
     totalMinutes: duration,
     updatedAt: serverTimestamp(),
-    manualCorrection: true // Audit flag
+    manualCorrection: true, // Audit flag
   });
 
   // Re-calculate mileage if it was completed
-  if (workdayData.status === 'completed') {
+  if (workdayData.status === "completed") {
     try {
-      const logicalDate = workdayData.date?.toDate ? workdayData.date.toDate() : startTime;
+      const logicalDate = workdayData.date?.toDate
+        ? workdayData.date.toDate()
+        : startTime;
       await calculateDailyMileage(
         workdayData.userId,
         logicalDate,
-        workdayData.userName || 'Operario',
-        workdayData.carSessions || []
+        workdayData.userName || "Operario",
+        workdayData.carSessions || [],
       );
     } catch (err) {
       console.error("Error recalculating mileage after update:", err);

@@ -1,4 +1,4 @@
-import { getDistance } from '../utils/geolocation';
+import { getDistance } from "../utils/geolocation";
 
 /**
  * Optimiza el orden de los servicios usando el algoritmo Nearest Neighbor,
@@ -13,14 +13,24 @@ export function optimizeRoute(services, startLat, startLng) {
   if (!services || services.length <= 1) return services;
 
   // Separar servicios por estado
-  const completed = services.filter(s => s.status === 'completed');
-  const inProgress = services.filter(s => s.status === 'in_progress');
-  const pending = services.filter(s => s.status !== 'completed' && s.status !== 'in_progress');
+  const completed = services.filter((s) => s.status === "completed");
+  const inProgress = services.filter((s) => s.status === "in_progress");
+  const pending = services.filter(
+    (s) => s.status !== "completed" && s.status !== "in_progress",
+  );
 
   // Ordenar los completados cronológicamente por su hora de actualización/finalización (de más antiguo a más reciente)
   completed.sort((a, b) => {
-    const tA = a.updatedAt?.toDate ? a.updatedAt.toDate().getTime() : (a.updatedAt ? new Date(a.updatedAt).getTime() : 0);
-    const tB = b.updatedAt?.toDate ? b.updatedAt.toDate().getTime() : (b.updatedAt ? new Date(b.updatedAt).getTime() : 0);
+    const tA = a.updatedAt?.toDate
+      ? a.updatedAt.toDate().getTime()
+      : a.updatedAt
+        ? new Date(a.updatedAt).getTime()
+        : 0;
+    const tB = b.updatedAt?.toDate
+      ? b.updatedAt.toDate().getTime()
+      : b.updatedAt
+        ? new Date(b.updatedAt).getTime()
+        : 0;
     return tA - tB;
   });
 
@@ -29,7 +39,7 @@ export function optimizeRoute(services, startLat, startLng) {
   }
 
   // Extraer coordenadas de cada servicio pendiente
-  const withCoords = pending.map(svc => {
+  const withCoords = pending.map((svc) => {
     const loc = svc.community?.location;
     const lat = loc?._lat || loc?.latitude || 0;
     const lng = loc?._long || loc?.longitude || 0;
@@ -38,8 +48,8 @@ export function optimizeRoute(services, startLat, startLng) {
   });
 
   // Separar en: con restricción horaria y sin restricción
-  const withTimeConstraint = withCoords.filter(s => s._preferredTime);
-  const withoutTimeConstraint = withCoords.filter(s => !s._preferredTime);
+  const withTimeConstraint = withCoords.filter((s) => s._preferredTime);
+  const withoutTimeConstraint = withCoords.filter((s) => !s._preferredTime);
 
   // Ordenar los que tienen restricción horaria por hora
   withTimeConstraint.sort((a, b) => {
@@ -59,7 +69,8 @@ export function optimizeRoute(services, startLat, startLng) {
 
   while (remaining.length > 0 || timeQueue.length > 0) {
     // Calcular cuántos minutos de viaje estimados hemos acumulado
-    const estimatedMinutesSoFar = currentMinutes + estimateTravelMinutes(optimized);
+    const estimatedMinutesSoFar =
+      currentMinutes + estimateTravelMinutes(optimized);
 
     // ¿Hay algún servicio con restricción horaria que deba ir AHORA?
     // (su hora preferida está próxima o ya pasó)
@@ -67,11 +78,14 @@ export function optimizeRoute(services, startLat, startLng) {
     if (timeQueue.length > 0) {
       const nextTimed = timeQueue[0];
       const nextTimedMinutes = timeToMinutes(nextTimed._preferredTime);
-      
+
       // Si la hora preferida es antes de lo que tardaríamos en hacer el siguiente servicio libre,
       // o si ya hemos pasado esa hora, insertarlo ahora
       const urgencyWindow = 30; // 30 minutos de margen
-      if (nextTimedMinutes <= estimatedMinutesSoFar + urgencyWindow || nextTimedMinutes <= currentMinutes) {
+      if (
+        nextTimedMinutes <= estimatedMinutesSoFar + urgencyWindow ||
+        nextTimedMinutes <= currentMinutes
+      ) {
         forcedTimeService = timeQueue.shift();
       }
     }
@@ -86,7 +100,12 @@ export function optimizeRoute(services, startLat, startLng) {
       let nearestDist = Infinity;
 
       for (let i = 0; i < remaining.length; i++) {
-        const dist = getDistance(currentLat, currentLng, remaining[i]._lat, remaining[i]._lng);
+        const dist = getDistance(
+          currentLat,
+          currentLng,
+          remaining[i]._lat,
+          remaining[i]._lng,
+        );
         if (dist < nearestDist) {
           nearestDist = dist;
           nearestIdx = i;
@@ -107,7 +126,7 @@ export function optimizeRoute(services, startLat, startLng) {
   }
 
   // Limpiar propiedades internas
-  const cleaned = optimized.map(s => {
+  const cleaned = optimized.map((s) => {
     const { _lat, _lng, _preferredTime, ...rest } = s;
     return rest;
   });
@@ -153,11 +172,27 @@ export function calculateTotalDistance(services, startLat, startLng) {
  * @param {number} startLng - Longitud del punto de partida
  * @returns {{ originalDistance: number, optimizedDistance: number, savedDistance: number, savedPercent: number }}
  */
-export function getRouteStats(originalServices, optimizedServices, startLat, startLng) {
-  const originalDistance = calculateTotalDistance(originalServices, startLat, startLng);
-  const optimizedDistance = calculateTotalDistance(optimizedServices, startLat, startLng);
+export function getRouteStats(
+  originalServices,
+  optimizedServices,
+  startLat,
+  startLng,
+) {
+  const originalDistance = calculateTotalDistance(
+    originalServices,
+    startLat,
+    startLng,
+  );
+  const optimizedDistance = calculateTotalDistance(
+    optimizedServices,
+    startLat,
+    startLng,
+  );
   const savedDistance = Math.max(0, originalDistance - optimizedDistance);
-  const savedPercent = originalDistance > 0 ? Math.round((savedDistance / originalDistance) * 100) : 0;
+  const savedPercent =
+    originalDistance > 0
+      ? Math.round((savedDistance / originalDistance) * 100)
+      : 0;
 
   return {
     originalDistance,
@@ -174,7 +209,7 @@ export function getRouteStats(originalServices, optimizedServices, startLat, sta
  */
 function timeToMinutes(timeStr) {
   if (!timeStr) return 0;
-  const [h, m] = timeStr.split(':').map(Number);
+  const [h, m] = timeStr.split(":").map(Number);
   return (h || 0) * 60 + (m || 0);
 }
 

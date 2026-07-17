@@ -1,36 +1,36 @@
-import { useState, useEffect } from 'react';
-import { 
-  getProducts, 
-  getMaterialRequests, 
-  updateRequestStatus, 
+import { useState, useEffect } from "react";
+import {
+  getProducts,
+  getMaterialRequests,
+  updateRequestStatus,
   deleteMaterialRequest,
   createProduct,
   updateProduct,
   deleteProduct,
   addStock,
   adjustStock,
-  getStockMovements
-} from '../../services/materialService';
-import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
-import { useAuth } from '../../contexts/AuthContext';
-import { getAllUsers } from '../../services/authService';
-import { groupFlatList } from '../../utils/dateGrouping';
-import { useInventoryData } from '../../hooks/useInventoryData';
-import { useShoppingList } from '../../hooks/useShoppingList';
-import { useInventoryStats } from '../../hooks/useInventoryStats';
-import InventoryOrders from '../../components/admin/inventory/InventoryOrders';
-import InventoryCatalog from '../../components/admin/inventory/InventoryCatalog';
-import InventoryShopping from '../../components/admin/inventory/InventoryShopping';
-import InventoryMovements from '../../components/admin/inventory/InventoryMovements';
-import InventoryStats from '../../components/admin/inventory/InventoryStats';
-import InventoryModals from '../../components/admin/inventory/InventoryModals';
+  getStockMovements,
+} from "../../services/materialService";
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
+import { useAuth } from "../../contexts/AuthContext";
+import { getAllUsers } from "../../services/authService";
+import { groupFlatList } from "../../utils/dateGrouping";
+import { useInventoryData } from "../../hooks/useInventoryData";
+import { useShoppingList } from "../../hooks/useShoppingList";
+import { useInventoryStats } from "../../hooks/useInventoryStats";
+import InventoryOrders from "../../components/admin/inventory/InventoryOrders";
+import InventoryCatalog from "../../components/admin/inventory/InventoryCatalog";
+import InventoryShopping from "../../components/admin/inventory/InventoryShopping";
+import InventoryMovements from "../../components/admin/inventory/InventoryMovements";
+import InventoryStats from "../../components/admin/inventory/InventoryStats";
+import InventoryModals from "../../components/admin/inventory/InventoryModals";
 
-import { CATEGORIES, autoCategorize } from '../../utils/inventoryCategories';
+import { CATEGORIES, autoCategorize } from "../../utils/inventoryCategories";
 
 export default function InventoryPage() {
   const { currentUser, userProfile } = useAuth();
-  const [activeTab, setActiveTab] = useState('orders'); // 'orders', 'catalog', 'movements'
+  const [activeTab, setActiveTab] = useState("orders"); // 'orders', 'catalog', 'movements'
   const [actionLoading, setActionLoading] = useState(false);
   const {
     products,
@@ -47,8 +47,13 @@ export default function InventoryPage() {
     handleAddProduct: handleAddProductRaw,
     handleEditProductSubmit: handleEditProductSubmitRaw,
     handleDeleteProduct,
-    handleStockAction: handleStockActionRaw
-  } = useInventoryData({ currentUser, userProfile, actionLoading, setActionLoading });
+    handleStockAction: handleStockActionRaw,
+  } = useInventoryData({
+    currentUser,
+    userProfile,
+    actionLoading,
+    setActionLoading,
+  });
 
   const [expandedGroups, setExpandedGroups] = useState(new Set());
 
@@ -58,12 +63,30 @@ export default function InventoryPage() {
     else newSet.add(id);
     setExpandedGroups(newSet);
   };
-  
+
   const [showAddProduct, setShowAddProduct] = useState(false);
-  const [newProduct, setNewProduct] = useState({ name: '', unit: 'unidad', minStock: '5', category: 'general' });
-  const [stockModal, setStockModal] = useState({ open: false, type: 'in', product: null, quantity: '', notes: '' });
+  const [newProduct, setNewProduct] = useState({
+    name: "",
+    unit: "unidad",
+    minStock: "5",
+    category: "general",
+  });
+  const [stockModal, setStockModal] = useState({
+    open: false,
+    type: "in",
+    product: null,
+    quantity: "",
+    notes: "",
+  });
   const [statsModal, setStatsModal] = useState({ open: false, product: null });
-  const [editProductModal, setEditProductModal] = useState({ open: false, product: null, name: '', unit: 'unidad', minStock: '5', category: 'general' });
+  const [editProductModal, setEditProductModal] = useState({
+    open: false,
+    product: null,
+    name: "",
+    unit: "unidad",
+    minStock: "5",
+    category: "general",
+  });
 
   const {
     statsFilterRange,
@@ -75,7 +98,7 @@ export default function InventoryPage() {
     statsPeriod,
     setStatsPeriod,
     getStatsData,
-    getGlobalDashboardData
+    getGlobalDashboardData,
   } = useInventoryStats({ products, movements, users });
 
   const {
@@ -83,7 +106,7 @@ export default function InventoryPage() {
     setShoppingItems,
     handleAddManualItem,
     handleCopyShoppingList,
-    handleCompletePurchase
+    handleCompletePurchase,
   } = useShoppingList({
     products,
     activeTab,
@@ -91,7 +114,7 @@ export default function InventoryPage() {
     userProfile,
     setActionLoading,
     loadData,
-    setActiveTab
+    setActiveTab,
   });
 
   useEffect(() => {
@@ -103,9 +126,14 @@ export default function InventoryPage() {
     try {
       await handleAddProductRaw({
         ...newProduct,
-        category: newProduct.category || autoCategorize(newProduct.name)
+        category: newProduct.category || autoCategorize(newProduct.name),
       });
-      setNewProduct({ name: '', unit: 'unidad', minStock: '5', category: 'general' });
+      setNewProduct({
+        name: "",
+        unit: "unidad",
+        minStock: "5",
+        category: "general",
+      });
       setShowAddProduct(false);
     } catch (err) {
       // Error already handled inside hook
@@ -119,15 +147,20 @@ export default function InventoryPage() {
         name: editProductModal.name,
         unit: editProductModal.unit,
         minStock: editProductModal.minStock,
-        category: editProductModal.category
+        category: editProductModal.category,
       });
-      setEditProductModal({ open: false, product: null, name: '', unit: 'unidad', minStock: '5', category: 'general' });
+      setEditProductModal({
+        open: false,
+        product: null,
+        name: "",
+        unit: "unidad",
+        minStock: "5",
+        category: "general",
+      });
     } catch (err) {
       // Error already handled inside hook
     }
   };
-
-
 
   const handleStockAction = async (e) => {
     e.preventDefault();
@@ -136,15 +169,19 @@ export default function InventoryPage() {
         stockModal.type,
         stockModal.product,
         stockModal.quantity,
-        stockModal.notes
+        stockModal.notes,
       );
-      setStockModal({ open: false, type: 'in', product: null, quantity: '', notes: '' });
+      setStockModal({
+        open: false,
+        type: "in",
+        product: null,
+        quantity: "",
+        notes: "",
+      });
     } catch (err) {
       // Error handled in hook
     }
   };
-
-
 
   return (
     <div className="page-container">
@@ -154,33 +191,33 @@ export default function InventoryPage() {
       </div>
 
       <div className="tabs-container mb-6 flex gap-2 border-b border-slate-200 pb-2 overflow-x-auto">
-        <button 
-          className={`btn btn-sm ${activeTab === 'orders' ? 'btn-primary' : 'btn-ghost'}`}
-          onClick={() => setActiveTab('orders')}
+        <button
+          className={`btn btn-sm ${activeTab === "orders" ? "btn-primary" : "btn-ghost"}`}
+          onClick={() => setActiveTab("orders")}
         >
           📋 Pedidos
         </button>
-        <button 
-          className={`btn btn-sm ${activeTab === 'catalog' ? 'btn-primary' : 'btn-ghost'}`}
-          onClick={() => setActiveTab('catalog')}
+        <button
+          className={`btn btn-sm ${activeTab === "catalog" ? "btn-primary" : "btn-ghost"}`}
+          onClick={() => setActiveTab("catalog")}
         >
           📦 Inventario
         </button>
-        <button 
-          className={`btn btn-sm ${activeTab === 'shopping' ? 'btn-primary' : 'btn-ghost'}`}
-          onClick={() => setActiveTab('shopping')}
+        <button
+          className={`btn btn-sm ${activeTab === "shopping" ? "btn-primary" : "btn-ghost"}`}
+          onClick={() => setActiveTab("shopping")}
         >
           🛒 Lista de Compra
         </button>
-        <button 
-          className={`btn btn-sm ${activeTab === 'movements' ? 'btn-primary' : 'btn-ghost'}`}
-          onClick={() => setActiveTab('movements')}
+        <button
+          className={`btn btn-sm ${activeTab === "movements" ? "btn-primary" : "btn-ghost"}`}
+          onClick={() => setActiveTab("movements")}
         >
           📊 Movimientos
         </button>
-        <button 
-          className={`btn btn-sm ${activeTab === 'stats' ? 'btn-primary' : 'btn-ghost'}`}
-          onClick={() => setActiveTab('stats')}
+        <button
+          className={`btn btn-sm ${activeTab === "stats" ? "btn-primary" : "btn-ghost"}`}
+          onClick={() => setActiveTab("stats")}
         >
           📈 Estadísticas
         </button>
@@ -188,7 +225,7 @@ export default function InventoryPage() {
 
       {loading ? (
         <div className="loading-state">Cargando datos...</div>
-      ) : activeTab === 'orders' ? (
+      ) : activeTab === "orders" ? (
         <InventoryOrders
           orders={orders}
           users={users}
@@ -199,7 +236,7 @@ export default function InventoryPage() {
           handleDeleteOrder={handleDeleteOrder}
           handleStatusChange={handleStatusChange}
         />
-      ) : activeTab === 'catalog' ? (
+      ) : activeTab === "catalog" ? (
         <InventoryCatalog
           products={products}
           actionLoading={actionLoading}
@@ -209,7 +246,7 @@ export default function InventoryPage() {
           handleDeleteProduct={handleDeleteProduct}
           setShowAddProduct={setShowAddProduct}
         />
-      ) : activeTab === 'shopping' ? (
+      ) : activeTab === "shopping" ? (
         <InventoryShopping
           shoppingItems={shoppingItems}
           products={products}
@@ -219,7 +256,7 @@ export default function InventoryPage() {
           handleCompletePurchase={handleCompletePurchase}
           actionLoading={actionLoading}
         />
-      ) : activeTab === 'movements' ? (
+      ) : activeTab === "movements" ? (
         <InventoryMovements
           movements={movements}
           users={users}

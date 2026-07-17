@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../config/firebase';
+import React, { useState } from "react";
+import { Link } from "react-router-dom";
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { db } from "../config/firebase";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DATA
@@ -11,38 +11,38 @@ const features = [
     icon: "⏱️",
     title: "Control Horario & GPS",
     desc: "Fichaje geolocalizado en tiempo real. Registro automático de inicio y fin de jornada con cálculo de kilometraje.",
-    color: "#2563eb"
+    color: "#2563eb",
   },
   {
     icon: "📸",
     title: "Evidencias Fotográficas",
     desc: "Certifica cada servicio con fotos del antes y después. Marca de agua con GPS y hora para garantizar la veracidad.",
-    color: "#7c3aed"
+    color: "#7c3aed",
   },
   {
     icon: "📋",
     title: "Tareas Inteligentes",
     desc: "Crea plantillas de tareas por comunidad o portal. Automatiza asignaciones diarias y ahorra horas de planificación.",
-    color: "#0891b2"
+    color: "#0891b2",
   },
   {
     icon: "🚗",
     title: "Registro de Kilometraje",
     desc: "Control exacto de desplazamientos. Reportes mensuales validados listos para compensación de gastos.",
-    color: "#059669"
+    color: "#059669",
   },
   {
     icon: "📦",
     title: "Gestión de Materiales",
     desc: "Solicitudes de consumibles desde el móvil del operario. Inventario centralizado con alertas de stock mínimo.",
-    color: "#d97706"
+    color: "#d97706",
   },
   {
     icon: "🔄",
     title: "Traspasos al Instante",
     desc: "Reasigna servicios en segundos cuando un operario no puede acudir. Sin llamadas, sin caos.",
-    color: "#dc2626"
-  }
+    color: "#dc2626",
+  },
 ];
 
 const stats = [
@@ -54,23 +54,26 @@ const stats = [
 
 const testimonials = [
   {
-    quote: "LimpiaGest nos ha permitido eliminar completamente los partes en papel. Ahora sabemos en tiempo real qué está pasando en cada comunidad.",
+    quote:
+      "LimpiaGest nos ha permitido eliminar completamente los partes en papel. Ahora sabemos en tiempo real qué está pasando en cada comunidad.",
     author: "Raúl B.",
     role: "Director de Operaciones",
-    company: "Limpiezas RyB"
+    company: "Limpiezas RyB",
   },
   {
-    quote: "La app de los operarios es tan sencilla que no necesitamos formación. En dos días estaba todo el equipo funcionando.",
+    quote:
+      "La app de los operarios es tan sencilla que no necesitamos formación. En dos días estaba todo el equipo funcionando.",
     author: "Mª Carmen G.",
     role: "Responsable de RRHH",
-    company: "Servicios de Limpieza García"
+    company: "Servicios de Limpieza García",
   },
   {
-    quote: "Mis clientes ahora reciben evidencias fotográficas de cada trabajo. Eso ha reducido las reclamaciones a cero.",
+    quote:
+      "Mis clientes ahora reciben evidencias fotográficas de cada trabajo. Eso ha reducido las reclamaciones a cero.",
     author: "Javier M.",
     role: "Gerente",
-    company: "Multiservicio Martínez"
-  }
+    company: "Multiservicio Martínez",
+  },
 ];
 
 const pricingPlans = [
@@ -86,7 +89,7 @@ const pricingPlans = [
       "Soporte por email",
     ],
     featured: false,
-    cta: "Solicitar Acceso"
+    cta: "Solicitar Acceso",
   },
   {
     name: "Empresa",
@@ -101,7 +104,7 @@ const pricingPlans = [
       "Soporte prioritario 24/7",
     ],
     featured: true,
-    cta: "Empezar Ahora"
+    cta: "Empezar Ahora",
   },
   {
     name: "Enterprise",
@@ -115,25 +118,25 @@ const pricingPlans = [
       "Gerente de cuenta dedicado",
     ],
     featured: false,
-    cta: "Contactar Ventas"
-  }
+    cta: "Contactar Ventas",
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // REQUEST MODAL
 // ─────────────────────────────────────────────────────────────────────────────
-function RequestModal({ isOpen, onClose, defaultPlan = '' }) {
+function RequestModal({ isOpen, onClose, defaultPlan = "" }) {
   const [form, setForm] = useState({
-    companyName: '',
-    contactName: '',
-    email: '',
-    phone: '',
-    operariosCount: '',
+    companyName: "",
+    contactName: "",
+    email: "",
+    phone: "",
+    operariosCount: "",
     plan: defaultPlan,
-    message: ''
+    message: "",
   });
-  const [status, setStatus] = useState('idle'); // idle | loading | success | error
-  const [errorMsg, setErrorMsg] = useState('');
+  const [status, setStatus] = useState("idle"); // idle | loading | success | error
+  const [errorMsg, setErrorMsg] = useState("");
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
 
   React.useEffect(() => {
@@ -145,59 +148,83 @@ function RequestModal({ isOpen, onClose, defaultPlan = '' }) {
   if (!isOpen) return null;
 
   function handleChange(e) {
-    setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
+    setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
-    setStatus('loading');
-    setErrorMsg('');
+    setStatus("loading");
+    setErrorMsg("");
     try {
-      await addDoc(collection(db, 'companyRequests'), {
+      await addDoc(collection(db, "companyRequests"), {
         ...form,
-        status: 'pending',
-        createdAt: serverTimestamp()
+        status: "pending",
+        createdAt: serverTimestamp(),
       });
-      setStatus('success');
+      setStatus("success");
     } catch (err) {
-      console.error('Error saving request:', err);
-      setErrorMsg('No se pudo enviar la solicitud. Inténtalo de nuevo o escríbenos a limpiezasrayba@gmail.com');
-      setStatus('error');
+      console.error("Error saving request:", err);
+      setErrorMsg(
+        "No se pudo enviar la solicitud. Inténtalo de nuevo o escríbenos a limpiezasrayba@gmail.com",
+      );
+      setStatus("error");
     }
   }
 
   return (
     <div
       style={{
-        position: 'fixed', inset: 0, zIndex: 1000,
-        background: 'rgba(0,0,0,0.75)',
-        backdropFilter: 'blur(8px)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: '16px',
-        animation: 'fadeIn 0.2s ease'
+        position: "fixed",
+        inset: 0,
+        zIndex: 1000,
+        background: "rgba(0,0,0,0.75)",
+        backdropFilter: "blur(8px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "16px",
+        animation: "fadeIn 0.2s ease",
       }}
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
-      <div style={{
-        background: 'linear-gradient(145deg, #0f172a, #1e293b)',
-        border: '1px solid rgba(255,255,255,0.1)',
-        borderRadius: '20px',
-        padding: '32px',
-        width: '100%',
-        maxWidth: '520px',
-        maxHeight: '90vh',
-        overflowY: 'auto',
-        boxShadow: '0 25px 60px rgba(0,0,0,0.5)',
-        animation: 'slideUp 0.3s ease'
-      }}>
-        {status === 'success' ? (
-          <div style={{ textAlign: 'center', padding: '20px 0' }}>
-            <div style={{ fontSize: '4rem', marginBottom: '16px' }}>🎉</div>
-            <h2 style={{ color: 'white', fontSize: '1.5rem', fontWeight: 800, marginBottom: '12px' }}>
+      <div
+        style={{
+          background: "linear-gradient(145deg, #0f172a, #1e293b)",
+          border: "1px solid rgba(255,255,255,0.1)",
+          borderRadius: "20px",
+          padding: "32px",
+          width: "100%",
+          maxWidth: "520px",
+          maxHeight: "90vh",
+          overflowY: "auto",
+          boxShadow: "0 25px 60px rgba(0,0,0,0.5)",
+          animation: "slideUp 0.3s ease",
+        }}
+      >
+        {status === "success" ? (
+          <div style={{ textAlign: "center", padding: "20px 0" }}>
+            <div style={{ fontSize: "4rem", marginBottom: "16px" }}>🎉</div>
+            <h2
+              style={{
+                color: "white",
+                fontSize: "1.5rem",
+                fontWeight: 800,
+                marginBottom: "12px",
+              }}
+            >
               ¡Solicitud recibida!
             </h2>
-            <p style={{ color: '#94a3b8', marginBottom: '24px', lineHeight: 1.6 }}>
-              Nos pondremos en contacto contigo en menos de 24 horas para configurar tu cuenta.
+            <p
+              style={{
+                color: "#94a3b8",
+                marginBottom: "24px",
+                lineHeight: 1.6,
+              }}
+            >
+              Nos pondremos en contacto contigo en menos de 24 horas para
+              configurar tu cuenta.
             </p>
             <button onClick={onClose} className="btn btn-primary btn-lg w-full">
               Cerrar
@@ -205,31 +232,73 @@ function RequestModal({ isOpen, onClose, defaultPlan = '' }) {
           </div>
         ) : (
           <>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                marginBottom: "24px",
+              }}
+            >
               <div>
-                <h2 style={{ color: 'white', fontSize: '1.4rem', fontWeight: 800, marginBottom: '4px' }}>
+                <h2
+                  style={{
+                    color: "white",
+                    fontSize: "1.4rem",
+                    fontWeight: 800,
+                    marginBottom: "4px",
+                  }}
+                >
                   Solicitar Acceso a LimpiaGest
                 </h2>
-                <p style={{ color: '#94a3b8', fontSize: '0.85rem' }}>
-                  Te contactamos en menos de 24 horas para configurar tu empresa.
+                <p style={{ color: "#94a3b8", fontSize: "0.85rem" }}>
+                  Te contactamos en menos de 24 horas para configurar tu
+                  empresa.
                 </p>
               </div>
               <button
                 onClick={onClose}
-                style={{ background: 'rgba(255,255,255,0.05)', border: 'none', color: '#94a3b8', cursor: 'pointer', borderRadius: '8px', padding: '6px 10px', fontSize: '1rem' }}
+                style={{
+                  background: "rgba(255,255,255,0.05)",
+                  border: "none",
+                  color: "#94a3b8",
+                  cursor: "pointer",
+                  borderRadius: "8px",
+                  padding: "6px 10px",
+                  fontSize: "1rem",
+                }}
               >
                 ✕
               </button>
             </div>
 
-            {status === 'error' && (
-              <div style={{ background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.3)', borderRadius: '10px', padding: '12px', marginBottom: '16px', color: '#fca5a5', fontSize: '0.85rem' }}>
+            {status === "error" && (
+              <div
+                style={{
+                  background: "rgba(220,38,38,0.1)",
+                  border: "1px solid rgba(220,38,38,0.3)",
+                  borderRadius: "10px",
+                  padding: "12px",
+                  marginBottom: "16px",
+                  color: "#fca5a5",
+                  fontSize: "0.85rem",
+                }}
+              >
                 {errorMsg}
               </div>
             )}
 
-            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+            <form
+              onSubmit={handleSubmit}
+              style={{ display: "flex", flexDirection: "column", gap: "14px" }}
+            >
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "14px",
+                }}
+              >
                 <div className="form-group" style={{ margin: 0 }}>
                   <label className="form-label">Empresa *</label>
                   <input
@@ -254,7 +323,13 @@ function RequestModal({ isOpen, onClose, defaultPlan = '' }) {
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "14px",
+                }}
+              >
                 <div className="form-group" style={{ margin: 0 }}>
                   <label className="form-label">Email *</label>
                   <input
@@ -280,7 +355,13 @@ function RequestModal({ isOpen, onClose, defaultPlan = '' }) {
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "14px",
+                }}
+              >
                 <div className="form-group" style={{ margin: 0 }}>
                   <label className="form-label">Nº de operarios</label>
                   <select
@@ -308,7 +389,9 @@ function RequestModal({ isOpen, onClose, defaultPlan = '' }) {
                     <option value="">Seleccionar...</option>
                     <option value="Pyme">Pyme — 49€/mes</option>
                     <option value="Empresa">Empresa — 99€/mes</option>
-                    <option value="Enterprise">Enterprise — Personalizado</option>
+                    <option value="Enterprise">
+                      Enterprise — Personalizado
+                    </option>
                   </select>
                 </div>
               </div>
@@ -322,7 +405,7 @@ function RequestModal({ isOpen, onClose, defaultPlan = '' }) {
                   value={form.message}
                   onChange={handleChange}
                   rows={3}
-                  style={{ resize: 'vertical', minHeight: '80px' }}
+                  style={{ resize: "vertical", minHeight: "80px" }}
                 />
               </div>
 
@@ -332,28 +415,50 @@ function RequestModal({ isOpen, onClose, defaultPlan = '' }) {
                   <tbody>
                     <tr>
                       <td className="gdpr-info-label">Responsable:</td>
-                      <td className="gdpr-info-value">Daniel Rabaneda / RyB Limpiezas</td>
+                      <td className="gdpr-info-value">
+                        Daniel Rabaneda / RyB Limpiezas
+                      </td>
                     </tr>
                     <tr>
                       <td className="gdpr-info-label">Finalidad:</td>
-                      <td className="gdpr-info-value">Gestionar su solicitud de demostración del software y contacto comercial.</td>
+                      <td className="gdpr-info-value">
+                        Gestionar su solicitud de demostración del software y
+                        contacto comercial.
+                      </td>
                     </tr>
                     <tr>
                       <td className="gdpr-info-label">Legitimación:</td>
-                      <td className="gdpr-info-value">Consentimiento del interesado al enviar el formulario.</td>
+                      <td className="gdpr-info-value">
+                        Consentimiento del interesado al enviar el formulario.
+                      </td>
                     </tr>
                     <tr>
                       <td className="gdpr-info-label">Destinatarios:</td>
-                      <td className="gdpr-info-value">No se cederán datos a terceros salvo obligación legal o proveedores tecnológicos autorizados.</td>
+                      <td className="gdpr-info-value">
+                        No se cederán datos a terceros salvo obligación legal o
+                        proveedores tecnológicos autorizados.
+                      </td>
                     </tr>
                     <tr>
                       <td className="gdpr-info-label">Derechos:</td>
-                      <td className="gdpr-info-value">Acceso, rectificación, supresión y otros detallados en la Info Adicional.</td>
+                      <td className="gdpr-info-value">
+                        Acceso, rectificación, supresión y otros detallados en
+                        la Info Adicional.
+                      </td>
                     </tr>
                   </tbody>
                 </table>
                 <div className="gdpr-info-link-container">
-                  Información Adicional: Puedes consultar la información detallada en nuestra <Link to="/politica-de-privacidad" target="_blank" rel="noopener noreferrer">Política de Privacidad</Link>.
+                  Información Adicional: Puedes consultar la información
+                  detallada en nuestra{" "}
+                  <Link
+                    to="/politica-de-privacidad"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Política de Privacidad
+                  </Link>
+                  .
                 </div>
               </div>
 
@@ -365,21 +470,44 @@ function RequestModal({ isOpen, onClose, defaultPlan = '' }) {
                   onChange={(e) => setPrivacyAccepted(e.target.checked)}
                   required
                 />
-                <label htmlFor="landing-privacy-checkbox" style={{ fontSize: '0.8rem', cursor: 'pointer' }}>
-                  Acepto la <Link to="/politica-de-privacidad" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-primary-light)', textDecoration: 'underline' }}>Política de Privacidad</Link> y el tratamiento de mis datos.*
+                <label
+                  htmlFor="landing-privacy-checkbox"
+                  style={{ fontSize: "0.8rem", cursor: "pointer" }}
+                >
+                  Acepto la{" "}
+                  <Link
+                    to="/politica-de-privacidad"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      color: "var(--color-primary-light)",
+                      textDecoration: "underline",
+                    }}
+                  >
+                    Política de Privacidad
+                  </Link>{" "}
+                  y el tratamiento de mis datos.*
                 </label>
               </div>
 
               <button
                 type="submit"
                 className="btn btn-success btn-lg w-full"
-                disabled={status === 'loading'}
-                style={{ marginTop: '4px' }}
+                disabled={status === "loading"}
+                style={{ marginTop: "4px" }}
               >
-                {status === 'loading' ? '⏳ Enviando solicitud...' : '🚀 Solicitar Acceso Gratuito'}
+                {status === "loading"
+                  ? "⏳ Enviando solicitud..."
+                  : "🚀 Solicitar Acceso Gratuito"}
               </button>
 
-              <p style={{ textAlign: 'center', fontSize: '0.75rem', color: '#64748b' }}>
+              <p
+                style={{
+                  textAlign: "center",
+                  fontSize: "0.75rem",
+                  color: "#64748b",
+                }}
+              >
                 Sin tarjeta de crédito. Sin compromiso. Te llamamos nosotros.
               </p>
             </form>
@@ -395,10 +523,10 @@ function RequestModal({ isOpen, onClose, defaultPlan = '' }) {
 // ─────────────────────────────────────────────────────────────────────────────
 export default function LandingPage() {
   const [modalOpen, setModalOpen] = useState(false);
-  const [modalPlan, setModalPlan] = useState('');
+  const [modalPlan, setModalPlan] = useState("");
   const [billingAnnual, setBillingAnnual] = useState(false);
 
-  function openModal(plan = '') {
+  function openModal(plan = "") {
     setModalPlan(plan);
     setModalOpen(true);
   }
@@ -740,17 +868,36 @@ export default function LandingPage() {
               <button
                 onClick={() => openModal()}
                 style={{
-                  background: 'rgba(255,255,255,0.06)', color: '#94a3b8',
-                  border: '1px solid rgba(255,255,255,0.1)', padding: '8px 16px',
-                  borderRadius: '10px', fontWeight: 600, fontSize: '0.85rem',
-                  cursor: 'pointer', transition: 'all 0.2s'
+                  background: "rgba(255,255,255,0.06)",
+                  color: "#94a3b8",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  padding: "8px 16px",
+                  borderRadius: "10px",
+                  fontWeight: 600,
+                  fontSize: "0.85rem",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
                 }}
-                onMouseOver={e => { e.currentTarget.style.color = 'white'; e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; }}
-                onMouseOut={e => { e.currentTarget.style.color = '#94a3b8'; e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
+                onMouseOver={(e) => {
+                  e.currentTarget.style.color = "white";
+                  e.currentTarget.style.background = "rgba(255,255,255,0.1)";
+                }}
+                onMouseOut={(e) => {
+                  e.currentTarget.style.color = "#94a3b8";
+                  e.currentTarget.style.background = "rgba(255,255,255,0.06)";
+                }}
               >
                 Solicitar Demo
               </button>
-              <Link to="/login" className="btn-hero-primary" style={{ padding: '8px 18px', fontSize: '0.875rem', borderRadius: '10px' }}>
+              <Link
+                to="/login"
+                className="btn-hero-primary"
+                style={{
+                  padding: "8px 18px",
+                  fontSize: "0.875rem",
+                  borderRadius: "10px",
+                }}
+              >
                 🔑 Acceso Clientes
               </Link>
             </div>
@@ -766,13 +913,23 @@ export default function LandingPage() {
                 Nuevo: Fichajes PWA con GPS en tiempo real
               </div>
               <h1 className="hero-title">
-                El software para <span className="hero-title-gradient">empresas de limpieza</span> definitivo.
+                El software para{" "}
+                <span className="hero-title-gradient">
+                  empresas de limpieza
+                </span>{" "}
+                definitivo.
               </h1>
               <p className="hero-subtitle">
-                LimpiaGest es el software SaaS todo en uno diseñado para empresas de limpieza. Controla operarios, automatiza tareas, certifica trabajos con evidencias fotográficas y optimiza tus costes.
+                LimpiaGest es el software SaaS todo en uno diseñado para
+                empresas de limpieza. Controla operarios, automatiza tareas,
+                certifica trabajos con evidencias fotográficas y optimiza tus
+                costes.
               </p>
               <div className="hero-ctas">
-                <button className="btn-hero-primary" onClick={() => openModal()}>
+                <button
+                  className="btn-hero-primary"
+                  onClick={() => openModal()}
+                >
                   🚀 Solicitar Demo Gratis
                 </button>
                 <Link to="/login" className="btn-hero-secondary">
@@ -804,14 +961,25 @@ export default function LandingPage() {
           {/* ── FEATURES ── */}
           <section className="lp-section">
             <div className="lp-section-label">Funcionalidades</div>
-            <h2 className="lp-section-title">Todo lo que necesita tu empresa,<br />en una sola app.</h2>
+            <h2 className="lp-section-title">
+              Todo lo que necesita tu empresa,
+              <br />
+              en una sola app.
+            </h2>
             <p className="lp-section-sub">
-              Diseñado específicamente para el sector de la limpieza. Sin funciones innecesarias, sin curva de aprendizaje.
+              Diseñado específicamente para el sector de la limpieza. Sin
+              funciones innecesarias, sin curva de aprendizaje.
             </p>
             <div className="features-grid">
               {features.map((feat, i) => (
                 <div key={i} className="feature-card">
-                  <div className="feature-icon" style={{ background: `${feat.color}18`, border: `1px solid ${feat.color}30` }}>
+                  <div
+                    className="feature-icon"
+                    style={{
+                      background: `${feat.color}18`,
+                      border: `1px solid ${feat.color}30`,
+                    }}
+                  >
                     {feat.icon}
                   </div>
                   <h3>{feat.title}</h3>
@@ -824,15 +992,30 @@ export default function LandingPage() {
           {/* ── HOW IT WORKS ── */}
           <section className="lp-section">
             <div className="lp-section-label">Implementación</div>
-            <h2 className="lp-section-title">En marcha en menos de 24 horas.</h2>
+            <h2 className="lp-section-title">
+              En marcha en menos de 24 horas.
+            </h2>
             <p className="lp-section-sub">
-              Sin migraciones complejas. Sin formación técnica. Tus operarios instalan la app en el móvil en segundos.
+              Sin migraciones complejas. Sin formación técnica. Tus operarios
+              instalan la app en el móvil en segundos.
             </p>
             <div className="steps-grid">
               {[
-                { n: '1', title: 'Solicita el acceso', desc: 'Rellena el formulario. En menos de 24h te configuramos la cuenta con tus datos de empresa.' },
-                { n: '2', title: 'Configura tus comunidades', desc: 'Importa portales, comunidades y plantillas de tareas recurrentes desde tu panel web.' },
-                { n: '3', title: 'Controla en tiempo real', desc: 'Tus operarios entran con su móvil, tú ves todo desde el dashboard. Así de sencillo.' },
+                {
+                  n: "1",
+                  title: "Solicita el acceso",
+                  desc: "Rellena el formulario. En menos de 24h te configuramos la cuenta con tus datos de empresa.",
+                },
+                {
+                  n: "2",
+                  title: "Configura tus comunidades",
+                  desc: "Importa portales, comunidades y plantillas de tareas recurrentes desde tu panel web.",
+                },
+                {
+                  n: "3",
+                  title: "Controla en tiempo real",
+                  desc: "Tus operarios entran con su móvil, tú ves todo desde el dashboard. Así de sencillo.",
+                },
               ].map((s, i) => (
                 <div key={i} className="step-card">
                   <div className="step-number">{s.n}</div>
@@ -846,9 +1029,12 @@ export default function LandingPage() {
           {/* ── TESTIMONIALS ── */}
           <section className="lp-section">
             <div className="lp-section-label">Testimonios</div>
-            <h2 className="lp-section-title">Lo que dicen nuestros clientes.</h2>
+            <h2 className="lp-section-title">
+              Lo que dicen nuestros clientes.
+            </h2>
             <p className="lp-section-sub">
-              Empresas como la tuya ya optimizan su gestión diaria con LimpiaGest.
+              Empresas como la tuya ya optimizan su gestión diaria con
+              LimpiaGest.
             </p>
             <div className="testimonials-grid">
               {testimonials.map((t, i) => (
@@ -856,10 +1042,14 @@ export default function LandingPage() {
                   <div className="testimonial-stars">★★★★★</div>
                   <p className="testimonial-quote">"{t.quote}"</p>
                   <div className="testimonial-author">
-                    <div className="testimonial-avatar">{t.author.charAt(0)}</div>
+                    <div className="testimonial-avatar">
+                      {t.author.charAt(0)}
+                    </div>
                     <div>
                       <div className="testimonial-name">{t.author}</div>
-                      <div className="testimonial-role">{t.role} · {t.company}</div>
+                      <div className="testimonial-role">
+                        {t.role} · {t.company}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -872,32 +1062,45 @@ export default function LandingPage() {
             <div className="lp-section-label">Precios</div>
             <h2 className="lp-section-title">Sin contratos. Sin sorpresas.</h2>
             <p className="lp-section-sub">
-              Elige el plan que mejor se adapta a tu plantilla. Cancela cuando quieras.
+              Elige el plan que mejor se adapta a tu plantilla. Cancela cuando
+              quieras.
             </p>
 
             {/* Billing toggle */}
             <div
               className="billing-toggle"
-              onClick={() => setBillingAnnual(prev => !prev)}
+              onClick={() => setBillingAnnual((prev) => !prev)}
               role="button"
               aria-label="Cambiar facturación anual/mensual"
             >
-              <span className={!billingAnnual ? 'active-label' : ''}>Mensual</span>
-              <button className={`toggle-switch ${billingAnnual ? 'on' : ''}`} aria-hidden="true">
+              <span className={!billingAnnual ? "active-label" : ""}>
+                Mensual
+              </span>
+              <button
+                className={`toggle-switch ${billingAnnual ? "on" : ""}`}
+                aria-hidden="true"
+              >
                 <span className="toggle-knob" />
               </button>
-              <span className={billingAnnual ? 'active-label' : ''}>Anual</span>
+              <span className={billingAnnual ? "active-label" : ""}>Anual</span>
               {billingAnnual && <span className="annual-badge">−20%</span>}
             </div>
 
             <div className="pricing-grid">
               {pricingPlans.map((plan, i) => {
                 const price = plan.monthlyPrice
-                  ? (billingAnnual ? Math.round(plan.monthlyPrice * 0.8) : plan.monthlyPrice)
+                  ? billingAnnual
+                    ? Math.round(plan.monthlyPrice * 0.8)
+                    : plan.monthlyPrice
                   : null;
                 return (
-                  <div key={i} className={`pricing-card ${plan.featured ? 'featured' : ''}`}>
-                    {plan.featured && <div className="pricing-badge-pill">⭐ Más Popular</div>}
+                  <div
+                    key={i}
+                    className={`pricing-card ${plan.featured ? "featured" : ""}`}
+                  >
+                    {plan.featured && (
+                      <div className="pricing-badge-pill">⭐ Más Popular</div>
+                    )}
                     <div className="pricing-name">{plan.name}</div>
                     <div className="pricing-desc">{plan.desc}</div>
                     <div className="pricing-price">
@@ -906,11 +1109,19 @@ export default function LandingPage() {
                           <span className="pricing-amount">{price}€</span>
                           <span className="pricing-period"> /mes</span>
                           {billingAnnual && (
-                            <div className="pricing-save">Ahorras {plan.monthlyPrice * 12 - price * 12}€ al año</div>
+                            <div className="pricing-save">
+                              Ahorras {plan.monthlyPrice * 12 - price * 12}€ al
+                              año
+                            </div>
                           )}
                         </>
                       ) : (
-                        <span className="pricing-amount" style={{ fontSize: '1.8rem' }}>Personalizado</span>
+                        <span
+                          className="pricing-amount"
+                          style={{ fontSize: "1.8rem" }}
+                        >
+                          Personalizado
+                        </span>
                       )}
                     </div>
                     <ul className="pricing-features-list">
@@ -923,7 +1134,11 @@ export default function LandingPage() {
                     </ul>
                     <button
                       onClick={() => openModal(plan.name)}
-                      className={plan.featured ? 'btn-pricing-primary' : 'btn-pricing-secondary'}
+                      className={
+                        plan.featured
+                          ? "btn-pricing-primary"
+                          : "btn-pricing-secondary"
+                      }
                     >
                       {plan.cta}
                     </button>
@@ -935,24 +1150,44 @@ export default function LandingPage() {
 
           {/* ── CTA BOTTOM ── */}
           <section className="lp-cta-bottom">
-            <h2 className="cta-bottom-title">¿Listo para digitalizar tu negocio?</h2>
+            <h2 className="cta-bottom-title">
+              ¿Listo para digitalizar tu negocio?
+            </h2>
             <p className="cta-bottom-sub">
-              Únete a las empresas que ya han optimizado su tiempo y certificado el 100% de sus servicios.
+              Únete a las empresas que ya han optimizado su tiempo y certificado
+              el 100% de sus servicios.
             </p>
-            <button className="btn-hero-primary" onClick={() => openModal()} style={{ fontSize: '1.05rem', padding: '15px 34px' }}>
+            <button
+              className="btn-hero-primary"
+              onClick={() => openModal()}
+              style={{ fontSize: "1.05rem", padding: "15px 34px" }}
+            >
               🚀 Solicitar Demo Gratuita
             </button>
-            <p style={{ marginTop: '16px', fontSize: '0.8rem', color: '#475569' }}>
-              O escríbenos directamente a <strong style={{ color: '#94a3b8' }}>limpiezasrayba@gmail.com</strong>
+            <p
+              style={{
+                marginTop: "16px",
+                fontSize: "0.8rem",
+                color: "#475569",
+              }}
+            >
+              O escríbenos directamente a{" "}
+              <strong style={{ color: "#94a3b8" }}>
+                limpiezasrayba@gmail.com
+              </strong>
             </p>
           </section>
 
           {/* ── FOOTER ── */}
           <footer className="lp-footer">
             <div className="lp-footer-copy">
-              © {new Date().getFullYear()} LimpiaGest · RyB Limpiezas · Todos los derechos reservados
+              © {new Date().getFullYear()} LimpiaGest · RyB Limpiezas · Todos
+              los derechos reservados
             </div>
-            <div className="lp-footer-links" style={{ flexWrap: 'wrap', justifyContent: 'center' }}>
+            <div
+              className="lp-footer-links"
+              style={{ flexWrap: "wrap", justifyContent: "center" }}
+            >
               <a href="mailto:limpiezasrayba@gmail.com">Contacto</a>
               <Link to="/login">Acceso clientes</Link>
               <Link to="/aviso-legal">Aviso Legal</Link>

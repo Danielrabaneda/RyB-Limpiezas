@@ -10,24 +10,68 @@
  * @type {Object<string, string>}
  */
 const ACCENT_MAP = {
-  'á': 'a', 'à': 'a', 'ä': 'a', 'â': 'a', 'ã': 'a', 'å': 'a',
-  'Á': 'A', 'À': 'A', 'Ä': 'A', 'Â': 'A', 'Ã': 'A', 'Å': 'A',
-  'é': 'e', 'è': 'e', 'ë': 'e', 'ê': 'e',
-  'É': 'E', 'È': 'E', 'Ë': 'E', 'Ê': 'E',
-  'í': 'i', 'ì': 'i', 'ï': 'i', 'î': 'i',
-  'Í': 'I', 'Ì': 'I', 'Ï': 'I', 'Î': 'I',
-  'ó': 'o', 'ò': 'o', 'ö': 'o', 'ô': 'o', 'õ': 'o',
-  'Ó': 'O', 'Ò': 'O', 'Ö': 'O', 'Ô': 'O', 'Õ': 'O',
-  'ú': 'u', 'ù': 'u', 'ü': 'u', 'û': 'u',
-  'Ú': 'U', 'Ù': 'U', 'Ü': 'U', 'Û': 'U',
-  'ñ': 'n', 'Ñ': 'N',
-  'ç': 'c', 'Ç': 'C',
-  'ý': 'y', 'Ý': 'Y', 'ÿ': 'y',
-  'ð': 'd', 'Ð': 'D',
-  'ø': 'o', 'Ø': 'O',
-  'ß': 'ss',
-  'æ': 'ae', 'Æ': 'AE',
-  'œ': 'oe', 'Œ': 'OE',
+  á: "a",
+  à: "a",
+  ä: "a",
+  â: "a",
+  ã: "a",
+  å: "a",
+  Á: "A",
+  À: "A",
+  Ä: "A",
+  Â: "A",
+  Ã: "A",
+  Å: "A",
+  é: "e",
+  è: "e",
+  ë: "e",
+  ê: "e",
+  É: "E",
+  È: "E",
+  Ë: "E",
+  Ê: "E",
+  í: "i",
+  ì: "i",
+  ï: "i",
+  î: "i",
+  Í: "I",
+  Ì: "I",
+  Ï: "I",
+  Î: "I",
+  ó: "o",
+  ò: "o",
+  ö: "o",
+  ô: "o",
+  õ: "o",
+  Ó: "O",
+  Ò: "O",
+  Ö: "O",
+  Ô: "O",
+  Õ: "O",
+  ú: "u",
+  ù: "u",
+  ü: "u",
+  û: "u",
+  Ú: "U",
+  Ù: "U",
+  Ü: "U",
+  Û: "U",
+  ñ: "n",
+  Ñ: "N",
+  ç: "c",
+  Ç: "C",
+  ý: "y",
+  Ý: "Y",
+  ÿ: "y",
+  ð: "d",
+  Ð: "D",
+  ø: "o",
+  Ø: "O",
+  ß: "ss",
+  æ: "ae",
+  Æ: "AE",
+  œ: "oe",
+  Œ: "OE",
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -42,13 +86,13 @@ const ACCENT_MAP = {
  * @returns {string} XML-safe string.
  */
 function xmlEscape(str) {
-  if (!str) return '';
+  if (!str) return "";
   return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
 }
 
 /**
@@ -59,7 +103,7 @@ function xmlEscape(str) {
  * @returns {string}
  */
 function padZero(num, width) {
-  return String(num).padStart(width, '0');
+  return String(num).padStart(width, "0");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -81,20 +125,20 @@ function padZero(num, width) {
  * @returns {string} The sanitised, SEPA-compliant string.
  */
 export function sanitizeSepaText(text, maxLength = 70) {
-  if (!text) return '';
+  if (!text) return "";
 
   // Step 1 — replace known accented characters
-  let result = '';
+  let result = "";
   for (const ch of String(text)) {
     result += ACCENT_MAP[ch] ?? ch;
   }
 
   // Step 2 — strip characters outside the SEPA-allowed set
   // Allowed: a-zA-Z0-9, space, and / - ? : ( ) . , ' +
-  result = result.replace(/[^a-zA-Z0-9 /\-?:().,'+]/g, '');
+  result = result.replace(/[^a-zA-Z0-9 /\-?:().,'+]/g, "");
 
   // Step 3 — collapse multiple spaces
-  result = result.replace(/\s{2,}/g, ' ');
+  result = result.replace(/\s{2,}/g, " ");
 
   // Step 4 — trim
   result = result.trim();
@@ -123,11 +167,11 @@ export function sanitizeSepaText(text, maxLength = 70) {
  */
 export function validateIBAN(iban) {
   if (!iban) {
-    return { valid: false, error: 'IBAN es requerido', iban: '' };
+    return { valid: false, error: "IBAN es requerido", iban: "" };
   }
 
   // Clean: remove spaces, upper-case
-  const cleaned = String(iban).replace(/\s/g, '').toUpperCase();
+  const cleaned = String(iban).replace(/\s/g, "").toUpperCase();
 
   // Length check
   if (cleaned.length < 15 || cleaned.length > 34) {
@@ -143,7 +187,7 @@ export function validateIBAN(iban) {
   if (!/^[A-Z]{2}$/.test(countryCode)) {
     return {
       valid: false,
-      error: 'El IBAN debe comenzar con un código de país de 2 letras.',
+      error: "El IBAN debe comenzar con un código de país de 2 letras.",
       iban: cleaned,
     };
   }
@@ -153,9 +197,9 @@ export function validateIBAN(iban) {
   // (A=10, B=11, … Z=35) and check that the remainder mod 97 equals 1.
   const rearranged = cleaned.substring(4) + cleaned.substring(0, 4);
 
-  let numericStr = '';
+  let numericStr = "";
   for (const ch of rearranged) {
-    if (ch >= '0' && ch <= '9') {
+    if (ch >= "0" && ch <= "9") {
       numericStr += ch;
     } else {
       // A=10 … Z=35
@@ -173,7 +217,7 @@ export function validateIBAN(iban) {
   if (remainder !== 1) {
     return {
       valid: false,
-      error: 'El IBAN no es válido (falla la verificación MOD 97-10).',
+      error: "El IBAN no es válido (falla la verificación MOD 97-10).",
       iban: cleaned,
     };
   }
@@ -194,21 +238,25 @@ export function validateIBAN(iban) {
  * @param {string} suffix      - 3-digit suffix (default `'000'`).
  * @returns {string} The calculated SEPA Creditor Identifier (e.g. `'ES12000B04843843'`).
  */
-export function calculateSepaCreditorId(countryCode = 'ES', nif, suffix = '000') {
+export function calculateSepaCreditorId(
+  countryCode = "ES",
+  nif,
+  suffix = "000",
+) {
   if (!nif) {
-    throw new Error('El NIF es requerido para calcular el Creditor ID SEPA.');
+    throw new Error("El NIF es requerido para calcular el Creditor ID SEPA.");
   }
 
   const upperNif = nif.toUpperCase().trim();
   const upperCC = countryCode.toUpperCase().trim();
 
   // Build the string for MOD 97 computation: NIF + country-code digits + "00"
-  const base = upperNif + upperCC + '00';
+  const base = upperNif + upperCC + "00";
 
   // Convert letters to digits (A=10, B=11, … Z=35)
-  let numericStr = '';
+  let numericStr = "";
   for (const ch of base) {
-    if (ch >= '0' && ch <= '9') {
+    if (ch >= "0" && ch <= "9") {
       numericStr += ch;
     } else {
       numericStr += String(ch.charCodeAt(0) - 55);
@@ -258,18 +306,18 @@ export function calculateSepaCreditorId(countryCode = 'ES', nif, suffix = '000')
 export function generateSepaXML({ creditor, invoices, collectionDate }) {
   // ── Validation ──────────────────────────────────────────────────────────
   if (!creditor) {
-    throw new Error('Los datos del acreedor (creditor) son requeridos.');
+    throw new Error("Los datos del acreedor (creditor) son requeridos.");
   }
   if (!creditor.name || !creditor.iban || !creditor.creditorId) {
     throw new Error(
-      'El acreedor debe tener al menos: name, iban y creditorId.'
+      "El acreedor debe tener al menos: name, iban y creditorId.",
     );
   }
   if (!invoices || invoices.length === 0) {
-    throw new Error('Se requiere al menos una factura para generar el XML.');
+    throw new Error("Se requiere al menos una factura para generar el XML.");
   }
   if (!collectionDate) {
-    throw new Error('La fecha de cobro (collectionDate) es requerida.');
+    throw new Error("La fecha de cobro (collectionDate) es requerida.");
   }
 
   // ── Derived values ──────────────────────────────────────────────────────
@@ -283,7 +331,7 @@ export function generateSepaXML({ creditor, invoices, collectionDate }) {
   const rand4 = padZero(Math.floor(Math.random() * 10000), 4);
 
   const msgId = `RYB-${yyyy}${MM}${dd}-${HH}${mm}${ss}-${rand4}`;
-  const creDtTm = now.toISOString().replace(/\.\d{3}Z$/, ''); // e.g. 2026-07-03T12:34:25
+  const creDtTm = now.toISOString().replace(/\.\d{3}Z$/, ""); // e.g. 2026-07-03T12:34:25
   const pmtInfId = `${msgId}-PMT`;
 
   const nbOfTxs = invoices.length;
@@ -292,23 +340,23 @@ export function generateSepaXML({ creditor, invoices, collectionDate }) {
     .toFixed(2);
 
   const creditorName = sanitizeSepaText(creditor.name);
-  const creditorIBAN = creditor.iban.replace(/\s/g, '').toUpperCase();
+  const creditorIBAN = creditor.iban.replace(/\s/g, "").toUpperCase();
   const creditorBIC = creditor.bic
     ? creditor.bic.trim().toUpperCase()
-    : 'NOTPROVIDED';
+    : "NOTPROVIDED";
   const creditorSchmeId = creditor.creditorId.trim();
 
   // ── Build XML ───────────────────────────────────────────────────────────
-  let xml = '';
+  let xml = "";
 
   xml += '<?xml version="1.0" encoding="UTF-8"?>\n';
   xml +=
     '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.008.001.02"' +
     ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n';
-  xml += '  <CstmrDrctDbtInitn>\n';
+  xml += "  <CstmrDrctDbtInitn>\n";
 
   // ── Group Header ────────────────────────────────────────────────────────
-  xml += '    <GrpHdr>\n';
+  xml += "    <GrpHdr>\n";
   xml += `      <MsgId>${xmlEscape(msgId)}</MsgId>\n`;
   xml += `      <CreDtTm>${xmlEscape(creDtTm)}</CreDtTm>\n`;
   xml += `      <NbOfTxs>${nbOfTxs}</NbOfTxs>\n`;
@@ -316,21 +364,21 @@ export function generateSepaXML({ creditor, invoices, collectionDate }) {
   xml += `      <InitgPty>\n`;
   xml += `        <Nm>${xmlEscape(creditorName)}</Nm>\n`;
   xml += `      </InitgPty>\n`;
-  xml += '    </GrpHdr>\n';
+  xml += "    </GrpHdr>\n";
 
   // ── Payment Information ─────────────────────────────────────────────────
-  xml += '    <PmtInf>\n';
+  xml += "    <PmtInf>\n";
   xml += `      <PmtInfId>${xmlEscape(pmtInfId)}</PmtInfId>\n`;
-  xml += '      <PmtMtd>DD</PmtMtd>\n';
+  xml += "      <PmtMtd>DD</PmtMtd>\n";
   xml += `      <NbOfTxs>${nbOfTxs}</NbOfTxs>\n`;
   xml += `      <CtrlSum>${ctrlSum}</CtrlSum>\n`;
 
   // Payment Type Information
-  xml += '      <PmtTpInf>\n';
-  xml += '        <SvcLvl><Cd>SEPA</Cd></SvcLvl>\n';
-  xml += '        <LclInstrm><Cd>CORE</Cd></LclInstrm>\n';
-  xml += '        <SeqTp>RCUR</SeqTp>\n';
-  xml += '      </PmtTpInf>\n';
+  xml += "      <PmtTpInf>\n";
+  xml += "        <SvcLvl><Cd>SEPA</Cd></SvcLvl>\n";
+  xml += "        <LclInstrm><Cd>CORE</Cd></LclInstrm>\n";
+  xml += "        <SeqTp>RCUR</SeqTp>\n";
+  xml += "      </PmtTpInf>\n";
 
   // Requested Collection Date
   xml += `      <ReqdColltnDt>${xmlEscape(collectionDate)}</ReqdColltnDt>\n`;
@@ -351,16 +399,16 @@ export function generateSepaXML({ creditor, invoices, collectionDate }) {
   xml += `      </CdtrAgt>\n`;
 
   // Creditor Scheme Identification
-  xml += '      <CdtrSchmeId>\n';
-  xml += '        <Id>\n';
-  xml += '          <PrvtId>\n';
-  xml += '            <Othr>\n';
+  xml += "      <CdtrSchmeId>\n";
+  xml += "        <Id>\n";
+  xml += "          <PrvtId>\n";
+  xml += "            <Othr>\n";
   xml += `              <Id>${xmlEscape(creditorSchmeId)}</Id>\n`;
-  xml += '              <SchmeNm><Prtry>SEPA</Prtry></SchmeNm>\n';
-  xml += '            </Othr>\n';
-  xml += '          </PrvtId>\n';
-  xml += '        </Id>\n';
-  xml += '      </CdtrSchmeId>\n';
+  xml += "              <SchmeNm><Prtry>SEPA</Prtry></SchmeNm>\n";
+  xml += "            </Othr>\n";
+  xml += "          </PrvtId>\n";
+  xml += "        </Id>\n";
+  xml += "      </CdtrSchmeId>\n";
 
   // ── Direct Debit Transaction entries ────────────────────────────────────
   for (const invoice of invoices) {
@@ -368,43 +416,43 @@ export function generateSepaXML({ creditor, invoices, collectionDate }) {
     if (!client || !client.iban || !client.mandateRef || !client.mandateDate) {
       throw new Error(
         `Datos de cliente incompletos para la factura "${invoice.invoiceNumber}". ` +
-        'Se requiere: name, iban, mandateRef, mandateDate.'
+          "Se requiere: name, iban, mandateRef, mandateDate.",
       );
     }
 
     const endToEndId = sanitizeSepaText(invoice.invoiceNumber, 35);
     const amount = Number(invoice.totalAmount).toFixed(2);
     const debtorName = sanitizeSepaText(client.name);
-    const debtorIBAN = client.iban.replace(/\s/g, '').toUpperCase();
+    const debtorIBAN = client.iban.replace(/\s/g, "").toUpperCase();
     const mandateId = sanitizeSepaText(client.mandateRef, 35);
     const mandateDate = client.mandateDate; // expected YYYY-MM-DD
     const remittanceInfo = sanitizeSepaText(
       `Factura ${invoice.invoiceNumber} - ${client.name}`,
-      140
+      140,
     );
 
-    xml += '      <DrctDbtTxInf>\n';
+    xml += "      <DrctDbtTxInf>\n";
 
     // Payment Identification
-    xml += '        <PmtId>\n';
+    xml += "        <PmtId>\n";
     xml += `          <EndToEndId>${xmlEscape(endToEndId)}</EndToEndId>\n`;
-    xml += '        </PmtId>\n';
+    xml += "        </PmtId>\n";
 
     // Instructed Amount
     xml += `        <InstdAmt Ccy="EUR">${amount}</InstdAmt>\n`;
 
     // Direct Debit Transaction — Mandate Related Information
-    xml += '        <DrctDbtTx>\n';
-    xml += '          <MndtRltdInf>\n';
+    xml += "        <DrctDbtTx>\n";
+    xml += "          <MndtRltdInf>\n";
     xml += `            <MndtId>${xmlEscape(mandateId)}</MndtId>\n`;
     xml += `            <DtOfSgntr>${xmlEscape(mandateDate)}</DtOfSgntr>\n`;
-    xml += '          </MndtRltdInf>\n';
-    xml += '        </DrctDbtTx>\n';
+    xml += "          </MndtRltdInf>\n";
+    xml += "        </DrctDbtTx>\n";
 
     // Debtor Agent
-    xml += '        <DbtrAgt>\n';
-    xml += '          <FinInstnId><BIC>NOTPROVIDED</BIC></FinInstnId>\n';
-    xml += '        </DbtrAgt>\n';
+    xml += "        <DbtrAgt>\n";
+    xml += "          <FinInstnId><BIC>NOTPROVIDED</BIC></FinInstnId>\n";
+    xml += "        </DbtrAgt>\n";
 
     // Debtor
     xml += `        <Dbtr>\n`;
@@ -421,13 +469,13 @@ export function generateSepaXML({ creditor, invoices, collectionDate }) {
     xml += `          <Ustrd>${xmlEscape(remittanceInfo)}</Ustrd>\n`;
     xml += `        </RmtInf>\n`;
 
-    xml += '      </DrctDbtTxInf>\n';
+    xml += "      </DrctDbtTxInf>\n";
   }
 
   // ── Close elements ──────────────────────────────────────────────────────
-  xml += '    </PmtInf>\n';
-  xml += '  </CstmrDrctDbtInitn>\n';
-  xml += '</Document>';
+  xml += "    </PmtInf>\n";
+  xml += "  </CstmrDrctDbtInitn>\n";
+  xml += "</Document>";
 
   return xml;
 }

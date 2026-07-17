@@ -16,17 +16,21 @@ const db = getFirestore(app);
 const auth = getAuth(app);
 
 async function main() {
-  await signInWithEmailAndPassword(auth, "admin@ryblimpiezas.com", "Admin2024!");
-  
+  await signInWithEmailAndPassword(
+    auth,
+    "admin@ryblimpiezas.com",
+    "Admin2024!",
+  );
+
   console.log("=== INSPECTION OF MAY SERVICES IN DETAIL ===");
-  
+
   const ids = [
     "EkBrX1uSXnf3vcdoy62n", // Albarda 15-May (pending/missed)
     "ZUOeoQONf4tkoLy3HqkX", // Albarda 20-May (completed)
     "k0dvscn6CLTnpEkumudI", // Cadiz 15-May (pending/missed)
-    "pS1pFWbnYc8GoLJwsWd7"  // Cadiz 20-May (completed)
+    "pS1pFWbnYc8GoLJwsWd7", // Cadiz 20-May (completed)
   ];
-  
+
   for (const id of ids) {
     const snap = await getDoc(doc(db, "scheduledServices", id));
     if (snap.exists()) {
@@ -43,7 +47,7 @@ async function main() {
       console.log(`\nDocument ID: ${id} - NOT FOUND`);
     }
   }
-  
+
   process.exit(0);
 }
 
