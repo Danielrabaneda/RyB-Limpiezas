@@ -27,12 +27,14 @@ describe('Phase 3.3: E2E Check-In, Workdays, Mileage and Transfers isolation', f
       
       // Create users (auth profile mock)
       await setDoc(doc(db, "users", "raybaOperario"), { companyId: "rayba", role: "operario", active: true });
+      await setDoc(doc(db, "users", "raybaCompanion"), { companyId: "rayba", role: "operario", active: true });
       await setDoc(doc(db, "users", "tenantBOperario"), { companyId: "tenantB", role: "operario", active: true });
       await setDoc(doc(db, "users", "raybaAdmin"), { companyId: "rayba", role: "admin", active: true });
 
       // Setup dummy service for checkIn rule check (which does get() on scheduledServices)
       await setDoc(doc(db, "companies", "rayba", "scheduledServices", "service1"), {
         assignedUserId: "raybaOperario",
+        companionIds: ["raybaCompanion"],
         status: "pending"
       });
       
@@ -100,6 +102,57 @@ describe('Phase 3.3: E2E Check-In, Workdays, Mileage and Transfers isolation', f
       });
 
       await assertFails(getDoc(checkInRef));
+    });
+
+    it('should ALLOW Rayba operario to create/update their own check-in (owner)', async () => {
+      const db = testEnv.authenticatedContext("raybaOperario", { companyId: "rayba", role: "operario", active: true }).firestore();
+      const checkInRef = doc(db, "companies", "rayba", "checkIns", "ci_own");
+      
+      await assertSucceeds(setDoc(checkInRef, {
+        userId: "raybaOperario",
+        scheduledServiceId: "service1",
+        checkInTime: new Date().toISOString()
+      }));
+
+      await assertSucceeds(setDoc(checkInRef, {
+        userId: "raybaOperario",
+        scheduledServiceId: "service1",
+        checkInTime: new Date().toISOString(),
+        checkOutTime: new Date().toISOString()
+      }));
+    });
+
+    it('should ALLOW Rayba companion to create a check-in for the assignee (or vice-versa)', async () => {
+      // Authenticated as raybaCompanion (who is companion on service1 assigned to raybaOperario)
+      const db = testEnv.authenticatedContext("raybaCompanion", { companyId: "rayba", role: "operario", active: true }).firestore();
+      
+      // Creating check-in for the main assignee
+      const checkInRef1 = doc(db, "companies", "rayba", "checkIns", "ci_assignee");
+      await assertSucceeds(setDoc(checkInRef1, {
+        userId: "raybaOperario",
+        scheduledServiceId: "service1",
+        checkInTime: new Date().toISOString()
+      }));
+
+      // Creating check-in for ourselves (the companion)
+      const checkInRef2 = doc(db, "companies", "rayba", "checkIns", "ci_comp");
+      await assertSucceeds(setDoc(checkInRef2, {
+        userId: "raybaCompanion",
+        scheduledServiceId: "service1",
+        checkInTime: new Date().toISOString()
+      }));
+    });
+
+    it('should DENY Rayba operario to create check-in with arbitrary userId (mismatch / privilege escalation)', async () => {
+      const db = testEnv.authenticatedContext("raybaOperario", { companyId: "rayba", role: "operario", active: true }).firestore();
+      
+      // Creating check-in for a user who is not active/assigned/companion
+      const checkInRef = doc(db, "companies", "rayba", "checkIns", "ci_arbitrary");
+      await assertFails(setDoc(checkInRef, {
+        userId: "arbitraryUser",
+        scheduledServiceId: "service1",
+        checkInTime: new Date().toISOString()
+      }));
     });
   });
 
