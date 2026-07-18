@@ -17,7 +17,7 @@ import {
 } from "firebase/firestore";
 import { auth, db } from "../config/firebase";
 
-export async function createAdminUser(email, password, name) {
+export async function createAdminUser(companyId, email, password, name) {
   const cred = await createUserWithEmailAndPassword(auth, email, password);
   const profile = {
     uid: cred.user.uid,
@@ -26,21 +26,24 @@ export async function createAdminUser(email, password, name) {
     phone: "",
     role: "admin",
     active: true,
+    companyId: companyId,
     createdAt: serverTimestamp(),
   };
   await setDoc(doc(db, "users", cred.user.uid), profile);
   return profile;
 }
 
-export async function getOperarios() {
-  const snap = await getDocs(collection(db, "users"));
+export async function getOperarios(companyId) {
+  const q = query(collection(db, "users"), where("companyId", "==", companyId));
+  const snap = await getDocs(q);
   return snap.docs
     .map((d) => ({ uid: d.id, ...d.data() }))
     .filter((u) => u.role === "operario" || u.isOperario === true);
 }
 
-export async function getAllUsers() {
-  const snap = await getDocs(collection(db, "users"));
+export async function getAllUsers(companyId) {
+  const q = query(collection(db, "users"), where("companyId", "==", companyId));
+  const snap = await getDocs(q);
   return snap.docs.map((d) => ({ uid: d.id, ...d.data() }));
 }
 

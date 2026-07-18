@@ -12,12 +12,13 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { db } from "../config/firebase";
+import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
 
 const COLLECTION = "administrators";
 
-export async function getAdministrators() {
+export async function getAdministrators(companyId) {
   const q = query(
-    collection(db, COLLECTION),
+    tenantCollection(db, companyId, COLLECTION),
     where("active", "==", true),
     orderBy("name", "asc"),
   );
@@ -25,7 +26,7 @@ export async function getAdministrators() {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
-export async function createAdministrator(data) {
+export async function createAdministrator(companyId, data) {
   const docData = {
     name: data.name || "",
     email: data.email || "",
@@ -34,12 +35,12 @@ export async function createAdministrator(data) {
     active: true,
     createdAt: serverTimestamp(),
   };
-  const ref = await addDoc(collection(db, COLLECTION), docData);
+  const ref = await addDoc(tenantCollection(db, companyId, COLLECTION), docData);
   return { id: ref.id, ...docData };
 }
 
-export async function updateAdministrator(id, data) {
-  const ref = doc(db, COLLECTION, id);
+export async function updateAdministrator(companyId, id, data) {
+  const ref = tenantDoc(db, companyId, COLLECTION, id);
   await updateDoc(ref, {
     name: data.name,
     email: data.email,
@@ -49,8 +50,8 @@ export async function updateAdministrator(id, data) {
   });
 }
 
-export async function deleteAdministrator(id) {
-  const ref = doc(db, COLLECTION, id);
+export async function deleteAdministrator(companyId, id) {
+  const ref = tenantDoc(db, companyId, COLLECTION, id);
   // Soft delete: set active to false
   await updateDoc(ref, {
     active: false,

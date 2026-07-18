@@ -15,6 +15,7 @@ import {
   arrayUnion,
 } from "firebase/firestore";
 import { db } from "../config/firebase";
+import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
 import {
   startOfDay,
   endOfDay,
@@ -40,13 +41,13 @@ import {
 } from "date-fns";
 
 // ==================== SCHEDULED SERVICES ====================
-export async function createScheduledService(data) {
+export async function createScheduledService(companyId, data) {
   let scheduledDate = data.scheduledDate;
   if (!(scheduledDate instanceof Timestamp)) {
     scheduledDate = Timestamp.fromDate(new Date(scheduledDate));
   }
 
-  const ref = await addDoc(collection(db, "scheduledServices"), {
+  const ref = await addDoc(tenantCollection(db, companyId, "scheduledServices"), {
     communityId: data.communityId,
     communityTaskId: data.communityTaskId,
     taskName: data.taskName || "",
@@ -60,11 +61,11 @@ export async function createScheduledService(data) {
   return { id: ref.id, ...data };
 }
 
-export async function deleteFutureServicesForTask(taskId) {
+export async function deleteFutureServicesForTask(companyId, taskId) {
   try {
     const now = Timestamp.fromDate(startOfDay(new Date()));
     const q = query(
-      collection(db, "scheduledServices"),
+      tenantCollection(db, companyId, "scheduledServices"),
       where("communityTaskId", "==", taskId),
       where("scheduledDate", ">=", now),
       where("status", "==", "pending"),
@@ -99,10 +100,10 @@ export async function deleteFutureServicesForTask(taskId) {
  * Deletes ALL scheduledServices linked to a task, regardless of status or date.
  * Use this when permanently removing a task and its full calendar history.
  */
-export async function deleteAllServicesForTask(taskId) {
+export async function deleteAllServicesForTask(companyId, taskId) {
   try {
     const q = query(
-      collection(db, "scheduledServices"),
+      tenantCollection(db, companyId, "scheduledServices"),
       where("communityTaskId", "==", taskId),
     );
     const snap = await getDocs(q);
@@ -593,10 +594,10 @@ export async function deleteScheduledService(id) {
   await deleteDoc(doc(db, "scheduledServices", id));
 }
 
-export async function deleteScheduledServicesByCommunity(communityId) {
+export async function deleteScheduledServicesByCommunity(companyId, communityIdParam) {
   const q = query(
-    collection(db, "scheduledServices"),
-    where("communityId", "==", communityId),
+    tenantCollection(db, companyId, "scheduledServices"),
+    where("communityId", "==", communityIdParam),
     where("status", "==", "pending"),
   );
   const snap = await getDocs(q);
@@ -613,15 +614,16 @@ export async function deleteScheduledServicesByCommunity(communityId) {
 }
 
 export async function deleteFutureServicesForUserInCommunity(
+  companyId,
   userId,
-  communityId,
+  communityIdParam,
 ) {
   try {
     const now = Timestamp.fromDate(startOfDay(new Date()));
     const q = query(
-      collection(db, "scheduledServices"),
+      tenantCollection(db, companyId, "scheduledServices"),
       where("assignedUserId", "==", userId),
-      where("communityId", "==", communityId),
+      where("communityId", "==", communityIdParam),
       where("scheduledDate", ">=", now),
       where("status", "==", "pending"),
     );
@@ -730,13 +732,13 @@ export async function passTaskToNextService(
   }
 }
 
-export async function checkAndRolloverGarages() {
+export async function checkAndRolloverGarages(companyId) {
   try {
     const todayStart = startOfDay(new Date());
 
     // Fetch all pending services
     const q = query(
-      collection(db, "scheduledServices"),
+      tenantCollection(db, companyId, "scheduledServices"),
       where("status", "==", "pending"),
     );
 
@@ -785,7 +787,7 @@ export async function checkAndRolloverGarages() {
       const nextDateTimestamp = Timestamp.fromDate(nextDate);
 
       // Create new service for the rolled-over date
-      await addDoc(collection(db, "scheduledServices"), {
+      await addDoc(tenantCollection(db, companyId, "scheduledServices"), {
         communityId: svc.communityId,
         communityTaskId: svc.communityTaskId,
         taskName: svc.taskName || "",
@@ -801,7 +803,7 @@ export async function checkAndRolloverGarages() {
       });
 
       // Mark original service as missed so it doesn't stay pending in the past
-      await updateDoc(svc.ref, {
+      await updateDoc(tenantDoc(db, companyId, "scheduledServices", svc.id), {
         status: "missed",
         updatedAt: serverTimestamp(),
       });
@@ -895,9 +897,9 @@ export async function cleanupDuplicateScheduledServices() {
  * Generates services for a specific date range
  */
 
-export async function generateServicesForRange(startDate, endDate) {
+export async function generateServicesForRange(companyId, startDate, endDate) {
   try {
-    await checkAndRolloverGarages();
+    await checkAndRolloverGarages(companyId);
     const days = eachDayOfInterval({
       start: startOfDay(startDate),
       end: startOfDay(endDate),
@@ -908,7 +910,7 @@ export async function generateServicesForRange(startDate, endDate) {
 
     // Get all active communities
     const commsSnap = await getDocs(
-      query(collection(db, "communities"), where("active", "==", true)),
+      query(tenantCollection(db, companyId, "communities"), where("active", "==", true)),
     );
     const activeCommunityIds = new Set(commsSnap.docs.map((d) => d.id));
     console.log(
@@ -917,7 +919,7 @@ export async function generateServicesForRange(startDate, endDate) {
 
     // Get all active community tasks
     const tasksSnap = await getDocs(
-      query(collection(db, "communityTasks"), where("active", "==", true)),
+      query(tenantCollection(db, companyId, "communityTasks"), where("active", "==", true)),
     );
     const communityTasks = tasksSnap.docs
       .map((d) => ({ id: d.id, ...d.data() }))
@@ -926,7 +928,7 @@ export async function generateServicesForRange(startDate, endDate) {
 
     // Get all active assignments
     const assignSnap = await getDocs(
-      query(collection(db, "assignments"), where("active", "==", true)),
+      query(tenantCollection(db, companyId, "assignments"), where("active", "==", true)),
     );
     const assignments = assignSnap.docs
       .map((d) => ({ id: d.id, ...d.data() }))
@@ -940,7 +942,7 @@ export async function generateServicesForRange(startDate, endDate) {
     const end = Timestamp.fromDate(endOfDay(endDate));
     const existingSnap = await getDocs(
       query(
-        collection(db, "scheduledServices"),
+        tenantCollection(db, companyId, "scheduledServices"),
         where("scheduledDate", ">=", start),
         where("scheduledDate", "<=", end),
       ),
@@ -959,7 +961,7 @@ export async function generateServicesForRange(startDate, endDate) {
     // on their original date since the move was intentional.
     const rescheduledSnap = await getDocs(
       query(
-        collection(db, "scheduledServices"),
+        tenantCollection(db, companyId, "scheduledServices"),
         where("originalDate", ">=", start),
         where("originalDate", "<=", end),
       ),
@@ -1003,7 +1005,7 @@ export async function generateServicesForRange(startDate, endDate) {
           console.log(
             `[Schedule] Creando: ${task.taskName} (${dayStr}) -> ${target.userId}`,
           );
-          await createScheduledService({
+          await createScheduledService(companyId, {
             communityId: task.communityId,
             communityTaskId: task.id,
             taskName: task.taskName,
@@ -1030,12 +1032,13 @@ export async function generateServicesForRange(startDate, endDate) {
  * Genera servicios específicos para una nueva tarea (especialmente útil para tareas puntuales)
  */
 export async function generateServicesForTask(
+  companyId,
   taskId,
   startDate = new Date(),
   endDate = addDays(new Date(), 90),
 ) {
   try {
-    const taskDoc = await getDoc(doc(db, "communityTasks", taskId));
+    const taskDoc = await getDoc(tenantDoc(db, companyId, "communityTasks", taskId));
     if (!taskDoc.exists() || !taskDoc.data().active) return 0;
 
     const task = { id: taskDoc.id, ...taskDoc.data() };
@@ -1045,7 +1048,7 @@ export async function generateServicesForTask(
     } else {
       const assignSnap = await getDocs(
         query(
-          collection(db, "assignments"),
+          tenantCollection(db, companyId, "assignments"),
           where("communityId", "==", task.communityId),
           where("active", "==", true),
         ),
@@ -1061,7 +1064,7 @@ export async function generateServicesForTask(
 
     const existingSnap = await getDocs(
       query(
-        collection(db, "scheduledServices"),
+        tenantCollection(db, companyId, "scheduledServices"),
         where("communityTaskId", "==", taskId),
         where("scheduledDate", ">=", start),
         where("scheduledDate", "<=", end),
@@ -1085,7 +1088,7 @@ export async function generateServicesForTask(
     try {
       const rescheduledSnap = await getDocs(
         query(
-          collection(db, "scheduledServices"),
+          tenantCollection(db, companyId, "scheduledServices"),
           where("communityTaskId", "==", taskId),
         ),
       );
@@ -1125,7 +1128,7 @@ export async function generateServicesForTask(
         const key = `${task.id}_${target.userId}_${dayStr}`;
         if (existingKeys.has(key)) continue;
 
-        await createScheduledService({
+        await createScheduledService(companyId, {
           communityId: task.communityId,
           communityTaskId: task.id,
           taskName: task.taskName,

@@ -11,6 +11,7 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { db } from "../config/firebase";
+import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
 import {
   generateServicesForTask,
   generateServicesForRange,
@@ -42,8 +43,8 @@ export async function updateTaskTemplate(id, data) {
 }
 
 // ==================== COMMUNITY TASKS ====================
-export async function createCommunityTask(data) {
-  const ref = await addDoc(collection(db, "communityTasks"), {
+export async function createCommunityTask(companyId, data) {
+  const ref = await addDoc(tenantCollection(db, companyId, "communityTasks"), {
     communityId: data.communityId,
     taskTemplateId: data.taskTemplateId || "",
     taskName: data.taskName,
@@ -66,7 +67,7 @@ export async function createCommunityTask(data) {
 
   // Auto-generate services for this task for the current month
   try {
-    await generateServicesForTask(ref.id);
+    await generateServicesForTask(companyId, ref.id);
   } catch (err) {
     console.error("Error auto-generating services for new task:", err);
   }
@@ -74,64 +75,64 @@ export async function createCommunityTask(data) {
   return { id: ref.id, ...data };
 }
 
-export async function getCommunityTasks(communityId) {
+export async function getCommunityTasks(companyId, communityIdParam) {
   const q = query(
-    collection(db, "communityTasks"),
-    where("communityId", "==", communityId),
+    tenantCollection(db, companyId, "communityTasks"),
+    where("communityId", "==", communityIdParam),
     where("active", "==", true),
   );
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
-export async function getAllActiveTasks() {
+export async function getAllActiveTasks(companyId) {
   const q = query(
-    collection(db, "communityTasks"),
+    tenantCollection(db, companyId, "communityTasks"),
     where("active", "==", true),
   );
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
-export async function updateCommunityTask(id, data) {
-  await updateDoc(doc(db, "communityTasks", id), {
+export async function updateCommunityTask(companyId, id, data) {
+  await updateDoc(tenantDoc(db, companyId, "communityTasks", id), {
     ...data,
     updatedAt: serverTimestamp(),
   });
 
   // Clean up future pending services and regenerate them with new settings
   try {
-    await deleteFutureServicesForTask(id);
+    await deleteFutureServicesForTask(companyId, id);
 
     // Fetch the updated task to regenerate services
-    const updatedTaskSnap = await getDoc(doc(db, "communityTasks", id));
+    const updatedTaskSnap = await getDoc(tenantDoc(db, companyId, "communityTasks", id));
     if (updatedTaskSnap.exists() && updatedTaskSnap.data().active !== false) {
       const updatedTask = { id: updatedTaskSnap.id, ...updatedTaskSnap.data() };
       const start = startOfMonth(new Date());
       const end = endOfMonth(addDays(new Date(), 45)); // Generate for next month and a half
-      await generateServicesForTask(id, start, end);
+      await generateServicesForTask(companyId, id, start, end);
     }
   } catch (err) {
     console.error("Error updating services for modified task:", err);
   }
 }
 
-export async function deleteCommunityTask(id) {
-  await updateDoc(doc(db, "communityTasks", id), {
+export async function deleteCommunityTask(companyId, id) {
+  await updateDoc(tenantDoc(db, companyId, "communityTasks", id), {
     active: false,
     updatedAt: serverTimestamp(),
   });
   // Clean up future pending services to avoid duplicates or residues
   try {
-    await deleteFutureServicesForTask(id);
+    await deleteFutureServicesForTask(companyId, id);
   } catch (err) {
     console.error("Error cleaning up services for deleted task:", err);
   }
 }
 
 // ==================== ASSIGNMENTS ====================
-export async function createAssignment(data) {
-  const ref = await addDoc(collection(db, "assignments"), {
+export async function createAssignment(companyId, data) {
+  const ref = await addDoc(tenantCollection(db, companyId, "assignments"), {
     communityId: data.communityId,
     userId: data.userId,
     active: true,
@@ -142,7 +143,7 @@ export async function createAssignment(data) {
   try {
     const start = startOfMonth(new Date());
     const end = endOfMonth(new Date());
-    await generateServicesForRange(start, end);
+    await generateServicesForRange(companyId, start, end);
   } catch (err) {
     console.error("Error auto-generating services for new assignment:", err);
   }
@@ -150,19 +151,19 @@ export async function createAssignment(data) {
   return { id: ref.id, ...data };
 }
 
-export async function getAssignmentsForCommunity(communityId) {
+export async function getAssignmentsForCommunity(companyId, communityIdParam) {
   const q = query(
-    collection(db, "assignments"),
-    where("communityId", "==", communityId),
+    tenantCollection(db, companyId, "assignments"),
+    where("communityId", "==", communityIdParam),
     where("active", "==", true),
   );
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
-export async function getAssignmentsForUser(userId) {
+export async function getAssignmentsForUser(companyId, userId) {
   const q = query(
-    collection(db, "assignments"),
+    tenantCollection(db, companyId, "assignments"),
     where("userId", "==", userId),
     where("active", "==", true),
   );
@@ -170,19 +171,19 @@ export async function getAssignmentsForUser(userId) {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
-export async function deleteAssignment(id) {
+export async function deleteAssignment(companyId, id) {
   try {
-    const snap = await getDoc(doc(db, "assignments", id));
+    const snap = await getDoc(tenantDoc(db, companyId, "assignments", id));
     if (snap.exists()) {
       const { userId, communityId } = snap.data();
-      await updateDoc(doc(db, "assignments", id), {
+      await updateDoc(tenantDoc(db, companyId, "assignments", id), {
         active: false,
         updatedAt: serverTimestamp(),
       });
-      await deleteFutureServicesForUserInCommunity(userId, communityId);
+      await deleteFutureServicesForUserInCommunity(companyId, userId, communityId);
     }
   } catch (err) {
     console.error("Error deleting assignment and cleaning services:", err);
-    await updateDoc(doc(db, "assignments", id), { active: false });
+    await updateDoc(tenantDoc(db, companyId, "assignments", id), { active: false });
   }
 }

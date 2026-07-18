@@ -12,11 +12,13 @@ import {
   acceptSuggestion,
   rejectSuggestion,
 } from "../services/gpsSuggestionService";
+import { useTenant } from "../contexts/TenantContext";
 
 export default function useCommunitiesData({
   actionLoading,
   setActionLoading,
 }) {
+  const { companyId } = useTenant();
   // Core states matching the approved plan
   const [communities, setCommunities] = useState([]);
   const [operarios, setOperarios] = useState([]);
@@ -54,12 +56,13 @@ export default function useCommunitiesData({
   });
 
   const loadData = useCallback(async () => {
+    if (!companyId) return;
     setLoading(true);
     try {
       const [comms, ops, admins] = await Promise.all([
-        getCommunities(),
-        getOperarios(),
-        getAdministrators(),
+        getCommunities(companyId),
+        getOperarios(companyId),
+        getAdministrators(companyId),
       ]);
       setCommunities(comms || []);
       setOperarios(ops || []);
@@ -75,11 +78,13 @@ export default function useCommunitiesData({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [companyId]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    if (companyId) {
+      loadData();
+    }
+  }, [loadData, companyId]);
 
   const openCreateModal = () => {
     setEditingCommunity(null);
@@ -133,10 +138,10 @@ export default function useCommunitiesData({
   };
 
   const loadGPSSuggestions = async (communityId) => {
-    if (!communityId) return;
+    if (!communityId || !companyId) return;
     setLoadingSuggestions(true);
     try {
-      const suggestions = await getPendingSuggestionsForCommunity(communityId);
+      const suggestions = await getPendingSuggestionsForCommunity(companyId, communityId);
       setGpsSuggestions(suggestions);
     } catch (err) {
       console.error("Error loading GPS suggestions:", err);
@@ -151,12 +156,14 @@ export default function useCommunitiesData({
       lat: suggestion.lat.toFixed(7),
       lng: suggestion.lng.toFixed(7),
     }));
-    await acceptSuggestion(suggestion.id);
+    if (!companyId) return;
+    await acceptSuggestion(companyId, suggestion.id);
     setGpsSuggestions((prev) => prev.filter((s) => s.id !== suggestion.id));
   };
 
   const handleRejectSuggestion = async (suggestionId) => {
-    await rejectSuggestion(suggestionId);
+    if (!companyId) return;
+    await rejectSuggestion(companyId, suggestionId);
     setGpsSuggestions((prev) => prev.filter((s) => s.id !== suggestionId));
   };
 
@@ -264,9 +271,9 @@ export default function useCommunitiesData({
       };
 
       if (editingCommunity) {
-        await updateCommunity(editingCommunity.id, communityData);
+        await updateCommunity(companyId, editingCommunity.id, communityData);
       } else {
-        await createCommunity(communityData);
+        await createCommunity(companyId, communityData);
       }
       setShowModal(false);
       await loadData();
@@ -279,10 +286,10 @@ export default function useCommunitiesData({
 
   const handleDeleteCommunity = async (id) => {
     if (!confirm("¿Desactivar esta comunidad?")) return;
-    if (actionLoading) return;
+    if (actionLoading || !companyId) return;
     setActionLoading(true);
     try {
-      await deleteCommunity(id);
+      await deleteCommunity(companyId, id);
       setSelectedCommunity(null);
       await loadData();
     } catch (err) {

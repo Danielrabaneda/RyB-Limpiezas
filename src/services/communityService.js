@@ -14,11 +14,12 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { db } from "../config/firebase";
+import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
 import { deleteScheduledServicesByCommunity } from "./scheduleService";
 
 const COLLECTION = "communities";
 
-export async function createCommunity(data) {
+export async function createCommunity(companyId, data) {
   const docData = {
     name: data.name,
     address: data.address,
@@ -40,37 +41,37 @@ export async function createCommunity(data) {
     active: true,
     createdAt: serverTimestamp(),
   };
-  const ref = await addDoc(collection(db, COLLECTION), docData);
+  const ref = await addDoc(tenantCollection(db, companyId, COLLECTION), docData);
   return { id: ref.id, ...docData };
 }
 
-export async function updateCommunity(id, data) {
+export async function updateCommunity(companyId, id, data) {
   const updateData = { ...data, updatedAt: serverTimestamp() };
   if (data.lat !== undefined && data.lng !== undefined) {
     updateData.location = new GeoPoint(data.lat, data.lng);
     delete updateData.lat;
     delete updateData.lng;
   }
-  await updateDoc(doc(db, COLLECTION, id), updateData);
+  await updateDoc(tenantDoc(db, companyId, COLLECTION, id), updateData);
 }
 
-export async function deleteCommunity(id) {
+export async function deleteCommunity(companyId, id) {
   // 1. Inactivar la comunidad
-  await updateDoc(doc(db, COLLECTION, id), { active: false });
+  await updateDoc(tenantDoc(db, companyId, COLLECTION, id), { active: false });
 
   // 2. Eliminar servicios programados pendientes
-  await deleteScheduledServicesByCommunity(id);
+  await deleteScheduledServicesByCommunity(companyId, id);
 
   // 3. Inactivar tareas de esta comunidad (para que el generador no las use)
   const tasksQ = query(
-    collection(db, "communityTasks"),
+    tenantCollection(db, companyId, "communityTasks"),
     where("communityId", "==", id),
   );
   const tasksSnap = await getDocs(tasksQ);
 
   // 4. Inactivar asignaciones de esta comunidad
   const assignQ = query(
-    collection(db, "assignments"),
+    tenantCollection(db, companyId, "assignments"),
     where("communityId", "==", id),
   );
   const assignSnap = await getDocs(assignQ);
@@ -86,9 +87,9 @@ export async function deleteCommunity(id) {
   }
 }
 
-export async function getCommunities() {
+export async function getCommunities(companyId) {
   const q = query(
-    collection(db, COLLECTION),
+    tenantCollection(db, companyId, COLLECTION),
     where("active", "==", true),
     orderBy("name"),
   );
@@ -96,14 +97,14 @@ export async function getCommunities() {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
-export async function getCommunity(id) {
-  const snap = await getDoc(doc(db, COLLECTION, id));
+export async function getCommunity(companyId, id) {
+  const snap = await getDoc(tenantDoc(db, companyId, COLLECTION, id));
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
-export async function getCommunitiesForOperario(userId) {
+export async function getCommunitiesForOperario(companyId, userId) {
   const assignQ = query(
-    collection(db, "assignments"),
+    tenantCollection(db, companyId, "assignments"),
     where("userId", "==", userId),
     where("active", "==", true),
   );
@@ -114,7 +115,7 @@ export async function getCommunitiesForOperario(userId) {
 
   const communities = [];
   for (const cId of communityIds) {
-    const comm = await getCommunity(cId);
+    const comm = await getCommunity(companyId, cId);
     if (comm && comm.active) communities.push(comm);
   }
   return communities;

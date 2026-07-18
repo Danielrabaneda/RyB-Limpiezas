@@ -18,9 +18,18 @@ import AdministratorTab from "../../components/admin/communities/AdministratorTa
 import CommunityListPanel from "../../components/admin/communities/CommunityListPanel";
 import CommunityDetailPanel from "../../components/admin/communities/CommunityDetailPanel";
 import CommunityFormModal from "../../components/admin/communities/CommunityFormModal";
+import { RequireTenant } from "../../contexts/TenantContext";
 import TaskFormModal from "../../components/admin/communities/TaskFormModal";
 
 export default function CommunitiesPage() {
+  return (
+    <RequireTenant>
+      <CommunitiesContent />
+    </RequireTenant>
+  );
+}
+
+function CommunitiesContent() {
   const { userProfile } = useAuth();
   const [actionLoading, setActionLoading] = useState(false);
 

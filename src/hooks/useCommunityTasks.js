@@ -14,6 +14,7 @@ import {
   deleteAllServicesForTask,
 } from "../services/scheduleService";
 import { transferPermanent } from "../services/transferService";
+import { useTenant } from "../contexts/TenantContext";
 
 export default function useCommunityTasks({
   selectedCommunity,
@@ -22,6 +23,7 @@ export default function useCommunityTasks({
   setActionLoading,
   userProfile,
 }) {
+  const { companyId } = useTenant();
   const [communityTasks, setCommunityTasks] = useState([]);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [editingTask, setEditingTask] = useState(null); // null = create mode, task = edit mode
@@ -163,16 +165,16 @@ export default function useCommunityTasks({
     try {
       if (editingTask) {
         // UPDATE existing task — regenerates future services automatically inside updateCommunityTask
-        await updateCommunityTask(editingTask.id, taskData);
+        await updateCommunityTask(companyId, editingTask.id, taskData);
       } else {
         // CREATE new task + generate services
-        const newTask = await createCommunityTask(taskData);
-        if (newTask?.id) await generateServicesForTask(newTask.id);
+        const newTask = await createCommunityTask(companyId, taskData);
+        if (newTask?.id) await generateServicesForTask(companyId, newTask.id);
       }
 
       setShowTaskModal(false);
       setEditingTask(null);
-      const tasks = await getCommunityTasks(selectedCommunity.id);
+      const tasks = await getCommunityTasks(companyId, selectedCommunity.id);
       setCommunityTasks(tasks);
     } catch (err) {
       alert("Error: " + err.message);
@@ -208,10 +210,10 @@ export default function useCommunityTasks({
     setActionLoading(true);
     try {
       if (deleteAll) {
-        await deleteAllServicesForTask(task.id);
+        await deleteAllServicesForTask(companyId, task.id);
       }
-      await deleteCommunityTask(task.id);
-      const tasks = await getCommunityTasks(selectedCommunity.id);
+      await deleteCommunityTask(companyId, task.id);
+      const tasks = await getCommunityTasks(companyId, selectedCommunity.id);
       setCommunityTasks(tasks);
     } catch (err) {
       alert("Error al eliminar: " + err.message);
@@ -236,7 +238,7 @@ export default function useCommunityTasks({
         "Tarea reasignada permanentemente. Se han regenerado los servicios futuros.",
       );
       setReassignModal({ open: false, task: null });
-      const tasks = await getCommunityTasks(selectedCommunity.id);
+      const tasks = await getCommunityTasks(companyId, selectedCommunity.id);
       setCommunityTasks(tasks);
     } catch (err) {
       alert("Error en reasignación: " + err.message);
@@ -251,19 +253,19 @@ export default function useCommunityTasks({
     if (actionLoading) return;
     setActionLoading(true);
     try {
-      await createAssignment({
+      await createAssignment(companyId, {
         communityId: selectedCommunity.id,
         userId: assignUserId,
       });
 
       // Generar servicios para todas las tareas de esta comunidad para el nuevo operario
       for (const t of communityTasks) {
-        await generateServicesForTask(t.id);
+        await generateServicesForTask(companyId, t.id);
       }
 
       setShowAssignModal(false);
       setAssignUserId("");
-      const assigns = await getAssignmentsForCommunity(selectedCommunity.id);
+      const assigns = await getAssignmentsForCommunity(companyId, selectedCommunity.id);
       setAssignments(assigns);
     } catch (err) {
       alert("Error: " + err.message);
@@ -277,8 +279,8 @@ export default function useCommunityTasks({
     if (actionLoading) return;
     setActionLoading(true);
     try {
-      await deleteAssignment(id);
-      const assigns = await getAssignmentsForCommunity(selectedCommunity.id);
+      await deleteAssignment(companyId, id);
+      const assigns = await getAssignmentsForCommunity(companyId, selectedCommunity.id);
       setAssignments(assigns);
     } catch (err) {
       alert("Error: " + err.message);
