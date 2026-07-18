@@ -10,35 +10,37 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // Check if the document belongs to the requesting user
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    // Role check: Admin (Claims)
     function isAdmin() {
       return isAuthenticated() && request.auth.token.role == 'admin';
     }
 
-    // Role check: Employee (Claims)
     function isEmployee() {
       return isAuthenticated() && 
         (request.auth.token.role == 'admin' || request.auth.token.role == 'operario');
     }
 
-    // Check if the user is active (Claims)
     function isActiveUser() {
       return isAuthenticated() && request.auth.token.active == true;
     }
 
-    // Helper to check if the user is an active employee (Claims)
     function isEmployeeActive() {
       return isEmployee() && isActiveUser();
     }
 
-    // Helper to check if the user is an active admin (Claims)
     function isAdminActive() {
       return isAdmin() && isActiveUser();
+    }
+
+    function hasTenant() {
+      return isAuthenticated() && request.auth.token.companyId != null;
+    }
+
+    function isTenant(companyId) {
+      return hasTenant() && request.auth.token.companyId == companyId;
     }
 
     // =========================================================================
@@ -51,227 +53,16 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------------------
-    // GEO DETECTIONS & FCM TOKENS
+    // ACCESS CODES (Index global para registro)
     // -------------------------------------------------------------------------
-    match /geoDetections/{detectionId} {
-      allow read: if isAdminActive() || (isEmployeeActive() && resource.data.userId == request.auth.uid);
-      allow create, update: if isEmployeeActive() && request.resource.data.userId == request.auth.uid;
-      allow delete: if isAdminActive();
-    }
-
-    match /fcmTokens/{tokenId} {
-      allow read: if isAdminActive() || (isEmployeeActive() && resource.data.userId == request.auth.uid);
-      allow create, update: if isEmployeeActive() && request.resource.data.userId == request.auth.uid;
-      allow delete: if isAdminActive() || (isEmployeeActive() && resource.data.userId == request.auth.uid);
-    }
-
-    match /users/{userId} {
-      // Admins can do anything
-      // Operarios need to read the list of other operarios to select companions
-      allow read: if isEmployeeActive(); 
-      // Permitir la creación de perfiles si el usuario se registra a sí mismo como operario o si es un admin activo
-      allow create: if isAdminActive() || (isAuthenticated() && isOwner(userId) && request.resource.data.role == 'operario');
-      allow delete: if isAdminActive();
-      // Users can update their own profile (e.g. push tokens, active status), 
-      // but preventing role escalation would require checking request.resource.data.role
-      allow update: if isAdminActive() || (isEmployeeActive() && isOwner(userId) && request.resource.data.role == resource.data.role);
-    }
-
-    // -------------------------------------------------------------------------
-    // ACCESS CODES (Invitaciones para registro)
-    // -------------------------------------------------------------------------
-    match /accessCodes/{code} {
-      // Permitir a cualquiera comprobar si un código específico es válido (get)
-      // pero no listar todos los códigos (list) ni modificarlos (write)
+    match /accessCodeIndex/{code} {
+      // Público solo la lectura puntual (get). No se permite listar.
       allow get: if true;
-      allow list, write: if isAdminActive();
+      allow list, write: if false;
     }
 
     // -------------------------------------------------------------------------
-    // COMMUNITIES & TASKS (Global Config)
-    // -------------------------------------------------------------------------
-    match /communities/{communityId} {
-      allow read: if isEmployeeActive();
-      allow write: if isAdminActive();
-    }
-
-    match /taskTemplates/{templateId} {
-      allow read: if isEmployeeActive();
-      allow write: if isAdminActive();
-    }
-
-    match /communityTasks/{taskId} {
-      allow read: if isEmployeeActive();
-      allow write: if isAdminActive();
-    }
-
-    match /assignments/{assignmentId} {
-      allow read: if isEmployeeActive();
-      allow write: if isAdminActive();
-    }
-
-    // -------------------------------------------------------------------------
-    // SCHEDULED SERVICES
-    // -------------------------------------------------------------------------
-    match /scheduledServices/{serviceId} {
-      // Only authenticated users can read schedules
-      allow read, update: if isEmployeeActive();
-      allow create, delete: if isAdminActive();
-    }
-
-    // -------------------------------------------------------------------------
-    // GPS SUGGESTIONS (Colección de prueba - Custom Claims)
-    // -------------------------------------------------------------------------
-    match /gpsSuggestions/{suggestionId} {
-      allow read: if isAdminActive() || (isEmployeeActive() && (resource.data.operarioUid == request.auth.uid || resource.data.userId == request.auth.uid));
-      allow create: if isEmployeeActive();
-      allow update, delete: if isAdminActive();
-    }
-
-    // -------------------------------------------------------------------------
-    // USER SPECIFIC DATA (Workdays, Check-ins, Mileage, etc.)
-    // -------------------------------------------------------------------------
-    
-    match /workdays/{workdayId} {
-      allow read: if isAdminActive() || (isEmployeeActive() && (isOwner(resource.data.userId) || resource.data.currentCompanionId == request.auth.uid));
-      allow create: if isEmployeeActive() && isOwner(request.resource.data.userId);
-      allow update: if isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId));
-      allow delete: if isAdminActive();
-    }
-
-    match /checkIns/{checkInId} {
-      allow read: if isAdminActive() || (isEmployeeActive() && (
-        isOwner(resource.data.userId) ||
-        (
-          'scheduledServiceId' in resource.data && 
-          resource.data.scheduledServiceId != null && 
-          resource.data.scheduledServiceId != '' && 
-          (
-            get(/databases/$(database)/documents/scheduledServices/$(resource.data.scheduledServiceId)).data.assignedUserId == request.auth.uid ||
-            (
-              'companionIds' in get(/databases/$(database)/documents/scheduledServices/$(resource.data.scheduledServiceId)).data &&
-              request.auth.uid in get(/databases/$(database)/documents/scheduledServices/$(resource.data.scheduledServiceId)).data.companionIds
-            )
-          )
-        )
-      ));
-      allow write: if isAdminActive();
-    }
-
-    match /dailyMileage/{mileageId} {
-      allow read: if isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId));
-      allow create: if isEmployeeActive() && isOwner(request.resource.data.userId);
-      allow update: if isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId));
-      allow delete: if isAdminActive();
-    }
-
-    match /materialRequests/{requestId} {
-      allow read: if isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId));
-      allow create: if isEmployeeActive() && isOwner(request.resource.data.userId);
-      allow update: if isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId));
-      allow delete: if isAdminActive();
-    }
-
-    match /reports/{reportId} {
-      allow read, write: if isAdminActive();
-    }
-
-    match /transfers/{transferId} {
-      allow read: if isAdminActive() || 
-                  (isEmployeeActive() && (
-                    resource.data.fromUserId == request.auth.uid || 
-                    resource.data.toUserId == request.auth.uid || 
-                    resource.data.userId == request.auth.uid
-                  ));
-      
-      allow create: if isAdminActive() || (isEmployeeActive() && 
-                    (
-                      request.resource.data.fromUserId == request.auth.uid || 
-                      request.resource.data.toUserId == request.auth.uid || 
-                      request.resource.data.userId == request.auth.uid
-                    ));
-      
-      allow update: if isAdminActive() || 
-                  (isEmployeeActive() && (
-                    resource.data.fromUserId == request.auth.uid || 
-                    resource.data.toUserId == request.auth.uid || 
-                    resource.data.userId == request.auth.uid
-                  ));
-      
-      allow delete: if isAdminActive();
-    }
-
-    match /systemNotifications/{notificationId} {
-      allow read: if isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId));
-      allow create: if isAdminActive() || (isEmployeeActive() && isOwner(request.resource.data.userId));
-      allow update: if isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId));
-      allow delete: if isAdminActive();
-    }
-
-    match /taskExecutions/{executionId} {
-      allow read, write: if isEmployeeActive();
-    }
-
-    match /settings/{settingId} {
-      allow read: if settingId == 'global' ? isEmployeeActive() : isAdminActive();
-      allow write: if isAdminActive();
-    }
-
-    // VERIFACTU: Inmutabilidad — solo se pueden editar/eliminar borradores.
-    // Se permite cambiar solo el campo 'status' (ej. marcar como pagada) en facturas emitidas.
-    match /invoices/{invoiceId} {
-      allow read, create: if isAdminActive();
-      allow update: if isAdminActive() && (
-        resource.data.status == 'draft' ||
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
-      );
-      allow delete: if isAdminActive() && resource.data.status == 'draft';
-    }
-
-    match /products/{productId} {
-      allow read: if isEmployeeActive();
-      allow write: if isAdminActive();
-    }
-
-    match /stockMovements/{movementId} {
-      allow read, write: if isAdminActive();
-    }
-
-    match /absences/{absenceId} {
-      allow read: if isEmployeeActive();
-      allow create: if isEmployeeActive() && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if isAdminActive();
-    }
-
-    match /invoice_templates/{templateId} {
-      allow read, write: if isAdminActive();
-    }
-
-    match /documentVault/{documentId} {
-      allow read: if isEmployeeActive();
-      allow write: if isAdminActive();
-    }
-
-    match /evidenceReports/{reportId} {
-      allow read: if isAdminActive() || (isEmployeeActive() && resource.data.userId == request.auth.uid);
-      allow create: if isEmployeeActive();
-      allow update, delete: if isAdminActive();
-    }
-
-    match /publicPortals/{token} {
-      allow get: if true;
-      allow write, list: if isAdminActive();
-    }
-
-    // -------------------------------------------------------------------------
-    // ADMINISTRADORES DE FINCAS
-    // -------------------------------------------------------------------------
-    match /administrators/{adminId} {
-      allow read, write: if isAdminActive();
-    }
-
-    // -------------------------------------------------------------------------
-    // COMPANY REQUESTS (Leads de la Landing Page — escritura pública)
+    // COMPANY REQUESTS (Landing Page leads)
     // -------------------------------------------------------------------------
     match /companyRequests/{requestId} {
       allow create: if request.resource.data.keys().hasAll(['companyName', 'contactName', 'email', 'phone']) 
@@ -280,12 +71,239 @@ service cloud.firestore {
                     && request.resource.data.contactName is string && request.resource.data.contactName.size() < 200
                     && request.resource.data.email is string && request.resource.data.email.size() < 200
                     && request.resource.data.phone is string && request.resource.data.phone.size() < 50;
-      allow read, update, delete: if isAdminActive();
+      allow read, update, delete: if false; 
     }
 
     // -------------------------------------------------------------------------
-    // OTHER / FUTURE COLLECTIONS
+    // USERS (Excepción de Raíz)
     // -------------------------------------------------------------------------
-    // Add explicitly any other collections you use to avoid access denied
+    match /users/{userId} {
+      // get de otro usuario permitido si están en el mismo tenant
+      allow get, list: if isEmployeeActive() && isTenant(resource.data.companyId);
+      
+      // La creación y borrado la hace exclusivamente el Backend.
+      allow create, delete: if false;
+      
+      // Updates desde el cliente (solo el propio usuario):
+      allow update: if isEmployeeActive() && isOwner(userId)
+                    // No se pueden modificar propiedades core
+                    && request.resource.data.role == resource.data.role
+                    && request.resource.data.active == resource.data.active
+                    && request.resource.data.companyId == resource.data.companyId;
+    }
+
+    // -------------------------------------------------------------------------
+    // TENANT ISOLATION (/companies/{companyId}/...)
+    // -------------------------------------------------------------------------
+    match /companies/{companyId} {
+      
+      // La regla global a nivel de documento company no permite operaciones en crudo a menos que sea un empleado
+      allow read: if isTenant(companyId) && isEmployeeActive();
+      allow write: if isTenant(companyId) && isAdminActive();
+
+      // geoDetections
+      match /geoDetections/{detectionId} {
+        allow read: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && resource.data.userId == request.auth.uid));
+        allow create: if isTenant(companyId) && isEmployeeActive() && request.resource.data.userId == request.auth.uid;
+        allow update: if isTenant(companyId) && isEmployeeActive() && request.resource.data.userId == request.auth.uid;
+        allow delete: if isTenant(companyId) && isAdminActive();
+      }
+
+      // fcmTokens
+      match /fcmTokens/{tokenId} {
+        allow read: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && resource.data.userId == request.auth.uid));
+        allow create, update: if isTenant(companyId) && isEmployeeActive() && request.resource.data.userId == request.auth.uid;
+        allow delete: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && resource.data.userId == request.auth.uid));
+      }
+
+      // accessCodes (Los códigos reales)
+      match /accessCodes/{code} {
+        allow read: if isTenant(companyId) && isEmployeeActive();
+        allow write: if isTenant(companyId) && isAdminActive();
+      }
+
+      // communities
+      match /communities/{id} {
+        allow read: if isTenant(companyId) && isEmployeeActive();
+        allow write: if isTenant(companyId) && isAdminActive();
+      }
+
+      // taskTemplates
+      match /taskTemplates/{id} {
+        allow read: if isTenant(companyId) && isEmployeeActive();
+        allow write: if isTenant(companyId) && isAdminActive();
+      }
+
+      // communityTasks
+      match /communityTasks/{id} {
+        allow read: if isTenant(companyId) && isEmployeeActive();
+        allow write: if isTenant(companyId) && isAdminActive();
+      }
+
+      // assignments
+      match /assignments/{id} {
+        allow read: if isTenant(companyId) && isEmployeeActive();
+        allow write: if isTenant(companyId) && isAdminActive();
+      }
+
+      // scheduledServices
+      match /scheduledServices/{id} {
+        allow read, update: if isTenant(companyId) && isEmployeeActive();
+        allow create, delete: if isTenant(companyId) && isAdminActive();
+      }
+
+      // gpsSuggestions
+      match /gpsSuggestions/{id} {
+        allow read: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && (resource.data.operarioUid == request.auth.uid || resource.data.userId == request.auth.uid)));
+        allow create: if isTenant(companyId) && isEmployeeActive();
+        allow update, delete: if isTenant(companyId) && isAdminActive();
+      }
+
+      // workdays
+      match /workdays/{id} {
+        allow read: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && (isOwner(resource.data.userId) || resource.data.currentCompanionId == request.auth.uid)));
+        allow create: if isTenant(companyId) && isEmployeeActive() && isOwner(request.resource.data.userId);
+        allow update: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId)));
+        allow delete: if isTenant(companyId) && isAdminActive();
+      }
+
+      // checkIns
+      match /checkIns/{id} {
+        allow read: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && (
+          isOwner(resource.data.userId) ||
+          (
+            'scheduledServiceId' in resource.data && 
+            resource.data.scheduledServiceId != null && 
+            resource.data.scheduledServiceId != '' && 
+            (
+              get(/databases/$(database)/documents/companies/$(companyId)/scheduledServices/$(resource.data.scheduledServiceId)).data.assignedUserId == request.auth.uid ||
+              (
+                'companionIds' in get(/databases/$(database)/documents/companies/$(companyId)/scheduledServices/$(resource.data.scheduledServiceId)).data &&
+                request.auth.uid in get(/databases/$(database)/documents/companies/$(companyId)/scheduledServices/$(resource.data.scheduledServiceId)).data.companionIds
+              )
+            )
+          )
+        )));
+        allow write: if isTenant(companyId) && isAdminActive();
+      }
+
+      // dailyMileage
+      match /dailyMileage/{id} {
+        allow read: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId)));
+        allow create: if isTenant(companyId) && isEmployeeActive() && isOwner(request.resource.data.userId);
+        allow update: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId)));
+        allow delete: if isTenant(companyId) && isAdminActive();
+      }
+
+      // materialRequests
+      match /materialRequests/{id} {
+        allow read: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId)));
+        allow create: if isTenant(companyId) && isEmployeeActive() && isOwner(request.resource.data.userId);
+        allow update: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId)));
+        allow delete: if isTenant(companyId) && isAdminActive();
+      }
+
+      // transfers
+      match /transfers/{id} {
+        allow read: if isTenant(companyId) && (isAdminActive() || 
+                    (isEmployeeActive() && (
+                      resource.data.fromUserId == request.auth.uid || 
+                      resource.data.toUserId == request.auth.uid || 
+                      resource.data.userId == request.auth.uid
+                    )));
+        
+        allow create: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && 
+                      (
+                        request.resource.data.fromUserId == request.auth.uid || 
+                        request.resource.data.toUserId == request.auth.uid || 
+                        request.resource.data.userId == request.auth.uid
+                      )));
+        
+        allow update: if isTenant(companyId) && (isAdminActive() || 
+                    (isEmployeeActive() && (
+                      resource.data.fromUserId == request.auth.uid || 
+                      resource.data.toUserId == request.auth.uid || 
+                      resource.data.userId == request.auth.uid
+                    )));
+        
+        allow delete: if isTenant(companyId) && isAdminActive();
+      }
+
+      // systemNotifications
+      match /systemNotifications/{id} {
+        allow read: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId)));
+        allow create: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && isOwner(request.resource.data.userId)));
+        allow update: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId)));
+        allow delete: if isTenant(companyId) && isAdminActive();
+      }
+
+      // taskExecutions
+      match /taskExecutions/{id} {
+        allow read, write: if isTenant(companyId) && isEmployeeActive();
+      }
+
+      // settings
+      match /settings/{id} {
+        allow read: if isTenant(companyId) && (id == 'global' ? isEmployeeActive() : isAdminActive());
+        allow write: if isTenant(companyId) && isAdminActive();
+      }
+
+      // invoices (VERIFACTU logic)
+      match /invoices/{id} {
+        allow read, create: if isTenant(companyId) && isAdminActive();
+        allow update: if isTenant(companyId) && isAdminActive() && (
+          resource.data.status == 'draft' ||
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+        );
+        allow delete: if isTenant(companyId) && isAdminActive() && resource.data.status == 'draft';
+      }
+
+      // products
+      match /products/{id} {
+        allow read: if isTenant(companyId) && isEmployeeActive();
+        allow write: if isTenant(companyId) && isAdminActive();
+      }
+
+      // stockMovements
+      match /stockMovements/{id} {
+        allow read, write: if isTenant(companyId) && isAdminActive();
+      }
+
+      // absences
+      match /absences/{id} {
+        allow read: if isTenant(companyId) && isEmployeeActive();
+        allow create: if isTenant(companyId) && isEmployeeActive() && request.resource.data.userId == request.auth.uid;
+        allow update, delete: if isTenant(companyId) && isAdminActive();
+      }
+
+      // invoice_templates
+      match /invoice_templates/{id} {
+        allow read, write: if isTenant(companyId) && isAdminActive();
+      }
+
+      // documentVault
+      match /documentVault/{id} {
+        allow read: if isTenant(companyId) && isEmployeeActive();
+        allow write: if isTenant(companyId) && isAdminActive();
+      }
+
+      // evidenceReports
+      match /evidenceReports/{id} {
+        allow read: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && resource.data.userId == request.auth.uid));
+        allow create: if isTenant(companyId) && isEmployeeActive();
+        allow update, delete: if isTenant(companyId) && isAdminActive();
+      }
+
+      // publicPortals
+      match /publicPortals/{id} {
+        allow get: if true;
+        allow write, list: if isTenant(companyId) && isAdminActive();
+      }
+
+      // administrators
+      match /administrators/{id} {
+        allow read, write: if isTenant(companyId) && isAdminActive();
+      }
+    }
   }
 }

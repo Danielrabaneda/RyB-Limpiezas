@@ -16,6 +16,7 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { auth, db } from "../config/firebase";
+import { tenantCollection } from "../utils/tenantFirestore";
 
 export async function createAdminUser(companyId, email, password, name) {
   const cred = await createUserWithEmailAndPassword(auth, email, password);
@@ -63,28 +64,28 @@ export async function resetPassword(email) {
 }
 
 /**
- * Elimina un operario de forma selectiva.
- * Usa chunking de batch para soportar >500 documentos (límite de Firestore).
- * @param {string} uid - ID del usuario.
- * @param {Object} options - Opciones de borrado.
+ * Elimina o desactiva un operario y limpia sus referencias
+ * @param {string} companyId - ID de la empresa a la que pertenece el operario
+ * @param {string} uid - ID del usuario
+ * @param {object} options
  * @param {boolean} options.deleteHistory - Si true, borra fichajes y jornadas pasadas.
  * @param {boolean} options.deleteMaterials - Si true, borra sus solicitudes de materiales.
  * @param {boolean} options.deleteReports - Si true, borra sus informes enviados.
  */
-export async function deleteOperario(uid, options = {}) {
+export async function deleteOperario(companyId, uid, options = {}) {
   const BATCH_LIMIT = 500;
   const refsToDelete = [];
 
   // 1. SIEMPRE: Eliminar asignaciones
   const assignSnap = await getDocs(
-    query(collection(db, "assignments"), where("userId", "==", uid)),
+    query(tenantCollection(db, companyId, "assignments"), where("userId", "==", uid)),
   );
   assignSnap.docs.forEach((d) => refsToDelete.push(d.ref));
 
   // 2. SIEMPRE: Eliminar servicios programados PENDIENTES
   const svcSnap = await getDocs(
     query(
-      collection(db, "scheduledServices"),
+      tenantCollection(db, companyId, "scheduledServices"),
       where("assignedUserId", "==", uid),
       where("status", "==", "pending"),
     ),
@@ -93,20 +94,20 @@ export async function deleteOperario(uid, options = {}) {
 
   // 3. SIEMPRE: Eliminar notificaciones y traspasos pendientes
   const notifSnap = await getDocs(
-    query(collection(db, "systemNotifications"), where("userId", "==", uid)),
+    query(tenantCollection(db, companyId, "systemNotifications"), where("userId", "==", uid)),
   );
   notifSnap.docs.forEach((d) => refsToDelete.push(d.ref));
 
   const transFromSnap = await getDocs(
     query(
-      collection(db, "transfers"),
+      tenantCollection(db, companyId, "transfers"),
       where("fromUserId", "==", uid),
       where("status", "==", "pending"),
     ),
   );
   const transToSnap = await getDocs(
     query(
-      collection(db, "transfers"),
+      tenantCollection(db, companyId, "transfers"),
       where("toUserId", "==", uid),
       where("status", "==", "pending"),
     ),
@@ -117,10 +118,10 @@ export async function deleteOperario(uid, options = {}) {
   // 4. OPCIONAL: Borrar historial de fichajes y jornadas
   if (options.deleteHistory) {
     const [cSnap, wSnap, mSnap] = await Promise.all([
-      getDocs(query(collection(db, "checkIns"), where("userId", "==", uid))),
-      getDocs(query(collection(db, "workdays"), where("userId", "==", uid))),
+      getDocs(query(tenantCollection(db, companyId, "checkIns"), where("userId", "==", uid))),
+      getDocs(query(tenantCollection(db, companyId, "workdays"), where("userId", "==", uid))),
       getDocs(
-        query(collection(db, "dailyMileage"), where("userId", "==", uid)),
+        query(tenantCollection(db, companyId, "dailyMileage"), where("userId", "==", uid)),
       ),
     ]);
     cSnap.docs.forEach((d) => refsToDelete.push(d.ref));
@@ -131,7 +132,7 @@ export async function deleteOperario(uid, options = {}) {
   // 5. OPCIONAL: Borrar solicitudes de materiales
   if (options.deleteMaterials) {
     const matSnap = await getDocs(
-      query(collection(db, "materialRequests"), where("userId", "==", uid)),
+      query(tenantCollection(db, companyId, "materialRequests"), where("userId", "==", uid)),
     );
     matSnap.docs.forEach((d) => refsToDelete.push(d.ref));
   }
@@ -139,7 +140,7 @@ export async function deleteOperario(uid, options = {}) {
   // 6. OPCIONAL: Borrar informes
   if (options.deleteReports) {
     const repSnap = await getDocs(
-      query(collection(db, "evidenceReports"), where("userId", "==", uid)),
+      query(tenantCollection(db, companyId, "evidenceReports"), where("userId", "==", uid)),
     );
     repSnap.docs.forEach((d) => refsToDelete.push(d.ref));
   }

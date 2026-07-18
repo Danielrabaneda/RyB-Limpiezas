@@ -4,26 +4,29 @@ import {
   addDoc,
   updateDoc,
   getDocs,
+  getDoc,
   deleteDoc,
   query,
   where,
   orderBy,
+  limit,
   serverTimestamp,
   runTransaction,
 } from "firebase/firestore";
 import { db } from "../config/firebase";
 import { getAllUsers } from "./authService";
 import { createSystemNotification } from "./notificationService";
+import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
 
 // ==================== PRODUCT CATALOG ====================
-export async function getProducts() {
-  const q = query(collection(db, "products"), orderBy("name", "asc"));
+export async function getProducts(companyId) {
+  const q = query(tenantCollection(db, companyId, "products"), orderBy("name", "asc"));
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
-export async function createProduct(data) {
-  const ref = await addDoc(collection(db, "products"), {
+export async function createProduct(companyId, data) {
+  const ref = await addDoc(tenantCollection(db, companyId, "products"), {
     name: data.name,
     unit: data.unit || "uds", // uds, litros, paquetes...
     category: data.category || "general",
@@ -39,8 +42,8 @@ export async function createProduct(data) {
   };
 }
 
-export async function updateProduct(id, data) {
-  const ref = doc(db, "products", id);
+export async function updateProduct(companyId, id, data) {
+  const ref = tenantDoc(db, companyId, "products", id);
   await updateDoc(ref, {
     name: data.name,
     unit: data.unit,
@@ -49,13 +52,20 @@ export async function updateProduct(id, data) {
   });
 }
 
-export async function deleteProduct(id) {
-  await deleteDoc(doc(db, "products", id));
+export async function deleteProduct(companyId, id) {
+  await deleteDoc(tenantDoc(db, companyId, "products", id));
 }
 
 // ==================== MATERIAL REQUESTS ====================
-export async function createMaterialRequest(data) {
-  const ref = await addDoc(collection(db, "materialRequests"), {
+export async function createMaterialRequest(companyId, data) {
+  // Validar pertenencia del producto al tenant antes de crear
+  const productRef = tenantDoc(db, companyId, "products", data.productId);
+  const productSnap = await getDoc(productRef);
+  if (!productSnap.exists()) {
+    throw new Error("El producto solicitado no pertenece a este tenant o no existe.");
+  }
+
+  const ref = await addDoc(tenantCollection(db, companyId, "materialRequests"), {
     userId: data.userId,
     communityId: data.communityId,
     productId: data.productId,
@@ -69,7 +79,7 @@ export async function createMaterialRequest(data) {
 
   // Enviar notificación a todos los administradores
   try {
-    const allUsers = await getAllUsers();
+    const allUsers = await getAllUsers(companyId);
     const operario = allUsers.find((u) => u.uid === data.userId);
     const operarioName = operario
       ? operario.name || operario.displayName || "Un operario"
@@ -79,6 +89,7 @@ export async function createMaterialRequest(data) {
 
     for (const admin of admins) {
       await createSystemNotification(
+        companyId,
         admin.uid,
         "📦 Nuevo Pedido de Material",
         `${operarioName} ha solicitado ${data.quantity}x ${data.productName}`,
@@ -97,8 +108,8 @@ export async function createMaterialRequest(data) {
   return ref.id;
 }
 
-export async function getMaterialRequests(filters = {}) {
-  let q = collection(db, "materialRequests");
+export async function getMaterialRequests(companyId, filters = {}) {
+  let q = tenantCollection(db, companyId, "materialRequests");
 
   if (filters.status) {
     q = query(q, where("status", "==", filters.status));
@@ -120,12 +131,13 @@ export async function getMaterialRequests(filters = {}) {
 }
 
 export async function updateRequestStatus(
+  companyId,
   requestId,
   status,
   adminId = "admin",
   adminName = "Admin",
 ) {
-  const requestRef = doc(db, "materialRequests", requestId);
+  const requestRef = tenantDoc(db, companyId, "materialRequests", requestId);
 
   if (status === "completed") {
     // Si se completa, descontar stock usando transacción
@@ -139,11 +151,11 @@ export async function updateRequestStatus(
       // Si ya estaba completado, no hacer nada para evitar doble descuento
       if (requestData.status === "completed") return;
 
-      const productRef = doc(db, "products", requestData.productId);
+      const productRef = tenantDoc(db, companyId, "products", requestData.productId);
       const productSnap = await transaction.get(productRef);
 
       if (!productSnap.exists()) {
-        throw new Error("El producto ya no existe!");
+        throw new Error("El producto ya no pertenece a este tenant o no existe!");
       }
 
       const productData = productSnap.data();
@@ -155,7 +167,7 @@ export async function updateRequestStatus(
       transaction.update(productRef, { currentStock: newStock });
 
       // 2. Registrar movimiento de stock
-      const movementRef = doc(collection(db, "stockMovements"));
+      const movementRef = tenantDoc(tenantCollection(db, companyId, "stockMovements"));
       transaction.set(movementRef, {
         productId: requestData.productId,
         productName: requestData.productName || productData.name,
@@ -185,13 +197,14 @@ export async function updateRequestStatus(
   }
 }
 
-export async function deleteMaterialRequest(id) {
-  await deleteDoc(doc(db, "materialRequests", id));
+export async function deleteMaterialRequest(companyId, id) {
+  await deleteDoc(tenantDoc(db, companyId, "materialRequests", id));
 }
 
 // ==================== STOCK MANAGEMENT ====================
 
 export async function addStock(
+  companyId,
   productId,
   productName,
   quantity,
@@ -199,12 +212,12 @@ export async function addStock(
   adminName,
   notes = "",
 ) {
-  const productRef = doc(db, "products", productId);
+  const productRef = tenantDoc(db, companyId, "products", productId);
 
   await runTransaction(db, async (transaction) => {
     const productSnap = await transaction.get(productRef);
     if (!productSnap.exists()) {
-      throw new Error("El producto no existe!");
+      throw new Error("El producto no pertenece a este tenant o no existe!");
     }
 
     const productData = productSnap.data();
@@ -216,7 +229,7 @@ export async function addStock(
     transaction.update(productRef, { currentStock: newStock });
 
     // 2. Log movement
-    const movementRef = doc(collection(db, "stockMovements"));
+    const movementRef = tenantDoc(tenantCollection(db, companyId, "stockMovements"));
     transaction.set(movementRef, {
       productId,
       productName: productName || productData.name,
@@ -233,6 +246,7 @@ export async function addStock(
 }
 
 export async function adjustStock(
+  companyId,
   productId,
   productName,
   newStock,
@@ -240,12 +254,12 @@ export async function adjustStock(
   adminName,
   notes = "",
 ) {
-  const productRef = doc(db, "products", productId);
+  const productRef = tenantDoc(db, companyId, "products", productId);
 
   await runTransaction(db, async (transaction) => {
     const productSnap = await transaction.get(productRef);
     if (!productSnap.exists()) {
-      throw new Error("El producto no existe!");
+      throw new Error("El producto no pertenece a este tenant o no existe!");
     }
 
     const productData = productSnap.data();
@@ -257,7 +271,7 @@ export async function adjustStock(
     transaction.update(productRef, { currentStock: finalStock });
 
     // 2. Log movement
-    const movementRef = doc(collection(db, "stockMovements"));
+    const movementRef = tenantDoc(tenantCollection(db, companyId, "stockMovements"));
     transaction.set(movementRef, {
       productId,
       productName: productName || productData.name,
@@ -273,9 +287,12 @@ export async function adjustStock(
   });
 }
 
-export async function getStockMovements(limitNum = 100) {
-  // We can add filtering by date or product later if needed
-  const q = query(collection(db, "stockMovements"), orderBy("date", "desc"));
+export async function getStockMovements(companyId, limitNum = 100) {
+  const q = query(
+    tenantCollection(db, companyId, "stockMovements"),
+    orderBy("date", "desc"),
+    limit(limitNum)
+  );
 
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));

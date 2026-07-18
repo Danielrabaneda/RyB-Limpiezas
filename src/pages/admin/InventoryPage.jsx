@@ -19,6 +19,7 @@ import { groupFlatList } from "../../utils/dateGrouping";
 import { useInventoryData } from "../../hooks/useInventoryData";
 import { useShoppingList } from "../../hooks/useShoppingList";
 import { useInventoryStats } from "../../hooks/useInventoryStats";
+import { useTenant } from "../../contexts/TenantContext";
 import InventoryOrders from "../../components/admin/inventory/InventoryOrders";
 import InventoryCatalog from "../../components/admin/inventory/InventoryCatalog";
 import InventoryShopping from "../../components/admin/inventory/InventoryShopping";
@@ -29,6 +30,7 @@ import InventoryModals from "../../components/admin/inventory/InventoryModals";
 import { CATEGORIES, autoCategorize } from "../../utils/inventoryCategories";
 
 export default function InventoryPage() {
+  const { companyId } = useTenant();
   const { currentUser, userProfile } = useAuth();
   const [activeTab, setActiveTab] = useState("orders"); // 'orders', 'catalog', 'movements'
   const [actionLoading, setActionLoading] = useState(false);
@@ -49,6 +51,7 @@ export default function InventoryPage() {
     handleDeleteProduct,
     handleStockAction: handleStockActionRaw,
   } = useInventoryData({
+    companyId,
     currentUser,
     userProfile,
     actionLoading,
@@ -115,11 +118,12 @@ export default function InventoryPage() {
     setActionLoading,
     loadData,
     setActiveTab,
+    companyId,
   });
 
   useEffect(() => {
-    loadData();
-  }, []);
+    // Redundant loadData removed since useInventoryData.js useEffect handles it on companyId changes.
+  }, [companyId]);
 
   const handleAddProduct = async (e) => {
     e.preventDefault();

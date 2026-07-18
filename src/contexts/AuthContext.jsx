@@ -32,6 +32,8 @@ export function AuthProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [companyId, setCompanyId] = useState(null);
+  const [authClaimsLoaded, setAuthClaimsLoaded] = useState(false);
 
   const login = useCallback(async (email, password) => {
     const cred = await signInWithEmailAndPassword(auth, email, password);
@@ -51,6 +53,8 @@ export function AuthProvider({ children }) {
 
   const logout = useCallback(async () => {
     setUserProfile(null);
+    setCompanyId(null);
+    setAuthClaimsLoaded(false);
     return signOut(auth);
   }, []);
 
@@ -179,6 +183,8 @@ export function AuthProvider({ children }) {
                 if (active) {
                   setUserProfile(null);
                   setCurrentUser(null);
+                  setCompanyId(null);
+                  setAuthClaimsLoaded(false);
                   setLoading(false);
                   clearTimeout(safetyTimer);
                 }
@@ -187,14 +193,17 @@ export function AuthProvider({ children }) {
 
               // Sincronización proactiva de Claims
               try {
-                const tokenResult = await user.getIdTokenResult();
-                const currentClaimRole = tokenResult.claims.role;
-                const currentClaimActive = tokenResult.claims.active;
+                let tokenResult = await user.getIdTokenResult();
+                let currentClaimRole = tokenResult.claims.role;
+                let currentClaimActive = tokenResult.claims.active;
+                let currentClaimCompanyId = tokenResult.claims.companyId;
 
-                // Si los claims locales no coinciden con la base de datos de Firestore, forzar refresco
+                // Evitar bucle infinito si la nube tarda: solo intentamos refrescar si hay discrepancia real.
+                // profile.companyId puede ser undefined si el backend aún no lo inyectó, así que comparamos si no encajan.
                 if (
                   currentClaimRole !== profile.role ||
-                  currentClaimActive !== profile.active
+                  currentClaimActive !== profile.active ||
+                  (profile.companyId && currentClaimCompanyId !== profile.companyId)
                 ) {
                   console.log(
                     "AuthContext: Claims locales desincronizados. Refrescando token...",
@@ -203,12 +212,22 @@ export function AuthProvider({ children }) {
                   console.log(
                     "AuthContext: Token de autenticación refrescado exitosamente.",
                   );
+                  tokenResult = await user.getIdTokenResult();
+                  currentClaimCompanyId = tokenResult.claims.companyId;
+                }
+                
+                if (active) {
+                  setCompanyId(currentClaimCompanyId || null);
+                  setAuthClaimsLoaded(true);
                 }
               } catch (err) {
                 console.error(
                   "Error al comprobar o refrescar claims en el cliente:",
                   err,
                 );
+                if (active) {
+                  setAuthClaimsLoaded(true); // Evitar colgar la UI en caso de error
+                }
               }
 
               if (active) {
@@ -226,6 +245,8 @@ export function AuthProvider({ children }) {
               if (active) {
                 setUserProfile(null);
                 setCurrentUser(null);
+                setCompanyId(null);
+                setAuthClaimsLoaded(false);
               }
             }
 
@@ -245,6 +266,8 @@ export function AuthProvider({ children }) {
       } else {
         if (active) {
           setUserProfile(null);
+          setCompanyId(null);
+          setAuthClaimsLoaded(false);
           setLoading(false);
           clearTimeout(safetyTimer);
         }
@@ -265,6 +288,8 @@ export function AuthProvider({ children }) {
     () => ({
       currentUser,
       userProfile,
+      companyId,
+      authClaimsLoaded,
       loading,
       login,
       logout,
@@ -274,7 +299,7 @@ export function AuthProvider({ children }) {
       isOperario:
         userProfile?.role === "operario" || userProfile?.isOperario === true,
     }),
-    [currentUser, userProfile, loading, login, logout, signup, createOperario],
+    [currentUser, userProfile, companyId, authClaimsLoaded, loading, login, logout, signup, createOperario],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

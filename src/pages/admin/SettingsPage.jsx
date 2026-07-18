@@ -1,22 +1,26 @@
 import { useState, useRef, useEffect } from "react";
 import { useAuth } from "../../contexts/AuthContext";
+import { useTenant } from "../../contexts/TenantContext";
+import { tenantDoc } from "../../utils/tenantFirestore";
 import {
-  doc,
+  getBillingSettings,
+  saveBillingSettings,
+} from "../../services/invoiceService";
+
+// Extra imports needed since we cleaned the block above
+import { updateEmail, updatePassword } from "firebase/auth";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { db, auth, storage } from "../../config/firebase";
+import {
   updateDoc,
   getDoc,
   setDoc,
   deleteDoc,
   serverTimestamp,
 } from "firebase/firestore";
-import { updateEmail, updatePassword } from "firebase/auth";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { db, auth, storage } from "../../config/firebase";
-import {
-  getBillingSettings,
-  saveBillingSettings,
-} from "../../services/invoiceService";
 
 export default function SettingsPage() {
+  const { companyId } = useTenant();
   const { currentUser, userProfile } = useAuth();
 
   // Profile state
@@ -47,10 +51,11 @@ export default function SettingsPage() {
   }, [userProfile, currentUser]);
 
   useEffect(() => {
+    if (!companyId) return;
     // Load company settings
     async function fetchSettings() {
       try {
-        const snap = await getDoc(doc(db, "settings", "global"));
+        const snap = await getDoc(tenantDoc(db, companyId, "settings", "global"));
         if (snap.exists()) {
           const data = snap.data();
           if (data.companyName) setCompanyName(data.companyName);
@@ -65,7 +70,7 @@ export default function SettingsPage() {
       }
     }
     fetchSettings();
-  }, []);
+  }, [companyId]);
 
   // SMTP state
   const [smtpSettings, setSmtpSettings] = useState({
@@ -81,10 +86,11 @@ export default function SettingsPage() {
   const [smtpMsg, setSmtpMsg] = useState("");
 
   useEffect(() => {
+    if (!companyId) return;
     // Load SMTP settings
     async function fetchSmtpSettings() {
       try {
-        const settings = await getBillingSettings();
+        const settings = await getBillingSettings(companyId);
         setSmtpSettings({
           smtpHost: settings.smtpHost || "",
           smtpPort: settings.smtpPort || "587",
@@ -100,14 +106,15 @@ export default function SettingsPage() {
       }
     }
     fetchSmtpSettings();
-  }, []);
+  }, [companyId]);
 
   const handleUpdateSmtp = async (e) => {
     e.preventDefault();
+    if (!companyId) return;
     setSmtpLoading(true);
     setSmtpMsg("");
     try {
-      await saveBillingSettings(smtpSettings);
+      await saveBillingSettings(companyId, smtpSettings);
       setSmtpMsg("Configuración de correo SMTP actualizada correctamente.");
     } catch (err) {
       console.error(err);
@@ -157,13 +164,14 @@ export default function SettingsPage() {
 
   const handleUpdateCompany = async (e) => {
     e.preventDefault();
+    if (!companyId) return;
     setCompanyLoading(true);
     setCompanyMsg("");
     try {
       const formattedCode = invitationCode.trim().toUpperCase();
 
       await setDoc(
-        doc(db, "settings", "global"),
+        tenantDoc(db, companyId, "settings", "global"),
         {
           companyName,
           logoUrl,
@@ -175,7 +183,7 @@ export default function SettingsPage() {
       // Synchronize with accessCodes collection
       if (formattedCode && formattedCode !== originalInvitationCode) {
         // Create new code
-        await setDoc(doc(db, "accessCodes", formattedCode), {
+        await setDoc(tenantDoc(db, companyId, "accessCodes", formattedCode), {
           active: true,
           createdAt: serverTimestamp(),
           createdBy: currentUser.uid,
@@ -183,14 +191,14 @@ export default function SettingsPage() {
 
         // Delete old code if it existed
         if (originalInvitationCode) {
-          await deleteDoc(doc(db, "accessCodes", originalInvitationCode));
+          await deleteDoc(tenantDoc(db, companyId, "accessCodes", originalInvitationCode));
         }
 
         setOriginalInvitationCode(formattedCode);
         setInvitationCode(formattedCode);
       } else if (!formattedCode && originalInvitationCode) {
         // Code removed entirely
-        await deleteDoc(doc(db, "accessCodes", originalInvitationCode));
+        await deleteDoc(tenantDoc(db, companyId, "accessCodes", originalInvitationCode));
         setOriginalInvitationCode("");
       }
 

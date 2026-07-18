@@ -27,6 +27,7 @@ import { getAdministrators } from "../../services/administratorService";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { useAuth } from "../../contexts/AuthContext";
+import { useTenant } from "../../contexts/TenantContext";
 import jsPDF from "jspdf";
 import QRCode from "qrcode";
 import JSZip from "jszip";
@@ -43,6 +44,7 @@ const parseLocaleFloat = (val) => {
 };
 
 export default function InvoicesPage() {
+  const { companyId } = useTenant();
   const { currentUser, userProfile } = useAuth();
 
   // Date filter states
@@ -148,26 +150,37 @@ export default function InvoicesPage() {
   });
 
   useEffect(() => {
-    loadInitialData();
-  }, []);
+    setInvoices([]);
+    setCommunities([]);
+    setTemplates([]);
+    setBillingSettings(null);
+    if (companyId) {
+      loadInitialData();
+    } else {
+      setLoading(false);
+    }
+  }, [companyId]);
 
   useEffect(() => {
-    loadInvoices();
-  }, [filterYear, filterMonth]);
+    if (companyId) {
+      loadInvoices();
+    }
+  }, [filterYear, filterMonth, companyId]);
 
   useEffect(() => {
     setSelectedInvoices({});
   }, [activeTab, filterYear, filterMonth]);
 
   const loadInitialData = async () => {
+    if (!companyId) return;
     setLoading(true);
     try {
       const [settings, comms, tmpls, lastInv, admins] = await Promise.all([
-        getBillingSettings(),
-        getCommunities(),
-        getInvoiceTemplates(),
-        getLastEmittedInvoice(),
-        getAdministrators(),
+        getBillingSettings(companyId),
+        getCommunities(companyId),
+        getInvoiceTemplates(companyId),
+        getLastEmittedInvoice(companyId),
+        getAdministrators(companyId),
       ]);
 
       const lastSeq = lastInv ? parseInt(lastInv.invoiceSeq) || 0 : 0;
@@ -193,8 +206,9 @@ export default function InvoicesPage() {
   };
 
   const loadTemplates = async () => {
+    if (!companyId) return;
     try {
-      const tmpls = await getInvoiceTemplates();
+      const tmpls = await getInvoiceTemplates(companyId);
       setTemplates(tmpls);
     } catch (err) {
       console.error("Error loading templates:", err);
@@ -202,8 +216,9 @@ export default function InvoicesPage() {
   };
 
   const loadInvoices = async () => {
+    if (!companyId) return;
     try {
-      const list = await getInvoices(filterYear, filterMonth);
+      const list = await getInvoices(companyId, filterYear, filterMonth);
       setInvoices(list);
     } catch (err) {
       console.error("Error loading invoices:", err);
@@ -211,6 +226,7 @@ export default function InvoicesPage() {
   };
 
   const handleGenerateDrafts = async () => {
+    if (!companyId) return;
     if (
       !confirm(
         `¿Generar automáticamente los borradores del mes de ${getMonthName(parseInt(filterMonth))} de ${filterYear}?`,
@@ -221,6 +237,7 @@ export default function InvoicesPage() {
     setActionLoading(true);
     try {
       const count = await generateMonthlyDrafts(
+        companyId,
         parseInt(filterMonth),
         parseInt(filterYear),
       );
@@ -236,6 +253,7 @@ export default function InvoicesPage() {
   };
 
   const handleEmitInvoice = async (id) => {
+    if (!companyId) return;
     if (
       !confirm(
         "¿Emitir factura oficial? Se le asignará un número oficial correlativo y no podrá editarse.",
@@ -245,9 +263,9 @@ export default function InvoicesPage() {
     }
     setActionLoading(true);
     try {
-      await emitInvoice(id);
+      await emitInvoice(companyId, id);
       alert("Factura emitida con éxito.");
-      const lastInv = await getLastEmittedInvoice();
+      const lastInv = await getLastEmittedInvoice(companyId);
       setLastInvoice(lastInv);
       await loadInvoices();
       setActiveTab("pending");
@@ -260,6 +278,7 @@ export default function InvoicesPage() {
   };
 
   const handleEmitAllDrafts = async () => {
+    if (!companyId) return;
     const draftCount = filteredInvoices.length;
     if (draftCount === 0) return;
 
@@ -274,10 +293,10 @@ export default function InvoicesPage() {
     setActionLoading(true);
     try {
       const ids = filteredInvoices.map((inv) => inv.id);
-      await emitAllInvoices(ids);
+      await emitAllInvoices(companyId, ids);
       alert(`Se han emitido ${draftCount} facturas oficiales con éxito.`);
 
-      const lastInv = await getLastEmittedInvoice();
+      const lastInv = await getLastEmittedInvoice(companyId);
       setLastInvoice(lastInv);
       await loadInvoices();
       setActiveTab("pending");
@@ -290,6 +309,7 @@ export default function InvoicesPage() {
   };
 
   const handleDeleteAllDrafts = async () => {
+    if (!companyId) return;
     const draftCount = filteredInvoices.length;
     if (draftCount === 0) return;
 
@@ -304,10 +324,10 @@ export default function InvoicesPage() {
     setActionLoading(true);
     try {
       const ids = filteredInvoices.map((inv) => inv.id);
-      await deleteMultipleInvoices(ids);
+      await deleteMultipleInvoices(companyId, ids);
       alert(`Se han eliminado ${draftCount} borradores con éxito.`);
 
-      const lastInv = await getLastEmittedInvoice();
+      const lastInv = await getLastEmittedInvoice(companyId);
       setLastInvoice(lastInv);
       await loadInvoices();
     } catch (err) {
@@ -319,9 +339,10 @@ export default function InvoicesPage() {
   };
 
   const handleMarkAsPaid = async (id) => {
+    if (!companyId) return;
     setActionLoading(true);
     try {
-      await updateInvoiceStatus(id, "paid");
+      await updateInvoiceStatus(companyId, id, "paid");
       await loadInvoices();
       setActiveTab("paid");
     } catch (err) {
@@ -333,9 +354,10 @@ export default function InvoicesPage() {
   };
 
   const handleResetToPending = async (id) => {
+    if (!companyId) return;
     setActionLoading(true);
     try {
-      await updateInvoiceStatus(id, "pending");
+      await updateInvoiceStatus(companyId, id, "pending");
       await loadInvoices();
       setActiveTab("pending");
     } catch (err) {
@@ -347,11 +369,12 @@ export default function InvoicesPage() {
   };
 
   const handleDeleteInvoice = async (id) => {
+    if (!companyId) return;
     if (!confirm("¿Seguro que deseas eliminar esta factura?")) return;
     setActionLoading(true);
     try {
-      await deleteInvoice(id);
-      const lastInv = await getLastEmittedInvoice();
+      await deleteInvoice(companyId, id);
+      const lastInv = await getLastEmittedInvoice(companyId);
       setLastInvoice(lastInv);
       await loadInvoices();
     } catch (err) {
@@ -397,11 +420,11 @@ export default function InvoicesPage() {
 
     setActionLoading(true);
     try {
-      await deleteMultipleInvoices(selectedIds);
+      await deleteMultipleInvoices(companyId, selectedIds);
       alert(`Se han eliminado ${selectedIds.length} facturas con éxito.`);
       setSelectedInvoices({});
 
-      const lastInv = await getLastEmittedInvoice();
+      const lastInv = await getLastEmittedInvoice(companyId);
       setLastInvoice(lastInv);
       await loadInvoices();
     } catch (err) {
@@ -415,10 +438,11 @@ export default function InvoicesPage() {
   const handleSaveSettings = async (e) => {
     e.preventDefault();
     setActionLoading(true);
-    try {
-      await saveBillingSettings(settingsForm);
-      setBillingSettings(settingsForm);
-      alert("Configuración guardada correctamente.");
+      if (!companyId) return;
+      try {
+        await saveBillingSettings(companyId, settingsForm);
+        setBillingSettings(settingsForm);
+        alert("Configuración guardada correctamente.");
     } catch (err) {
       console.error(err);
       alert("Error al guardar configuración: " + err.message);
@@ -531,7 +555,7 @@ export default function InvoicesPage() {
 
     setActionLoading(true);
     try {
-      await deleteInvoiceTemplate(templateId);
+      await deleteInvoiceTemplate(companyId, templateId);
       alert("Plantilla eliminada con éxito.");
       await loadTemplates();
     } catch (err) {
@@ -704,7 +728,7 @@ export default function InvoicesPage() {
         dueDate: isDraft ? null : dueDate,
       };
 
-      await createInvoice(invoiceData);
+      await createInvoice(companyId, invoiceData);
 
       // Try to increment sequence in settings if a manual number was typed
       if (!isDraft && invoiceSeq !== null) {
@@ -713,7 +737,7 @@ export default function InvoicesPage() {
             billingSettings &&
             invoiceSeq >= (parseInt(billingSettings.nextInvoiceSeq) || 1)
           ) {
-            await saveBillingSettings({
+            await saveBillingSettings(companyId, {
               nextInvoiceSeq: invoiceSeq + 1,
             });
             setBillingSettings((prev) => ({
@@ -747,7 +771,7 @@ export default function InvoicesPage() {
           taxRate: parseFloat(addForm.taxRate) || 0,
           paymentMethod: addForm.paymentMethod,
         };
-        await saveInvoiceTemplate(templateData);
+        await saveInvoiceTemplate(companyId, templateData);
       }
 
       alert(
@@ -873,7 +897,7 @@ export default function InvoicesPage() {
         paymentMethod: editForm.paymentMethod,
       };
 
-      await updateInvoice(editModal.invoice.id, updatedData);
+      await updateInvoice(companyId, editModal.invoice.id, updatedData);
       setEditModal({ open: false, invoice: null });
       await loadInvoices();
     } catch (err) {
@@ -1471,15 +1495,16 @@ export default function InvoicesPage() {
             log: [...prev.log, `Subiendo PDF a almacenamiento de Firebase...`],
           }));
 
-          storagePath = `invoices/${inv.id}/${pdfResult.filename}`;
+          storagePath = `companies/${companyId}/invoices/${inv.id}/${pdfResult.filename}`;
           const storageUrl = await uploadInvoicePDFToStorage(
+            companyId,
             inv.id,
             pdfResult.blob,
             pdfResult.filename,
           );
           pdfUrl = storageUrl;
 
-          await updateInvoice(inv.id, { pdfUrl, pdfStoragePath: storagePath });
+          await updateInvoice(companyId, inv.id, { pdfUrl, pdfStoragePath: storagePath });
 
           setInvoices((prev) =>
             prev.map((item) =>
@@ -1513,7 +1538,7 @@ export default function InvoicesPage() {
         ],
       }));
 
-      const response = await sendGroupedInvoiceEmails(processedIds);
+      const response = await sendGroupedInvoiceEmails(companyId, processedIds);
       const results = response?.results || [];
 
       let successCount = 0;
@@ -1826,7 +1851,7 @@ export default function InvoicesPage() {
       // Optionally mark invoices as paid
       if (markAsPaid) {
         for (const inv of eligibleInvoices) {
-          await updateInvoiceStatus(inv.id, "paid");
+          await updateInvoiceStatus(companyId, inv.id, "paid");
         }
         await loadInvoices();
       }

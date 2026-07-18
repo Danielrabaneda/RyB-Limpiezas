@@ -137,7 +137,7 @@ export async function deleteAllServicesForTask(companyId, taskId) {
   }
 }
 
-export async function getScheduledServicesForDate(userId, date = new Date()) {
+export async function getScheduledServicesForDate(companyId, userId, date = new Date()) {
   try {
     const startOfTarget = startOfDay(date);
 
@@ -147,19 +147,19 @@ export async function getScheduledServicesForDate(userId, date = new Date()) {
 
     // 1. Fetch my own services
     const qOwn = query(
-      collection(db, "scheduledServices"),
+      tenantCollection(db, companyId, "scheduledServices"),
       where("assignedUserId", "==", userId),
     );
 
     // 2. Fetch services where I am explicitly listed as companion
     const qExplicitCompanion = query(
-      collection(db, "scheduledServices"),
+      tenantCollection(db, companyId, "scheduledServices"),
       where("companionIds", "array-contains", userId),
     );
 
     // 3. Fetch services from workdays where I am/was a companion today
     const qAllWorkdaysAsCompanion = query(
-      collection(db, "workdays"),
+      tenantCollection(db, companyId, "workdays"),
       where("currentCompanionId", "==", userId),
     );
 
@@ -198,7 +198,7 @@ export async function getScheduledServicesForDate(userId, date = new Date()) {
       if (relevantTitularIds.length > 0) {
         const titularQueries = relevantTitularIds.map(async (titularId) => {
           const qTitular = query(
-            collection(db, "scheduledServices"),
+            tenantCollection(db, companyId, "scheduledServices"),
             where("assignedUserId", "==", titularId),
           );
           const snapTitular = await getDocs(qTitular);
@@ -220,7 +220,7 @@ export async function getScheduledServicesForDate(userId, date = new Date()) {
       );
       const snapFallback = await getDocs(
         query(
-          collection(db, "scheduledServices"),
+          tenantCollection(db, companyId, "scheduledServices"),
           where("assignedUserId", "==", userId),
         ),
       );
@@ -321,7 +321,7 @@ export async function getScheduledServicesForDate(userId, date = new Date()) {
   }
 }
 
-export async function getScheduledServicesForWeek(userId, date) {
+export async function getScheduledServicesForWeek(companyId, userId, date) {
   const weekStart = startOfWeek(date, { weekStartsOn: 1 });
   const weekEnd = endOfWeek(date, { weekStartsOn: 1 });
   const startRange = startOfDay(weekStart).getTime();
@@ -330,15 +330,15 @@ export async function getScheduledServicesForWeek(userId, date) {
   try {
     // Fetch everything for these relevant users without date filters to avoid index errors
     const qOwn = query(
-      collection(db, "scheduledServices"),
+      tenantCollection(db, companyId, "scheduledServices"),
       where("assignedUserId", "==", userId),
     );
     const qCompanion = query(
-      collection(db, "scheduledServices"),
+      tenantCollection(db, companyId, "scheduledServices"),
       where("companionIds", "array-contains", userId),
     );
     const qWorkdays = query(
-      collection(db, "workdays"),
+      tenantCollection(db, companyId, "workdays"),
       where("currentCompanionId", "==", userId),
       where("status", "==", "active"),
     );
@@ -357,7 +357,7 @@ export async function getScheduledServicesForWeek(userId, date) {
       for (const wdDoc of snapWorkdays.docs) {
         const titularId = wdDoc.data().userId;
         const qTitular = query(
-          collection(db, "scheduledServices"),
+          tenantCollection(db, companyId, "scheduledServices"),
           where("assignedUserId", "==", titularId),
         );
         const snapTitular = await getDocs(qTitular);
@@ -430,7 +430,7 @@ export async function getScheduledServicesForWeek(userId, date) {
     const start = Timestamp.fromMillis(startRange);
     const end = Timestamp.fromMillis(endRange);
     const q = query(
-      collection(db, "scheduledServices"),
+      tenantCollection(db, companyId, "scheduledServices"),
       where("assignedUserId", "==", userId),
       where("scheduledDate", ">=", start),
       where("scheduledDate", "<=", end),
@@ -442,6 +442,7 @@ export async function getScheduledServicesForWeek(userId, date) {
 }
 
 export async function getScheduledServicesRange(
+  companyId,
   startDate,
   endDate,
   filters = {},
@@ -452,7 +453,7 @@ export async function getScheduledServicesRange(
   let q;
   if (filters.userId) {
     q = query(
-      collection(db, "scheduledServices"),
+      tenantCollection(db, companyId, "scheduledServices"),
       where("assignedUserId", "==", filters.userId),
       where("scheduledDate", ">=", start),
       where("scheduledDate", "<=", end),
@@ -460,7 +461,7 @@ export async function getScheduledServicesRange(
     );
   } else {
     q = query(
-      collection(db, "scheduledServices"),
+      tenantCollection(db, companyId, "scheduledServices"),
       where("scheduledDate", ">=", start),
       where("scheduledDate", "<=", end),
       orderBy("scheduledDate"),
@@ -479,22 +480,23 @@ export async function getScheduledServicesRange(
   return results;
 }
 
-export async function updateScheduledServiceStatus(id, status) {
-  await updateDoc(doc(db, "scheduledServices", id), {
+export async function updateScheduledServiceStatus(companyId, id, status) {
+  await updateDoc(tenantDoc(db, companyId, "scheduledServices", id), {
     status,
     updatedAt: serverTimestamp(),
   });
   if (status === "completed") {
-    await handleGarageCompletion(id);
+    await handleGarageCompletion(companyId, id);
   }
 }
 
 export async function handleGarageCompletion(
+  companyId,
   serviceId,
   completionDate = new Date(),
 ) {
   try {
-    const serviceRef = doc(db, "scheduledServices", serviceId);
+    const serviceRef = tenantDoc(db, companyId, "scheduledServices", serviceId);
     const serviceSnap = await getDoc(serviceRef);
     if (!serviceSnap.exists()) return;
 
@@ -512,7 +514,7 @@ export async function handleGarageCompletion(
     );
 
     // 1. Fetch the communityTask
-    const taskRef = doc(db, "communityTasks", serviceData.communityTaskId);
+    const taskRef = tenantDoc(db, companyId, "communityTasks", serviceData.communityTaskId);
     const taskSnap = await getDoc(taskRef);
     if (!taskSnap.exists()) return;
 
@@ -544,7 +546,7 @@ export async function handleGarageCompletion(
 
     // 4. Look for the next pending scheduledService for this task (scheduledDate > completionDate)
     const qNext = query(
-      collection(db, "scheduledServices"),
+      tenantCollection(db, companyId, "scheduledServices"),
       where("communityTaskId", "==", serviceData.communityTaskId),
       where("status", "==", "pending"),
     );
@@ -590,8 +592,8 @@ export async function handleGarageCompletion(
   }
 }
 
-export async function deleteScheduledService(id) {
-  await deleteDoc(doc(db, "scheduledServices", id));
+export async function deleteScheduledService(companyId, id) {
+  await deleteDoc(tenantDoc(db, companyId, "scheduledServices", id));
 }
 
 export async function deleteScheduledServicesByCommunity(companyId, communityIdParam) {
@@ -648,6 +650,7 @@ export async function deleteFutureServicesForUserInCommunity(
   }
 }
 export async function updateScheduledServiceNotesAndPhotos(
+  companyId,
   id,
   notes,
   photoUrls,
@@ -658,10 +661,11 @@ export async function updateScheduledServiceNotesAndPhotos(
     dataToUpdate.generalPhotoUrls = arrayUnion(...photoUrls);
   }
 
-  await updateDoc(doc(db, "scheduledServices", id), dataToUpdate);
+  await updateDoc(tenantDoc(db, companyId, "scheduledServices", id), dataToUpdate);
 }
 
 export async function passTaskToNextService(
+  companyId,
   scheduledService,
   isGarage = false,
 ) {
@@ -678,7 +682,7 @@ export async function passTaskToNextService(
       // Buscar próximo servicio programado para esta comunidad
       const now = Timestamp.fromDate(startOfDay(addDays(new Date(), 1))); // From tomorrow
       const q = query(
-        collection(db, "scheduledServices"),
+        tenantCollection(db, companyId, "scheduledServices"),
         where("communityId", "==", scheduledService.communityId),
         where("status", "==", "pending"),
       );
@@ -711,7 +715,7 @@ export async function passTaskToNextService(
     }
 
     // Crear la nueva tarea para la próxima fecha
-    await addDoc(collection(db, "scheduledServices"), {
+    await addDoc(tenantCollection(db, companyId, "scheduledServices"), {
       communityId: scheduledService.communityId,
       communityTaskId: scheduledService.communityTaskId,
       taskName: scheduledService.taskName || "",
@@ -726,7 +730,7 @@ export async function passTaskToNextService(
     });
 
     // Marcar la original como pasada ("rolled_over" o "missed") para que no se quede estancada
-    await updateScheduledServiceStatus(scheduledService.id, "missed");
+    await updateScheduledServiceStatus(companyId, scheduledService.id, "missed");
   } catch (error) {
     console.error("[Schedule] Error pasando tarea:", error);
   }
@@ -829,9 +833,9 @@ export async function checkAndRolloverGarages(companyId) {
  * if both are pending, the oldest (by createdAt) is kept.
  * Returns the number of deleted documents.
  */
-export async function cleanupDuplicateScheduledServices() {
+export async function cleanupDuplicateScheduledServices(companyId) {
   console.log("[Cleanup] Buscando servicios duplicados...");
-  const snap = await getDocs(collection(db, "scheduledServices"));
+  const snap = await getDocs(tenantCollection(db, companyId, "scheduledServices"));
   const docs = snap.docs.map((d) => ({ id: d.id, ref: d.ref, ...d.data() }));
   console.log(`[Cleanup] Total documentos: ${docs.length}`);
 
@@ -1183,14 +1187,14 @@ export async function syncServicesForRange(startDate, endDate) {
     const activeCommunityIds = new Set(commsSnap.docs.map((d) => d.id));
 
     const tasksSnap = await getDocs(
-      query(collection(db, "communityTasks"), where("active", "==", true)),
+      query(tenantCollection(db, companyId, "communityTasks"), where("active", "==", true)),
     );
     const communityTasks = tasksSnap.docs
       .map((d) => ({ id: d.id, ...d.data() }))
       .filter((t) => activeCommunityIds.has(t.communityId));
 
     const assignSnap = await getDocs(
-      query(collection(db, "assignments"), where("active", "==", true)),
+      query(tenantCollection(db, companyId, "assignments"), where("active", "==", true)),
     );
     const assignments = assignSnap.docs
       .map((d) => ({ id: d.id, ...d.data() }))
@@ -1200,7 +1204,7 @@ export async function syncServicesForRange(startDate, endDate) {
     const end = Timestamp.fromDate(endOfDay(endDate));
     const existingSnap = await getDocs(
       query(
-        collection(db, "scheduledServices"),
+        tenantCollection(db, companyId, "scheduledServices"),
         where("scheduledDate", ">=", start),
         where("scheduledDate", "<=", end),
       ),
@@ -1222,7 +1226,7 @@ export async function syncServicesForRange(startDate, endDate) {
     // These services were moved from their original date — we must not recreate them.
     const rescheduledSnap = await getDocs(
       query(
-        collection(db, "scheduledServices"),
+        tenantCollection(db, companyId, "scheduledServices"),
         where("originalDate", ">=", start),
         where("originalDate", "<=", end),
       ),
@@ -1618,8 +1622,8 @@ export function shouldScheduleOnDay(task, date, options = {}) {
 }
 
 // ==================== COMPANIONS ====================
-export async function addCompanionToService(serviceId, companionId) {
-  const serviceRef = doc(db, "scheduledServices", serviceId);
+export async function addCompanionToService(companyId, serviceId, companionId) {
+  const serviceRef = tenantDoc(db, companyId, "scheduledServices", serviceId);
   const snap = await getDoc(serviceRef);
   if (!snap.exists()) throw new Error("Servicio no encontrado");
 
@@ -1645,8 +1649,8 @@ export async function addCompanionToService(serviceId, companionId) {
   await updateDoc(serviceRef, { companionIds, companionLogs });
 }
 
-export async function removeCompanionFromService(serviceId, companionId) {
-  const serviceRef = doc(db, "scheduledServices", serviceId);
+export async function removeCompanionFromService(companyId, serviceId, companionId) {
+  const serviceRef = tenantDoc(db, companyId, "scheduledServices", serviceId);
   const snap = await getDoc(serviceRef);
   if (!snap.exists()) throw new Error("Servicio no encontrado");
 

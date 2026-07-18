@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { useTenant } from "../contexts/TenantContext";
+import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
 import {
   doc,
   onSnapshot,
@@ -25,6 +27,7 @@ import { getCommunityGuides } from "../services/documentVaultService";
 import { getActiveWorkday } from "../services/workdayService";
 
 export function useServiceData(serviceId, userProfile) {
+  const { companyId } = useTenant();
   const [service, setService] = useState(null);
   const [community, setCommunity] = useState(null);
   const [tasks, setTasks] = useState([]);
@@ -41,9 +44,9 @@ export function useServiceData(serviceId, userProfile) {
     if (!serviceId || !userProfile?.uid) return;
     try {
       const [ops, checkIn, workday] = await Promise.all([
-        getOperarios(),
-        getActiveCheckIn(userProfile.uid),
-        getActiveWorkday(userProfile.uid),
+        getOperarios(companyId),
+        getActiveCheckIn(companyId, userProfile.uid),
+        getActiveWorkday(companyId, userProfile.uid),
       ]);
 
       const map = {};
@@ -72,7 +75,7 @@ export function useServiceData(serviceId, userProfile) {
   }
 
   useEffect(() => {
-    if (!serviceId || !userProfile?.uid) return;
+    if (!serviceId || !userProfile?.uid || !companyId) return;
 
     // Reset state when service changes
     setActiveCheckIn(null);
@@ -88,7 +91,7 @@ export function useServiceData(serviceId, userProfile) {
 
     // 1. Listen to service document
     const unsubService = onSnapshot(
-      doc(db, "scheduledServices", serviceId),
+      tenantDoc(db, companyId, "scheduledServices", serviceId),
       async (snap) => {
         if (!snap.exists()) {
           setLoading(false);
@@ -100,14 +103,14 @@ export function useServiceData(serviceId, userProfile) {
         // Load static info if not already loaded
         if (!commLoaded) {
           try {
-            const comm = await getCommunity(svcData.communityId);
+            const comm = await getCommunity(companyId, svcData.communityId);
             commLoaded = comm;
             setCommunity(comm);
 
-            const commTasks = await getCommunityTasks(svcData.communityId);
+            const commTasks = await getCommunityTasks(companyId, svcData.communityId);
             setTasks(commTasks);
 
-            const docs = await getCommunityGuides(svcData.communityId);
+            const docs = await getCommunityGuides(companyId, svcData.communityId);
             setCommunityDocs(docs || []);
 
             // Load grouped services on the same day for this community
@@ -115,6 +118,7 @@ export function useServiceData(serviceId, userProfile) {
               ? svcData.scheduledDate.toDate()
               : new Date(svcData.scheduledDate);
             const allSvcsToday = await getScheduledServicesForDate(
+              companyId,
               userProfile.uid,
               svcDate,
             );
@@ -196,7 +200,7 @@ export function useServiceData(serviceId, userProfile) {
 
     // 2. Listen to task executions
     const qExecs = query(
-      collection(db, "taskExecutions"),
+      tenantCollection(db, companyId, "taskExecutions"),
       where("scheduledServiceId", "==", serviceId),
     );
     const unsubExecs = onSnapshot(
@@ -219,12 +223,12 @@ export function useServiceData(serviceId, userProfile) {
       unsubService();
       unsubExecs();
     };
-  }, [serviceId, userProfile?.uid]);
+  }, [serviceId, userProfile?.uid, companyId]);
 
   async function toggleTaskStatus(exec) {
     const newStatus = exec.status === "completed" ? "pending" : "completed";
     try {
-      await updateTaskExecution(exec.id, { status: newStatus });
+      await updateTaskExecution(companyId, exec.id, { status: newStatus });
 
       // Si es una tarea roja ("otras"), actualizar también su correspondiente estado en scheduledServices
       const task = tasks.find((t) => t.id === exec.communityTaskId);
@@ -249,7 +253,7 @@ export function useServiceData(serviceId, userProfile) {
           const targetStatus =
             newStatus === "completed" ? "pending" : "completed";
           const qSvc = query(
-            collection(db, "scheduledServices"),
+            tenantCollection(db, companyId, "scheduledServices"),
             where("communityTaskId", "==", exec.communityTaskId),
             where("status", "==", targetStatus),
           );
@@ -278,7 +282,7 @@ export function useServiceData(serviceId, userProfile) {
     )
       return;
     try {
-      await removeCompanionFromService(serviceId, companionId);
+      await removeCompanionFromService(companyId, serviceId, companionId);
     } catch (err) {
       console.error("[useServiceData] Error in handleRemoveCompanion:", err);
       alert("Error quitando acompañante: " + err.message);

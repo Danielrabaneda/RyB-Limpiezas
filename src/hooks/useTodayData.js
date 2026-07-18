@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "../config/firebase";
+import { useTenant } from "../contexts/TenantContext";
+import { tenantCollection } from "../utils/tenantFirestore";
 import { getScheduledServicesForDate } from "../services/scheduleService";
 import { getCommunity } from "../services/communityService";
 import { getCommunityTasks } from "../services/taskService";
@@ -26,6 +28,7 @@ export function useTodayData(userProfile) {
   const [activeWorkdaysList, setActiveWorkdaysList] = useState([]);
   const [userLocation, setUserLocation] = useState(null);
   const isLoadingTodayRef = useRef(false);
+  const { companyId } = useTenant();
 
   // 1. Ubicación periódica (cada 15s)
   useEffect(() => {
@@ -65,9 +68,9 @@ export function useTodayData(userProfile) {
       );
 
       const [svcs, checkIn, summary] = await Promise.all([
-        getScheduledServicesForDate(userProfile.uid, now),
-        getActiveCheckIn(userProfile.uid),
-        getWorkdaysSummaryForDate(userProfile.uid, now),
+        getScheduledServicesForDate(companyId, userProfile.uid, now),
+        getActiveCheckIn(companyId, userProfile.uid),
+        getWorkdaysSummaryForDate(companyId, userProfile.uid, now),
       ]);
 
       console.log(
@@ -76,7 +79,7 @@ export function useTodayData(userProfile) {
 
       if (checkIn) {
         try {
-          const comm = await getCommunity(checkIn.communityId);
+          const comm = await getCommunity(companyId, checkIn.communityId);
           checkIn.communityName = comm?.name || "Comunidad";
         } catch (e) {
           checkIn.communityName = "Comunidad";
@@ -98,6 +101,7 @@ export function useTodayData(userProfile) {
           endOfCheckInDay.setHours(23, 59, 59, 999);
           try {
             await completeCheckOut(
+              companyId,
               checkIn.id,
               null,
               null,
@@ -128,6 +132,7 @@ export function useTodayData(userProfile) {
           : new Date(summary.activeWorkday.date);
         if (!isSameDay(wdDate, now)) {
           const lastActivity = await findLastActivityForUser(
+            companyId,
             userProfile.uid,
             wdDate,
             summary.activeWorkday.id,
@@ -165,8 +170,8 @@ export function useTodayData(userProfile) {
         uniqueCommunityIds.map(async (commId) => {
           try {
             const [comm, tasks] = await Promise.all([
-              getCommunity(commId),
-              getCommunityTasks(commId),
+              getCommunity(companyId, commId),
+              getCommunityTasks(companyId, commId),
             ]);
             communityCache[commId] = comm;
             taskCache[commId] = tasks;
@@ -397,14 +402,14 @@ export function useTodayData(userProfile) {
 
   // 3. Suscripción en tiempo real a Firebase
   useEffect(() => {
-    if (!userProfile?.uid) return;
+    if (!userProfile?.uid || !companyId) return;
 
     setLoading(true);
     let unsubWorkdays = () => {};
     let unsubMyServices = () => {};
 
     const qWorkdays = query(
-      collection(db, "workdays"),
+      tenantCollection(db, companyId, "workdays"),
       where("status", "==", "active"),
     );
 
@@ -425,7 +430,7 @@ export function useTodayData(userProfile) {
     );
 
     const qMySvcs = query(
-      collection(db, "scheduledServices"),
+      tenantCollection(db, companyId, "scheduledServices"),
       where("assignedUserId", "==", userProfile.uid),
     );
     unsubMyServices = onSnapshot(
@@ -440,7 +445,7 @@ export function useTodayData(userProfile) {
       unsubWorkdays();
       unsubMyServices();
     };
-  }, [userProfile]);
+  }, [userProfile, companyId]);
 
   const handleRefresh = async () => {
     setRefreshing(true);

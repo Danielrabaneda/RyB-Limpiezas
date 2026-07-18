@@ -4,6 +4,7 @@ import {
   createMaterialRequest,
 } from "../../services/materialService";
 import { useAuth } from "../../contexts/AuthContext";
+import { useTenant } from "../../contexts/TenantContext";
 
 export default function MaterialRequestModal({
   isOpen,
@@ -11,6 +12,7 @@ export default function MaterialRequestModal({
   communityId,
   communityName,
 }) {
+  const { companyId } = useTenant();
   const { userProfile } = useAuth();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -22,15 +24,16 @@ export default function MaterialRequestModal({
   });
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && companyId) {
       loadProducts();
     }
-  }, [isOpen]);
+  }, [isOpen, companyId]);
 
   const loadProducts = async () => {
+    if (!companyId) return;
     setLoading(true);
     try {
-      const data = await getProducts();
+      const data = await getProducts(companyId);
       setProducts(data);
     } catch (err) {
       console.error(err);
@@ -41,13 +44,13 @@ export default function MaterialRequestModal({
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.productId || !userProfile?.uid) return;
+    if (!formData.productId || !userProfile?.uid || !companyId) return;
 
     setSending(true);
     try {
       const selectedProduct = products.find((p) => p.id === formData.productId);
 
-      await createMaterialRequest({
+      await createMaterialRequest(companyId, {
         userId: userProfile.uid,
         communityId: communityId,
         productId: formData.productId,

@@ -11,6 +11,8 @@ import { format, differenceInMinutes } from "date-fns";
 import { collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "../config/firebase";
 import { getCurrentLocation } from "../utils/geolocation";
+import { useTenant } from "../contexts/TenantContext";
+import { tenantCollection } from "../utils/tenantFirestore";
 
 export function useWorkdayLifecycle(
   userProfile,
@@ -29,6 +31,7 @@ export function useWorkdayLifecycle(
 ) {
   const { triggerWorkdayStartPopups, triggerWorkdayEndPopups } =
     useNotifications();
+  const { companyId } = useTenant();
   const [retroactiveModal, setRetroactiveModal] = useState({
     open: false,
     suggestedTime: null,
@@ -50,7 +53,7 @@ export function useWorkdayLifecycle(
     setActionLoading(true);
     try {
       const name = userProfile.name || userProfile.displayName || "Operario";
-      await startWorkday(userProfile.uid, name);
+      await startWorkday(companyId, userProfile.uid, name);
       await loadToday();
     } catch (err) {
       console.error(err);
@@ -78,19 +81,19 @@ export function useWorkdayLifecycle(
         const lat = loc?.lat || 0;
         const lng = loc?.lng || 0;
 
-        await completeCheckOut(activeCheckIn.id, lat, lng, null, null, loc);
+        await completeCheckOut(companyId, activeCheckIn.id, lat, lng, null, null, loc);
 
         // Cargar check-ins de los acompañantes
         try {
           const qComp = query(
-            collection(db, "checkIns"),
+            tenantCollection(db, companyId, "checkIns"),
             where("scheduledServiceId", "==", activeCheckIn.scheduledServiceId),
             where("checkOutTime", "==", null),
           );
           const compSnap = await getDocs(qComp);
           for (const docSnap of compSnap.docs) {
             if (docSnap.id !== activeCheckIn.id) {
-              await completeCheckOut(docSnap.id, lat, lng, null, null, loc);
+              await completeCheckOut(companyId, docSnap.id, lat, lng, null, null, loc);
             }
           }
         } catch (compErr) {
@@ -105,6 +108,7 @@ export function useWorkdayLifecycle(
 
       // 1. Buscar la última actividad registrada para este usuario hoy
       const lastActivity = await findLastActivityForUser(
+        companyId,
         userProfile.uid,
         new Date(),
         activeWorkday.id,
@@ -143,7 +147,7 @@ export function useWorkdayLifecycle(
       const breadcrumbs = JSON.parse(
         localStorage.getItem("ryb_car_breadcrumbs") || "[]",
       );
-      await endWorkday(activeWorkday.id, breadcrumbs);
+      await endWorkday(companyId, activeWorkday.id, breadcrumbs);
       localStorage.removeItem("ryb_car_breadcrumbs");
       await loadToday();
       triggerWorkdayEndPopups();
@@ -182,6 +186,7 @@ export function useWorkdayLifecycle(
             return;
           }
           await completeCheckOut(
+            companyId,
             activeCheckIn.id,
             lat,
             lng,
@@ -195,7 +200,7 @@ export function useWorkdayLifecycle(
 
           try {
             const qComp = query(
-              collection(db, "checkIns"),
+              tenantCollection(db, companyId, "checkIns"),
               where(
                 "scheduledServiceId",
                 "==",
@@ -207,6 +212,7 @@ export function useWorkdayLifecycle(
             for (const docSnap of compSnap.docs) {
               if (docSnap.id !== activeCheckIn.id) {
                 await completeCheckOut(
+                  companyId,
                   docSnap.id,
                   lat,
                   lng,
@@ -237,12 +243,13 @@ export function useWorkdayLifecycle(
 
       if (useRetroactive && retroactiveModal.suggestedTime) {
         await endWorkday(
+          companyId,
           activeWorkday.id,
           breadcrumbs,
           retroactiveModal.suggestedTime,
         );
       } else {
-        await endWorkday(activeWorkday.id, breadcrumbs, null);
+        await endWorkday(companyId, activeWorkday.id, breadcrumbs, null);
       }
 
       localStorage.removeItem("ryb_car_breadcrumbs");

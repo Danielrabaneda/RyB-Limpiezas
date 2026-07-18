@@ -60,13 +60,14 @@ export default function DashboardPage() {
 
   // Real-time listeners for pending counts
   useEffect(() => {
+    if (!companyId) return;
     const qT = query(
-      collection(db, "transfers"),
+      tenantCollection(db, companyId, "transfers"),
       where("status", "==", "pending"),
     );
     const unsubT = onSnapshot(qT, (snap) => setPendingTransfers(snap.size));
     const qG = query(
-      collection(db, "gpsSuggestions"),
+      tenantCollection(db, companyId, "gpsSuggestions"),
       where("status", "==", "pending"),
     );
     const unsubG = onSnapshot(qG, (snap) => setPendingGPS(snap.size));
@@ -74,7 +75,7 @@ export default function DashboardPage() {
       unsubT();
       unsubG();
     };
-  }, []);
+  }, [companyId]);
 
   async function loadDashboard() {
     try {

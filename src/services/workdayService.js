@@ -22,6 +22,7 @@ import {
   format,
   isSameDay,
 } from "date-fns";
+import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
 import { calculateDailyMileage } from "./mileageService";
 
 const COLLECTION_NAME = "workdays";
@@ -33,16 +34,16 @@ export function safeParseDate(value) {
   return isNaN(d.getTime()) ? new Date() : d;
 }
 
-export async function startWorkday(userId, userName = "Operario") {
+export async function startWorkday(companyId, userId, userName = "Operario") {
   // Verificación de seguridad: No permitir iniciar si ya hay una activa
-  const existing = await getActiveWorkday(userId);
+  const existing = await getActiveWorkday(companyId, userId);
   if (existing) {
     console.log("Ya existe una jornada activa para este usuario");
     return existing.id;
   }
 
   const now = new Date();
-  const ref = await addDoc(collection(db, COLLECTION_NAME), {
+  const ref = await addDoc(tenantCollection(db, companyId, COLLECTION_NAME), {
     userId,
     userName, // <--- Guardamos el nombre para evitar "desconocido"
     date: Timestamp.fromDate(startOfDay(now)),
@@ -57,6 +58,7 @@ export async function startWorkday(userId, userName = "Operario") {
 }
 
 export async function endWorkday(
+  companyId,
   workdayId,
   breadcrumbs = [],
   customEndTime = null,
@@ -67,7 +69,7 @@ export async function endWorkday(
       : customEndTime
         ? new Date(customEndTime)
         : new Date();
-  const workdayRef = doc(db, COLLECTION_NAME, workdayId);
+  const workdayRef = tenantDoc(db, companyId, COLLECTION_NAME, workdayId);
 
   // Get workday data to calculate duration
   const workdaySnap = await getDoc(workdayRef);
@@ -128,6 +130,7 @@ export async function endWorkday(
   if (workdayData?.userId) {
     try {
       await calculateDailyMileage(
+        companyId,
         workdayData.userId,
         logicalDate,
         workdayData.userName || "Operario",
@@ -144,10 +147,10 @@ export async function endWorkday(
   return { duration };
 }
 
-export async function getActiveWorkday(userId) {
+export async function getActiveWorkday(companyId, userId) {
   // Optimización: consulta directa por userId y status activo
   const q = query(
-    collection(db, COLLECTION_NAME),
+    tenantCollection(db, companyId, COLLECTION_NAME),
     where("userId", "==", userId),
     where("status", "==", "active"),
   );
@@ -158,14 +161,14 @@ export async function getActiveWorkday(userId) {
   return { id: snap.docs[0].id, ...snap.docs[0].data() };
 }
 
-export async function getWorkdaysForAdmin(startDate, endDate, userId = null) {
+export async function getWorkdaysForAdmin(companyId, startDate, endDate, userId = null) {
   try {
     const start = Timestamp.fromDate(startOfDay(startDate));
     const end = Timestamp.fromDate(endOfDay(endDate));
 
     // Consulta base: por rango de fechas (esto solo requiere un índice simple que suele estar auto-generado)
     const q = query(
-      collection(db, COLLECTION_NAME),
+      tenantCollection(db, companyId, COLLECTION_NAME),
       where("date", ">=", start),
       where("date", "<=", end),
       orderBy("date", "desc"),
@@ -183,25 +186,25 @@ export async function getWorkdaysForAdmin(startDate, endDate, userId = null) {
   } catch (error) {
     console.error("Error in getWorkdaysForAdmin:", error);
     // Si falla por ordenación/índices, intentamos una carga ultra-simple sin ordenar para que al menos no se rompa la App
-    const qSimple = query(collection(db, COLLECTION_NAME));
+    const qSimple = query(tenantCollection(db, companyId, COLLECTION_NAME));
     const snapSimple = await getDocs(qSimple);
     return snapSimple.docs.map((d) => ({ id: d.id, ...d.data() }));
   }
 }
 
-export async function deleteWorkday(workdayId) {
-  const workdayRef = doc(db, COLLECTION_NAME, workdayId);
+export async function deleteWorkday(companyId, workdayId) {
+  const workdayRef = tenantDoc(db, companyId, COLLECTION_NAME, workdayId);
   await deleteDoc(workdayRef);
 }
 
-export async function getWorkdaysForOperario(userId, startDate, endDate) {
+export async function getWorkdaysForOperario(companyId, userId, startDate, endDate) {
   try {
     const start = Timestamp.fromDate(startOfDay(startDate));
     const end = Timestamp.fromDate(endOfDay(endDate));
 
     // Optimización: consulta directa por rango utilizando el índice compuesto
     const q = query(
-      collection(db, COLLECTION_NAME),
+      tenantCollection(db, companyId, COLLECTION_NAME),
       where("userId", "==", userId),
       where("date", ">=", start),
       where("date", "<=", end),
@@ -220,13 +223,13 @@ export async function getWorkdaysForOperario(userId, startDate, endDate) {
  * Gets a summary of all workdays (active or completed) for a specific date.
  * Useful for aggregating hours from multiple sessions in one day.
  */
-export async function getWorkdaysSummaryForDate(userId, date = new Date()) {
+export async function getWorkdaysSummaryForDate(companyId, userId, date = new Date()) {
   const start = Timestamp.fromDate(startOfDay(date));
   const end = Timestamp.fromDate(endOfDay(date));
 
   // Optimización: consulta directa por rango del día para hoy
   const q = query(
-    collection(db, COLLECTION_NAME),
+    tenantCollection(db, companyId, COLLECTION_NAME),
     where("userId", "==", userId),
     where("date", ">=", start),
     where("date", "<=", end),
@@ -255,7 +258,7 @@ export async function getWorkdaysSummaryForDate(userId, date = new Date()) {
   }
 
   // BUSCAR JORNADA ACTIVA EN TODOS LOS DÍAS (por si se olvidó cerrarla ayer)
-  const globalActiveWd = await getActiveWorkday(userId);
+  const globalActiveWd = await getActiveWorkday(companyId, userId);
   if (globalActiveWd) {
     hasActive = true;
     activeWorkday = globalActiveWd;
@@ -292,8 +295,8 @@ export async function getWorkdaysSummaryForDate(userId, date = new Date()) {
   };
 }
 
-export async function updateWorkdayCompanion(workdayId, companionId) {
-  const workdayRef = doc(db, COLLECTION_NAME, workdayId);
+export async function updateWorkdayCompanion(companyId, workdayId, companionId) {
+  const workdayRef = tenantDoc(db, companyId, COLLECTION_NAME, workdayId);
   await updateDoc(workdayRef, {
     currentCompanionId: companionId,
     updatedAt: serverTimestamp(),
@@ -303,9 +306,9 @@ export async function updateWorkdayCompanion(workdayId, companionId) {
 /**
  * Finds all active workdays where the specified user is a companion.
  */
-export async function getActiveWorkdaysForCompanion(userId) {
+export async function getActiveWorkdaysForCompanion(companyId, userId) {
   const q = query(
-    collection(db, COLLECTION_NAME),
+    tenantCollection(db, companyId, COLLECTION_NAME),
     where("currentCompanionId", "==", userId),
     where("status", "==", "active"),
   );
@@ -320,8 +323,8 @@ export async function getActiveWorkdaysForCompanion(userId) {
  * Activates car mode for the current workday.
  * Creates a new car session with startTime = now.
  */
-export async function activateCar(workdayId) {
-  const workdayRef = doc(db, COLLECTION_NAME, workdayId);
+export async function activateCar(companyId, workdayId) {
+  const workdayRef = tenantDoc(db, companyId, COLLECTION_NAME, workdayId);
   const now = Timestamp.fromDate(new Date());
 
   await updateDoc(workdayRef, {
@@ -336,8 +339,8 @@ export async function activateCar(workdayId) {
  * Deactivates car mode for the current workday.
  * Closes the active car session.
  */
-export async function deactivateCar(workdayId, breadcrumbs = []) {
-  const workdayRef = doc(db, COLLECTION_NAME, workdayId);
+export async function deactivateCar(companyId, workdayId, breadcrumbs = []) {
+  const workdayRef = tenantDoc(db, companyId, COLLECTION_NAME, workdayId);
   const now = new Date();
 
   // Get current sessions and close the open one
@@ -384,14 +387,14 @@ export async function deactivateCar(workdayId, breadcrumbs = []) {
  * 3. If no check-outs, use the maximum checkInTime.
  * 4. Also check for car sessions breadcrumbs in the workday itself.
  */
-export async function findLastActivityForUser(userId, date, workdayId = null) {
+export async function findLastActivityForUser(companyId, userId, date, workdayId = null) {
   try {
     const start = Timestamp.fromDate(startOfDay(date));
     const end = Timestamp.fromDate(endOfDay(date));
 
     // 1. Get check-ins where user is the titular
     const qCheckIns = query(
-      collection(db, "checkIns"),
+      tenantCollection(db, companyId, "checkIns"),
       where("userId", "==", userId),
       where("checkInTime", ">=", start),
       where("checkInTime", "<=", end),
@@ -413,7 +416,7 @@ export async function findLastActivityForUser(userId, date, workdayId = null) {
 
     // 2. Check car breadcrumbs if workdayId is provided
     if (workdayId) {
-      const wdRef = doc(db, COLLECTION_NAME, workdayId);
+      const wdRef = tenantDoc(db, companyId, COLLECTION_NAME, workdayId);
       const wdSnap = await getDoc(wdRef);
       if (wdSnap.exists()) {
         const wdData = wdSnap.data();
@@ -446,7 +449,7 @@ export async function findLastActivityForUser(userId, date, workdayId = null) {
     // This covers the case where the user accompanied another operario
     try {
       const qCompanionServices = query(
-        collection(db, "scheduledServices"),
+        tenantCollection(db, companyId, "scheduledServices"),
         where("companionIds", "array-contains", userId),
       );
       const snapCompanion = await getDocs(qCompanionServices);
@@ -510,7 +513,7 @@ export async function findLastActivityForUser(userId, date, workdayId = null) {
 
       for (const titularId of titularIdsFromCompanionServices) {
         const qTitularCheckIns = query(
-          collection(db, "checkIns"),
+          tenantCollection(db, companyId, "checkIns"),
           where("userId", "==", titularId),
           where("checkInTime", ">=", start),
           where("checkInTime", "<=", end),
@@ -544,8 +547,8 @@ export async function findLastActivityForUser(userId, date, workdayId = null) {
 /**
  * Closes a workday that was left open, using a specific suggested time.
  */
-export async function closeStaleWorkday(workdayId, suggestedEndTime) {
-  const workdayRef = doc(db, COLLECTION_NAME, workdayId);
+export async function closeStaleWorkday(companyId, workdayId, suggestedEndTime) {
+  const workdayRef = tenantDoc(db, companyId, COLLECTION_NAME, workdayId);
   const workdaySnap = await getDoc(workdayRef);
 
   if (!workdaySnap.exists()) throw new Error("Workday not found");
@@ -589,6 +592,7 @@ export async function closeStaleWorkday(workdayId, suggestedEndTime) {
       ? workdayData.date.toDate()
       : startTime;
     await calculateDailyMileage(
+      companyId,
       workdayData.userId,
       logicalDate,
       workdayData.userName || "Operario",
@@ -604,8 +608,8 @@ export async function closeStaleWorkday(workdayId, suggestedEndTime) {
 /**
  * Updates a workday's times manually (for Admin corrections).
  */
-export async function updateWorkdayTimes(workdayId, newStartTime, newEndTime) {
-  const workdayRef = doc(db, COLLECTION_NAME, workdayId);
+export async function updateWorkdayTimes(companyId, workdayId, newStartTime, newEndTime) {
+  const workdayRef = tenantDoc(db, companyId, COLLECTION_NAME, workdayId);
   const workdaySnap = await getDoc(workdayRef);
 
   if (!workdaySnap.exists()) throw new Error("Workday not found");
@@ -633,6 +637,7 @@ export async function updateWorkdayTimes(workdayId, newStartTime, newEndTime) {
         ? workdayData.date.toDate()
         : startTime;
       await calculateDailyMileage(
+        companyId,
         workdayData.userId,
         logicalDate,
         workdayData.userName || "Operario",
@@ -649,8 +654,8 @@ export async function updateWorkdayTimes(workdayId, newStartTime, newEndTime) {
 /**
  * Gets car sessions for a specific workday.
  */
-export async function getCarSessions(workdayId) {
-  const workdayRef = doc(db, COLLECTION_NAME, workdayId);
+export async function getCarSessions(companyId, workdayId) {
+  const workdayRef = tenantDoc(db, companyId, COLLECTION_NAME, workdayId);
   const snap = await getDoc(workdayRef);
   if (!snap.exists()) return [];
   return snap.data().carSessions || [];

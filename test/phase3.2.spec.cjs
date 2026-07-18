@@ -4,45 +4,46 @@ const fs = require('fs');
 
 let testEnv;
 
-before(async () => {
-  // Configurar testEnv
-  testEnv = await initializeTestEnvironment({
-    projectId: "demo-project",
-    firestore: {
-      host: "127.0.0.1",
-      port: 8080,
-      rules: fs.readFileSync("firestore.rules", "utf8"),
-    },
+describe('Phase 3.2: Communities Vertical Isolation', function () {
+  this.timeout(15000);
+
+  before(async () => {
+    // Configurar testEnv
+    testEnv = await initializeTestEnvironment({
+      projectId: "demo-project",
+      firestore: {
+        host: "127.0.0.1",
+        port: 8080,
+        rules: fs.readFileSync("firestore.rules", "utf8"),
+      },
+    });
   });
-});
 
-beforeEach(async () => {
-  await testEnv.clearFirestore();
+  beforeEach(async () => {
+    await testEnv.clearFirestore();
 
-  // Setup basic data
-  await testEnv.withSecurityRulesDisabled(async (context) => {
-    const db = context.firestore();
-    // Create users
-    await setDoc(doc(db, "users", "raybaUser"), { companyId: "rayba", role: "operario", active: true });
-    await setDoc(doc(db, "users", "tenantBUser"), { companyId: "tenantB", role: "operario", active: true });
+    // Setup basic data
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      // Create users
+      await setDoc(doc(db, "users", "raybaUser"), { companyId: "rayba", role: "operario", active: true });
+      await setDoc(doc(db, "users", "tenantBUser"), { companyId: "tenantB", role: "operario", active: true });
 
-    // Create companies
-    await setDoc(doc(db, "companies", "rayba", "settings", "billing"), { dummy: true });
-    await setDoc(doc(db, "companies", "tenantB", "settings", "billing"), { dummy: true });
+      // Create companies
+      await setDoc(doc(db, "companies", "rayba", "settings", "billing"), { dummy: true });
+      await setDoc(doc(db, "companies", "tenantB", "settings", "billing"), { dummy: true });
 
-    // Create a community in rayba
-    await setDoc(doc(db, "companies", "rayba", "communities", "commRayba"), { name: "Comm Rayba", active: true });
-    
-    // Create a community in tenantB
-    await setDoc(doc(db, "companies", "tenantB", "communities", "commB"), { name: "Comm B", active: true });
+      // Create a community in rayba
+      await setDoc(doc(db, "companies", "rayba", "communities", "commRayba"), { name: "Comm Rayba", active: true });
+      
+      // Create a community in tenantB
+      await setDoc(doc(db, "companies", "tenantB", "communities", "commB"), { name: "Comm B", active: true });
+    });
   });
-});
 
-after(async () => {
-  await testEnv.cleanup();
-});
-
-describe('Phase 3.2: Communities Vertical Isolation', () => {
+  after(async () => {
+    await testEnv.cleanup();
+  });
   describe('Global users queries', () => {
     it('should ALLOW Rayba user to query users where companyId == rayba', async () => {
       const db = testEnv.authenticatedContext("raybaUser", { companyId: "rayba", role: "admin", active: true }).firestore();

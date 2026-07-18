@@ -1537,7 +1537,7 @@ exports.getClientPortalData = onCall(
 );
 
 /**
- * Trigger de Firestore para mantener actualizados los Custom Claims (role, active) de Firebase Auth.
+ * Trigger de Firestore para mantener actualizados los Custom Claims (role, active, companyId) de Firebase Auth.
  * Se ejecuta al crear, actualizar o borrar un documento en users/{uid}.
  */
 exports.onUserDocumentWritten = onDocumentWritten(
@@ -1567,23 +1567,30 @@ exports.onUserDocumentWritten = onDocumentWritten(
       // Caso 2: El documento de usuario ha sido creado o actualizado
       const role = afterData.role || "";
       const active = afterData.active !== false; // por defecto true si no se especifica
+      const companyId = afterData.companyId || null;
 
       // Evitamos llamadas innecesarias si los claims ya son los mismos que antes
       if (
         beforeData &&
         beforeData.role === role &&
-        beforeData.active === active
+        beforeData.active === active &&
+        beforeData.companyId === companyId
       ) {
         logger.log(
-          `No hay cambios en los claims relevantes (role: ${role}, active: ${active}) para uid: ${uid}. Omitiendo actualización.`,
+          `No hay cambios en los claims relevantes (role: ${role}, active: ${active}, companyId: ${companyId}) para uid: ${uid}. Omitiendo actualización.`,
         );
         return null;
       }
 
+      const claims = { role, active };
+      if (companyId) {
+        claims.companyId = companyId;
+      }
+
       logger.log(
-        `Estableciendo custom claims para uid: ${uid} -> role: ${role}, active: ${active}`,
+        `Estableciendo custom claims para uid: ${uid} -> role: ${role}, active: ${active}, companyId: ${companyId}`,
       );
-      await authAdmin.setCustomUserClaims(uid, { role, active });
+      await authAdmin.setCustomUserClaims(uid, claims);
       logger.log(`Custom claims establecidos exitosamente para uid: ${uid}`);
     } catch (error) {
       logger.error(`Error al establecer custom claims para uid ${uid}:`, error);

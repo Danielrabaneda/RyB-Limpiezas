@@ -13,12 +13,13 @@ import {
 } from "firebase/firestore";
 import { db } from "../config/firebase";
 import { startOfDay, endOfDay } from "date-fns";
+import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
 
 /**
  * Create a new evidence report (photos + notes submitted by an operario)
  */
-export async function createEvidenceReport(data) {
-  const ref = await addDoc(collection(db, "evidenceReports"), {
+export async function createEvidenceReport(companyId, data) {
+  const ref = await addDoc(tenantCollection(db, companyId, "evidenceReports"), {
     scheduledServiceId: data.scheduledServiceId,
     communityId: data.communityId,
     communityName: data.communityName || "",
@@ -38,6 +39,7 @@ export async function createEvidenceReport(data) {
  * Get all evidence reports within a date range, optionally filtered
  */
 export async function getEvidenceReportsRange(
+  companyId,
   startDate,
   endDate,
   filters = {},
@@ -48,7 +50,7 @@ export async function getEvidenceReportsRange(
   let q;
   if (filters.userId) {
     q = query(
-      collection(db, "evidenceReports"),
+      tenantCollection(db, companyId, "evidenceReports"),
       where("userId", "==", filters.userId),
       where("createdAt", ">=", start),
       where("createdAt", "<=", end),
@@ -56,7 +58,7 @@ export async function getEvidenceReportsRange(
     );
   } else {
     q = query(
-      collection(db, "evidenceReports"),
+      tenantCollection(db, companyId, "evidenceReports"),
       where("createdAt", ">=", start),
       where("createdAt", "<=", end),
       orderBy("createdAt", "desc"),
@@ -75,15 +77,15 @@ export async function getEvidenceReportsRange(
 /**
  * Delete an evidence report
  */
-export async function deleteEvidenceReport(id) {
-  await deleteDoc(doc(db, "evidenceReports", id));
+export async function deleteEvidenceReport(companyId, id) {
+  await deleteDoc(tenantDoc(db, companyId, "evidenceReports", id));
 }
 
 /**
  * Mark an evidence report as reviewed
  */
-export async function markEvidenceReviewed(id) {
-  await updateDoc(doc(db, "evidenceReports", id), {
+export async function markEvidenceReviewed(companyId, id) {
+  await updateDoc(tenantDoc(db, companyId, "evidenceReports", id), {
     status: "reviewed",
     reviewedAt: serverTimestamp(),
   });

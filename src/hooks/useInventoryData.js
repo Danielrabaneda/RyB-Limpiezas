@@ -13,7 +13,10 @@ import {
 } from "../services/materialService";
 import { getAllUsers } from "../services/authService";
 
+import { useEffect } from "react";
+
 export function useInventoryData({
+  companyId,
   currentUser,
   userProfile,
   actionLoading,
@@ -26,13 +29,20 @@ export function useInventoryData({
   const [loading, setLoading] = useState(true);
 
   const loadData = async () => {
+    if (!companyId) {
+      setProducts([]);
+      setOrders([]);
+      setMovements([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const [pData, oData, uData, mData] = await Promise.all([
-        getProducts(),
-        getMaterialRequests(),
-        getAllUsers(),
-        getStockMovements(200),
+        getProducts(companyId),
+        getMaterialRequests(companyId),
+        getAllUsers(companyId),
+        getStockMovements(companyId, 200),
       ]);
 
       setProducts(pData);
@@ -49,11 +59,25 @@ export function useInventoryData({
     }
   };
 
+  useEffect(() => {
+    // Reset state before loading new tenant data to prevent stale data display
+    setProducts([]);
+    setOrders([]);
+    setMovements([]);
+    setUsers({});
+    if (companyId) {
+      loadData();
+    } else {
+      setLoading(false);
+    }
+  }, [companyId]);
+
   const handleStatusChange = async (orderId, status) => {
-    if (!currentUser?.uid) return;
+    if (!currentUser?.uid || !companyId) return;
     setActionLoading(true);
     try {
       await updateRequestStatus(
+        companyId,
         orderId,
         status,
         currentUser.uid,
@@ -69,10 +93,10 @@ export function useInventoryData({
   };
 
   const handleDeleteOrder = async (id) => {
-    if (!confirm("¿Borrar este pedido?")) return;
+    if (!confirm("¿Borrar este pedido?") || !companyId) return;
     setActionLoading(true);
     try {
-      await deleteMaterialRequest(id);
+      await deleteMaterialRequest(companyId, id);
       await loadData();
     } catch (err) {
       console.error("[useInventoryData] Error deleting request:", err);
@@ -83,9 +107,10 @@ export function useInventoryData({
   };
 
   const handleAddProduct = async (productData) => {
+    if (!companyId) return;
     setActionLoading(true);
     try {
-      await createProduct(productData);
+      await createProduct(companyId, productData);
       await loadData();
     } catch (err) {
       console.error("[useInventoryData] Error creating product:", err);
@@ -97,9 +122,10 @@ export function useInventoryData({
   };
 
   const handleEditProductSubmit = async (productId, editData) => {
+    if (!companyId) return;
     setActionLoading(true);
     try {
-      await updateProduct(productId, editData);
+      await updateProduct(companyId, productId, editData);
       await loadData();
     } catch (err) {
       console.error("[useInventoryData] Error updating product:", err);
@@ -114,12 +140,12 @@ export function useInventoryData({
     if (
       !confirm(
         "¿Borrar producto del catálogo? ¡Se perderá el inventario actual de este producto!",
-      )
+      ) || !companyId
     )
       return;
     setActionLoading(true);
     try {
-      await deleteProduct(id);
+      await deleteProduct(companyId, id);
       await loadData();
     } catch (err) {
       console.error("[useInventoryData] Error deleting product:", err);
@@ -130,10 +156,12 @@ export function useInventoryData({
   };
 
   const handleStockAction = async (type, product, quantity, notes) => {
+    if (!companyId) return;
     setActionLoading(true);
     try {
       if (type === "in") {
         await addStock(
+          companyId,
           product.id,
           product.name,
           quantity,
@@ -143,6 +171,7 @@ export function useInventoryData({
         );
       } else if (type === "adjust") {
         await adjustStock(
+          companyId,
           product.id,
           product.name,
           quantity,

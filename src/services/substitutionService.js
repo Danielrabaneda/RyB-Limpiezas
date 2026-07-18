@@ -11,6 +11,7 @@ import { getOperarios } from "./authService";
 import { checkUserAbsenceForDate } from "./absenceService";
 import { getDistance } from "../utils/geolocation";
 import { getAllOpenCheckIns } from "./checkInService";
+import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
 
 /**
  * Busca y sugiere operarios sustitutos disponibles para un servicio afectado en una fecha.
@@ -19,9 +20,9 @@ import { getAllOpenCheckIns } from "./checkInService";
  * @param {Date} date - Fecha en la que se realiza la sustitución.
  * @returns {Promise<Array>} Lista de operarios candidatos ordenados por distancia al servicio.
  */
-export async function findSubstitutesForService({ serviceId, date }) {
+export async function findSubstitutesForService(companyId, { serviceId, date }) {
   // 1. Obtener detalles del servicio afectado
-  const serviceSnap = await getDoc(doc(db, "scheduledServices", serviceId));
+  const serviceSnap = await getDoc(tenantDoc(db, companyId, "scheduledServices", serviceId));
   if (!serviceSnap.exists()) {
     throw new Error("Servicio no encontrado");
   }
@@ -29,7 +30,7 @@ export async function findSubstitutesForService({ serviceId, date }) {
   const communityId = serviceData.communityId;
 
   // 2. Obtener la ubicación de la comunidad
-  const communitySnap = await getDoc(doc(db, "communities", communityId));
+  const communitySnap = await getDoc(tenantDoc(db, companyId, "communities", communityId));
   if (!communitySnap.exists()) {
     throw new Error("Comunidad asociada no encontrada");
   }
@@ -45,7 +46,7 @@ export async function findSubstitutesForService({ serviceId, date }) {
   const targetLng = location._long || location.longitude;
 
   // 3. Obtener todos los operarios habilitados
-  const operarios = await getOperarios();
+  const operarios = await getOperarios(companyId);
 
   // 4. Filtrar candidatos disponibles
   const candidates = [];
@@ -55,14 +56,14 @@ export async function findSubstitutesForService({ serviceId, date }) {
     if (op.uid === serviceData.assignedUserId) continue;
 
     // B. Comprobar si el candidato está ausente o de baja en esta fecha
-    const isAbsent = await checkUserAbsenceForDate(op.uid, date);
+    const isAbsent = await checkUserAbsenceForDate(companyId, op.uid, date);
     if (isAbsent) continue;
 
     // C. Comprobar si ya tiene otro servicio asignado en el mismo rango de hora (colisión horaria)
     // Para simplificar, buscamos si tiene servicios el mismo día
     const dateStr = date.toISOString().split("T")[0];
     const collisionQuery = query(
-      collection(db, "scheduledServices"),
+      tenantCollection(db, companyId, "scheduledServices"),
       where("assignedUserId", "==", op.uid),
       where("date", "==", dateStr),
       where("status", "in", ["pending", "in_progress"]),
@@ -78,7 +79,7 @@ export async function findSubstitutesForService({ serviceId, date }) {
         const otherSvc = d.data();
         // Obtener detalles de la otra comunidad para saber su hora preferida
         const otherCommSnap = await getDoc(
-          doc(db, "communities", otherSvc.communityId),
+          tenantDoc(db, companyId, "communities", otherSvc.communityId),
         );
         if (otherCommSnap.exists()) {
           const otherComm = otherCommSnap.data();
@@ -97,12 +98,12 @@ export async function findSubstitutesForService({ serviceId, date }) {
     let opLat = null;
     let opLng = null;
 
-    const activeCheckIns = await getAllOpenCheckIns(op.uid);
+    const activeCheckIns = await getAllOpenCheckIns(companyId, op.uid);
 
     if (activeCheckIns.length > 0) {
       const activeCheckIn = activeCheckIns[0];
       const activeCommSnap = await getDoc(
-        doc(db, "communities", activeCheckIn.communityId),
+        tenantDoc(db, companyId, "communities", activeCheckIn.communityId),
       );
       if (activeCommSnap.exists() && activeCommSnap.data().location) {
         const loc = activeCommSnap.data().location;
@@ -115,7 +116,7 @@ export async function findSubstitutesForService({ serviceId, date }) {
     if ((opLat === null || opLng === null) && !collisionSnap.empty) {
       const firstSvc = collisionSnap.docs[0].data();
       const firstCommSnap = await getDoc(
-        doc(db, "communities", firstSvc.communityId),
+        tenantDoc(db, companyId, "communities", firstSvc.communityId),
       );
       if (firstCommSnap.exists() && firstCommSnap.data().location) {
         const loc = firstCommSnap.data().location;

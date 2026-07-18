@@ -33,6 +33,8 @@ import {
 import { db } from "../config/firebase";
 import { createTaskExecution } from "../services/checkInService";
 import { parseHHMM, formatTimeToHHMM } from "../utils/formatTime";
+import { useTenant } from "../contexts/TenantContext";
+import { tenantCollection } from "../utils/tenantFirestore";
 
 export function useCheckInFlow(
   serviceId,
@@ -59,6 +61,8 @@ export function useCheckInFlow(
     groupedServices,
     loadStaticData,
   } = serviceData;
+
+  const { companyId } = useTenant();
 
   const [localActionLoading, setLocalActionLoading] = useState(false);
   const actionLoading =
@@ -271,7 +275,7 @@ export function useCheckInFlow(
   const calculateEstimates = async (userId, currentSvc, workday) => {
     try {
       const today = new Date();
-      const checkIns = await getCheckInsForDate(userId, today);
+      const checkIns = await getCheckInsForDate(companyId, userId, today);
       const completedCheckIns = checkIns
         .filter((c) => c.checkOutTime !== null)
         .sort((a, b) => {
@@ -296,9 +300,9 @@ export function useCheckInFlow(
         let travelMinutes = 15;
 
         try {
-          const lastComm = await getCommunity(lastCheckIn.communityId);
+          const lastComm = await getCommunity(companyId, lastCheckIn.communityId);
           if (lastComm?.location && currentSvc?.communityId) {
-            const currentComm = await getCommunity(currentSvc.communityId);
+            const currentComm = await getCommunity(companyId, currentSvc.communityId);
             if (currentComm?.location) {
               const lat1 =
                 lastComm.location._lat || lastComm.location.latitude || 0;
@@ -434,7 +438,7 @@ export function useCheckInFlow(
         return;
       }
 
-      const checkInId = await createCheckIn({
+      const checkInId = await createCheckIn(companyId, {
         userId: userProfile.uid,
         scheduledServiceId: serviceId,
         lat: pos.lat,
@@ -458,15 +462,15 @@ export function useCheckInFlow(
       const currentGroup =
         groupedServices.length > 0 ? groupedServices : [service];
       for (const s of currentGroup) {
-        await updateScheduledServiceStatus(s.id, "in_progress");
+        await updateScheduledServiceStatus(companyId, s.id, "in_progress");
         if (s.assignedUserId !== userProfile.uid) {
           if (!s.companionIds?.includes(userProfile.uid)) {
-            await addCompanionToService(s.id, userProfile.uid);
+            await addCompanionToService(companyId, s.id, userProfile.uid);
           }
         }
         if (activeWorkday?.currentCompanionId) {
           if (!s.companionIds?.includes(activeWorkday.currentCompanionId)) {
-            await addCompanionToService(s.id, activeWorkday.currentCompanionId);
+            await addCompanionToService(companyId, s.id, activeWorkday.currentCompanionId);
           }
         }
       }
@@ -494,7 +498,7 @@ export function useCheckInFlow(
 
       for (const companionId of otherUsers) {
         try {
-          await createCheckIn({
+          await createCheckIn(companyId, {
             userId: companionId,
             scheduledServiceId: serviceId,
             lat: pos.lat,
@@ -518,7 +522,7 @@ export function useCheckInFlow(
 
       let allTasks = tasks;
       if (allTasks.length === 0) {
-        allTasks = await getCommunityTasks(service.communityId);
+        allTasks = await getCommunityTasks(companyId, service.communityId);
       }
 
       const svcDate = service.scheduledDate?.toDate
@@ -535,7 +539,7 @@ export function useCheckInFlow(
         );
 
         const qWeeklyExecs = query(
-          collection(db, "taskExecutions"),
+          tenantCollection(db, companyId, "taskExecutions"),
           where("userId", "==", userProfile.uid),
           where("createdAt", ">=", startW),
           where("createdAt", "<=", endW),
@@ -580,7 +584,7 @@ export function useCheckInFlow(
       let pendingRedTaskIds = new Set();
       try {
         const qPendingRed = query(
-          collection(db, "scheduledServices"),
+          tenantCollection(db, companyId, "scheduledServices"),
           where("communityId", "==", service.communityId),
           where("status", "==", "pending"),
         );
@@ -659,7 +663,7 @@ export function useCheckInFlow(
           (e) => e.communityTaskId === task.id,
         );
         if (!existing) {
-          await createTaskExecution({
+          await createTaskExecution(companyId, {
             scheduledServiceId: serviceId,
             communityTaskId: task.id,
             userId: userProfile.uid,
@@ -836,6 +840,7 @@ export function useCheckInFlow(
       }
 
       const result = await completeCheckOut(
+        companyId,
         activeCheckIn.id,
         lat,
         lng,
@@ -849,14 +854,14 @@ export function useCheckInFlow(
 
       try {
         const qComp = query(
-          collection(db, "checkIns"),
+          tenantCollection(db, companyId, "checkIns"),
           where("scheduledServiceId", "==", serviceId),
           where("checkOutTime", "==", null),
         );
         const compSnap = await getDocs(qComp);
         for (const docSnap of compSnap.docs) {
           if (docSnap.id !== activeCheckIn.id) {
-            await completeCheckOut(docSnap.id, lat, lng, manualTime, null, {
+            await completeCheckOut(companyId, docSnap.id, lat, lng, manualTime, null, {
               ...pos,
               exceptionReason,
             });
@@ -889,12 +894,12 @@ export function useCheckInFlow(
           const isGarage = sName.includes("garaje");
 
           if ((exec && exec.status === "completed") || isException) {
-            await updateScheduledServiceStatus(s.id, "completed");
+            await updateScheduledServiceStatus(companyId, s.id, "completed");
           } else {
-            await passTaskToNextService(s, isGarage);
+            await passTaskToNextService(companyId, s, isGarage);
           }
         } else {
-          await updateScheduledServiceStatus(s.id, "completed");
+          await updateScheduledServiceStatus(companyId, s.id, "completed");
         }
       }
 
@@ -963,7 +968,7 @@ export function useCheckInFlow(
         }
       }
 
-      const checkInId = await createCheckIn({
+      const checkInId = await createCheckIn(companyId, {
         userId: userProfile.uid,
         communityId: service.communityId,
         scheduledServiceId: serviceId,
@@ -977,6 +982,7 @@ export function useCheckInFlow(
       });
 
       await completeCheckOut(
+        companyId,
         checkInId,
         pos.lat,
         pos.lng,
@@ -1008,7 +1014,7 @@ export function useCheckInFlow(
 
       for (const companionId of otherUsers) {
         try {
-          const compCheckInId = await createCheckIn({
+          const compCheckInId = await createCheckIn(companyId, {
             userId: companionId,
             communityId: service.communityId,
             scheduledServiceId: serviceId,
@@ -1021,6 +1027,7 @@ export function useCheckInFlow(
             exceptionReason,
           });
           await completeCheckOut(
+            companyId,
             compCheckInId,
             pos.lat,
             pos.lng,
@@ -1044,16 +1051,16 @@ export function useCheckInFlow(
             (e) => e.communityTaskId === s.communityTaskId,
           );
           if (exec && exec.status === "completed") {
-            await updateScheduledServiceStatus(s.id, "completed");
+            await updateScheduledServiceStatus(companyId, s.id, "completed");
           } else {
-            await updateScheduledServiceStatus(s.id, "missed");
+            await updateScheduledServiceStatus(companyId, s.id, "missed");
           }
         } else {
-          await updateScheduledServiceStatus(s.id, "completed");
+          await updateScheduledServiceStatus(companyId, s.id, "completed");
         }
         if (s.assignedUserId !== userProfile.uid) {
           if (!s.companionIds?.includes(userProfile.uid)) {
-            await addCompanionToService(s.id, userProfile.uid);
+            await addCompanionToService(companyId, s.id, userProfile.uid);
           }
         }
       }
@@ -1139,12 +1146,12 @@ export function useCheckInFlow(
             const isGarage = sName.includes("garaje");
 
             if ((exec && exec.status === "completed") || isException) {
-              await updateScheduledServiceStatus(s.id, "completed");
+              await updateScheduledServiceStatus(companyId, s.id, "completed");
             } else {
-              await passTaskToNextService(s, isGarage);
+              await passTaskToNextService(companyId, s, isGarage);
             }
           } else {
-            await updateScheduledServiceStatus(s.id, "completed");
+            await updateScheduledServiceStatus(companyId, s.id, "completed");
           }
         }
         alert("Servicio marcado como terminado");

@@ -12,6 +12,7 @@ import {
   Timestamp,
 } from "firebase/firestore";
 import { db } from "../config/firebase";
+import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
 import { startOfDay, endOfDay, startOfWeek, endOfWeek } from "date-fns";
 import {
   deleteFutureServicesForTask,
@@ -21,13 +22,11 @@ import {
 /**
  * Reprograma un servicio a una nueva fecha.
  */
-export async function rescheduleService({
-  serviceId,
-  newDate,
-  requesterRole,
-  userId,
-}) {
-  const serviceRef = doc(db, "scheduledServices", serviceId);
+export async function rescheduleService(
+  companyId,
+  { serviceId, newDate, requesterRole, userId }
+) {
+  const serviceRef = tenantDoc(db, companyId, "scheduledServices", serviceId);
   const serviceSnap = await getDoc(serviceRef);
   if (!serviceSnap.exists()) throw new Error("Servicio no encontrado");
 
@@ -66,7 +65,7 @@ export async function rescheduleService({
 
     if (requesterRole !== "admin") {
       // Registrar log aprobado para auditoría de forma atómica en el mismo lote
-      const logRef = doc(collection(db, "transfers"));
+      const logRef = doc(tenantCollection(db, companyId, "transfers"));
       batch.set(logRef, {
         serviceId,
         userId,
@@ -79,7 +78,7 @@ export async function rescheduleService({
       });
     }
   } else {
-    const logRef = doc(collection(db, "transfers"));
+    const logRef = doc(tenantCollection(db, companyId, "transfers"));
     const transferData = {
       serviceId,
       userId,
@@ -103,13 +102,18 @@ export async function rescheduleService({
   await batch.commit();
 }
 
-export async function transferService({
-  serviceId,
-  fromUserId,
-  toUserId,
-  requesterRole,
-}) {
-  const serviceRef = doc(db, "scheduledServices", serviceId);
+export async function transferService(
+  companyId,
+  { serviceId, fromUserId, toUserId, requesterRole }
+) {
+  if (toUserId) {
+    const targetUserSnap = await getDoc(doc(db, "users", toUserId));
+    if (!targetUserSnap.exists() || targetUserSnap.data().companyId !== companyId) {
+      throw new Error("El usuario destino no pertenece a este tenant.");
+    }
+  }
+
+  const serviceRef = tenantDoc(db, companyId, "scheduledServices", serviceId);
   const serviceSnap = await getDoc(serviceRef);
 
   if (!serviceSnap.exists()) throw new Error("Servicio no encontrado");
@@ -135,7 +139,7 @@ export async function transferService({
     }
   }
 
-  const transferRef = doc(collection(db, "transfers"));
+  const transferRef = doc(tenantCollection(db, companyId, "transfers"));
   const batch = writeBatch(db);
   const transferData = {
     serviceId,
@@ -171,17 +175,22 @@ export async function transferService({
   return transferRef.id;
 }
 
-export async function transferDay({
-  date,
-  fromUserId,
-  toUserId,
-  requesterRole,
-}) {
+export async function transferDay(
+  companyId,
+  { date, fromUserId, toUserId, requesterRole }
+) {
+  if (toUserId) {
+    const targetUserSnap = await getDoc(doc(db, "users", toUserId));
+    if (!targetUserSnap.exists() || targetUserSnap.data().companyId !== companyId) {
+      throw new Error("El usuario destino no pertenece a este tenant.");
+    }
+  }
+
   const start = Timestamp.fromDate(startOfDay(date));
   const end = Timestamp.fromDate(endOfDay(date));
 
   const q = query(
-    collection(db, "scheduledServices"),
+    tenantCollection(db, companyId, "scheduledServices"),
     where("assignedUserId", "==", fromUserId),
     where("scheduledDate", ">=", start),
     where("scheduledDate", "<=", end),
@@ -228,7 +237,7 @@ export async function transferDay({
     );
   }
 
-  const transferRef = doc(collection(db, "transfers"));
+  const transferRef = doc(tenantCollection(db, companyId, "transfers"));
   const transferData = {
     date: Timestamp.fromDate(date),
     fromUserId,
@@ -276,19 +285,24 @@ export async function transferDay({
   return transferRef.id;
 }
 
-export async function transferWeek({
-  dateInWeek,
-  fromUserId,
-  toUserId,
-  requesterRole,
-}) {
+export async function transferWeek(
+  companyId,
+  { dateInWeek, fromUserId, toUserId, requesterRole }
+) {
+  if (toUserId) {
+    const targetUserSnap = await getDoc(doc(db, "users", toUserId));
+    if (!targetUserSnap.exists() || targetUserSnap.data().companyId !== companyId) {
+      throw new Error("El usuario destino no pertenece a este tenant.");
+    }
+  }
+
   const weekStart = startOfWeek(dateInWeek, { weekStartsOn: 1 });
   const weekEnd = endOfWeek(dateInWeek, { weekStartsOn: 1 });
   const start = Timestamp.fromDate(startOfDay(weekStart));
   const end = Timestamp.fromDate(endOfDay(weekEnd));
 
   const q = query(
-    collection(db, "scheduledServices"),
+    tenantCollection(db, companyId, "scheduledServices"),
     where("assignedUserId", "==", fromUserId),
     where("scheduledDate", ">=", start),
     where("scheduledDate", "<=", end),
@@ -335,7 +349,7 @@ export async function transferWeek({
     );
   }
 
-  const transferRef = doc(collection(db, "transfers"));
+  const transferRef = doc(tenantCollection(db, companyId, "transfers"));
   const transferData = {
     startDate: Timestamp.fromDate(weekStart),
     endDate: Timestamp.fromDate(weekEnd),
@@ -391,13 +405,18 @@ export async function transferWeek({
  * - Regenerates services with the new operario
  * - Creates an audit record in 'transfers' collection
  */
-export async function transferPermanent({
-  communityTaskId,
-  fromUserId,
-  toUserId,
-  adminUserId,
-}) {
-  const taskRef = doc(db, "communityTasks", communityTaskId);
+export async function transferPermanent(
+  companyId,
+  { communityTaskId, fromUserId, toUserId, adminUserId }
+) {
+  if (toUserId) {
+    const targetUserSnap = await getDoc(doc(db, "users", toUserId));
+    if (!targetUserSnap.exists() || targetUserSnap.data().companyId !== companyId) {
+      throw new Error("El usuario destino no pertenece a este tenant.");
+    }
+  }
+
+  const taskRef = tenantDoc(db, companyId, "communityTasks", communityTaskId);
   const taskSnap = await getDoc(taskRef);
   if (!taskSnap.exists()) throw new Error("Tarea no encontrada");
 
@@ -410,7 +429,7 @@ export async function transferPermanent({
   });
 
   // 2. Create audit trail
-  await addDoc(collection(db, "transfers"), {
+  await addDoc(tenantCollection(db, companyId, "transfers"), {
     communityTaskId,
     communityId: taskData.communityId,
     taskName: taskData.taskName,
@@ -424,21 +443,21 @@ export async function transferPermanent({
   });
 
   // 3. Delete future pending services and regenerate with new assignment
-  await deleteFutureServicesForTask(communityTaskId);
-  await generateServicesForTask(communityTaskId);
+  await deleteFutureServicesForTask(companyId, communityTaskId);
+  await generateServicesForTask(companyId, communityTaskId);
 }
 
-export async function getPendingTransfers() {
+export async function getPendingTransfers(companyId) {
   const q = query(
-    collection(db, "transfers"),
+    tenantCollection(db, companyId, "transfers"),
     where("status", "==", "pending"),
   );
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
-export async function approveTransfer(transferId) {
-  const transferRef = doc(db, "transfers", transferId);
+export async function approveTransfer(companyId, transferId) {
+  const transferRef = tenantDoc(db, companyId, "transfers", transferId);
   const transferSnap = await getDoc(transferRef);
   if (!transferSnap.exists()) return;
 
@@ -452,7 +471,7 @@ export async function approveTransfer(transferId) {
 
   if (data.type === "date_change") {
     const q = query(
-      collection(db, "scheduledServices"),
+      tenantCollection(db, companyId, "scheduledServices"),
       where("rescheduleId", "==", transferId),
     );
     const servicesSnap = await getDocs(q);
@@ -468,7 +487,7 @@ export async function approveTransfer(transferId) {
   } else {
     // Update all associated services for user transfer
     const q = query(
-      collection(db, "scheduledServices"),
+      tenantCollection(db, companyId, "scheduledServices"),
       where("transferId", "==", transferId),
     );
     const servicesSnap = await getDocs(q);
@@ -485,8 +504,8 @@ export async function approveTransfer(transferId) {
   await batch.commit();
 }
 
-export async function rejectTransfer(transferId) {
-  const transferRef = doc(db, "transfers", transferId);
+export async function rejectTransfer(companyId, transferId) {
+  const transferRef = tenantDoc(db, companyId, "transfers", transferId);
   const transferSnap = await getDoc(transferRef);
   if (!transferSnap.exists()) return;
 
@@ -500,7 +519,7 @@ export async function rejectTransfer(transferId) {
 
   if (data.type === "date_change") {
     const q = query(
-      collection(db, "scheduledServices"),
+      tenantCollection(db, companyId, "scheduledServices"),
       where("rescheduleId", "==", transferId),
     );
     const servicesSnap = await getDocs(q);
@@ -513,7 +532,7 @@ export async function rejectTransfer(transferId) {
   } else {
     // Clear transfer fields
     const q = query(
-      collection(db, "scheduledServices"),
+      tenantCollection(db, companyId, "scheduledServices"),
       where("transferId", "==", transferId),
     );
     const servicesSnap = await getDocs(q);

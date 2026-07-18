@@ -16,6 +16,7 @@ import { db, functions } from "../config/firebase";
 import { httpsCallable } from "firebase/functions";
 import { startOfDay, endOfDay, differenceInMinutes } from "date-fns";
 import { getDistance } from "../utils/geolocation";
+import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
 
 // ==================== CHECK-INS ====================
 export async function createCheckIn(data) {
@@ -92,12 +93,12 @@ export async function completeCheckOut(
   }
 }
 
-export async function getCheckInsForDate(userId, date) {
+export async function getCheckInsForDate(companyId, userId, date) {
   const start = Timestamp.fromDate(startOfDay(date));
   const end = Timestamp.fromDate(endOfDay(date));
 
   const q = query(
-    collection(db, "checkIns"),
+    tenantCollection(db, companyId, "checkIns"),
     where("userId", "==", userId),
     where("checkInTime", ">=", start),
     where("checkInTime", "<=", end),
@@ -107,14 +108,14 @@ export async function getCheckInsForDate(userId, date) {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
-export async function getCheckInsRange(startDate, endDate, filters = {}) {
+export async function getCheckInsRange(companyId, startDate, endDate, filters = {}) {
   const start = Timestamp.fromDate(startOfDay(startDate));
   const end = Timestamp.fromDate(endOfDay(endDate));
 
   let q;
   if (filters.userId) {
     q = query(
-      collection(db, "checkIns"),
+      tenantCollection(db, companyId, "checkIns"),
       where("userId", "==", filters.userId),
       where("checkInTime", ">=", start),
       where("checkInTime", "<=", end),
@@ -122,7 +123,7 @@ export async function getCheckInsRange(startDate, endDate, filters = {}) {
     );
   } else {
     q = query(
-      collection(db, "checkIns"),
+      tenantCollection(db, companyId, "checkIns"),
       where("checkInTime", ">=", start),
       where("checkInTime", "<=", end),
       orderBy("checkInTime", "desc"),
@@ -143,9 +144,9 @@ export async function deleteCheckIn(id) {
   await secureDeleteCheckIn({ checkInId: id });
 }
 
-export async function getAllOpenCheckIns(userId) {
+export async function getAllOpenCheckIns(companyId, userId) {
   const q = query(
-    collection(db, "checkIns"),
+    tenantCollection(db, companyId, "checkIns"),
     where("userId", "==", userId),
     where("checkOutTime", "==", null),
   );
@@ -156,8 +157,8 @@ export async function getAllOpenCheckIns(userId) {
   }));
 }
 
-export async function getActiveCheckIn(userId) {
-  const open = await getAllOpenCheckIns(userId);
+export async function getActiveCheckIn(companyId, userId) {
+  const open = await getAllOpenCheckIns(companyId, userId);
   if (open.length === 0) return null;
 
   // Return the most recent one
@@ -177,8 +178,8 @@ export async function getActiveCheckIn(userId) {
 }
 
 // ==================== TASK EXECUTIONS ====================
-export async function createTaskExecution(data) {
-  const ref = await addDoc(collection(db, "taskExecutions"), {
+export async function createTaskExecution(companyId, data) {
+  const ref = await addDoc(tenantCollection(db, companyId, "taskExecutions"), {
     scheduledServiceId: data.scheduledServiceId,
     communityTaskId: data.communityTaskId,
     userId: data.userId,
@@ -190,28 +191,28 @@ export async function createTaskExecution(data) {
   return { id: ref.id };
 }
 
-export async function updateTaskExecution(id, data) {
-  await updateDoc(doc(db, "taskExecutions", id), {
+export async function updateTaskExecution(companyId, id, data) {
+  await updateDoc(tenantDoc(db, companyId, "taskExecutions", id), {
     ...data,
     updatedAt: serverTimestamp(),
   });
 }
 
-export async function getTaskExecutionsForService(scheduledServiceId) {
+export async function getTaskExecutionsForService(companyId, scheduledServiceId) {
   const q = query(
-    collection(db, "taskExecutions"),
+    tenantCollection(db, companyId, "taskExecutions"),
     where("scheduledServiceId", "==", scheduledServiceId),
   );
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
-export async function getTaskExecutionsRange(startDate, endDate, filters = {}) {
+export async function getTaskExecutionsRange(companyId, startDate, endDate, filters = {}) {
   const start = Timestamp.fromDate(startOfDay(startDate));
   const end = Timestamp.fromDate(endOfDay(endDate));
 
   const q = query(
-    collection(db, "taskExecutions"),
+    tenantCollection(db, companyId, "taskExecutions"),
     where("createdAt", ">=", start),
     where("createdAt", "<=", end),
     orderBy("createdAt", "desc"),

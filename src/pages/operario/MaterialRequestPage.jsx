@@ -5,10 +5,12 @@ import {
 } from "../../services/materialService";
 import { useAuth } from "../../contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
+import { useTenant } from "../../contexts/TenantContext";
 
 export default function MaterialRequestPage() {
   const { userProfile } = useAuth();
   const navigate = useNavigate();
+  const { companyId } = useTenant();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
@@ -19,13 +21,16 @@ export default function MaterialRequestPage() {
   });
 
   useEffect(() => {
-    loadProducts();
-  }, []);
+    if (companyId) {
+      loadProducts();
+    }
+  }, [companyId]);
 
   const loadProducts = async () => {
+    if (!companyId) return;
     setLoading(true);
     try {
-      const data = await getProducts();
+      const data = await getProducts(companyId);
       setProducts(data);
     } catch (err) {
       console.error(err);
@@ -36,13 +41,13 @@ export default function MaterialRequestPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.productId || !userProfile?.uid) return;
+    if (!formData.productId || !userProfile?.uid || !companyId) return;
 
     setSending(true);
     try {
       const selectedProduct = products.find((p) => p.id === formData.productId);
 
-      await createMaterialRequest({
+      await createMaterialRequest(companyId, {
         userId: userProfile.uid,
         communityId: null, // "General / Equipo" ya que se hace desde el menú general
         productId: formData.productId,

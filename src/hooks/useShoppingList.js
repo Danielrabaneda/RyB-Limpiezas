@@ -3,6 +3,7 @@ import { addStock } from "../services/materialService";
 import { format } from "date-fns";
 
 export function useShoppingList({
+  companyId,
   products,
   activeTab,
   currentUser,
@@ -103,6 +104,7 @@ export function useShoppingList({
     try {
       for (const item of selected) {
         await addStock(
+          companyId,
           item.id,
           item.name,
           item.quantityToBuy,

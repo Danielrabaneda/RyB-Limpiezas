@@ -24,6 +24,8 @@ import {
   doc,
 } from "firebase/firestore";
 import { db } from "./config/firebase";
+import { RequireTenant, useTenant } from "./contexts/TenantContext";
+import { tenantCollection, tenantDoc } from "./utils/tenantFirestore";
 import "./index.css";
 
 // ==================== ERROR BOUNDARY ====================
@@ -249,48 +251,53 @@ function AdminLayout() {
   const [pendingGPS, setPendingGPS] = useState(0);
   const [pendingOrders, setPendingOrders] = useState(0);
   const [pendingLeads, setPendingLeads] = useState(0);
+  const { companyId } = useTenant();
 
   useEffect(() => {
-    const unsub = onSnapshot(doc(db, "settings", "global"), (docSnap) => {
+    if (!companyId) return;
+    const unsub = onSnapshot(tenantDoc(db, companyId, "settings", "global"), (docSnap) => {
       if (docSnap.exists()) {
         setGlobalSettings(docSnap.data());
       }
     });
     return () => unsub();
-  }, []);
+  }, [companyId]);
 
   useEffect(() => {
+    if (!companyId) return;
     const q = query(
-      collection(db, "transfers"),
+      tenantCollection(db, companyId, "transfers"),
       where("status", "==", "pending"),
     );
     const unsub = onSnapshot(q, (snap) => {
       setPendingValidations(snap.size);
     });
     return () => unsub();
-  }, []);
+  }, [companyId]);
 
   useEffect(() => {
+    if (!companyId) return;
     const q = query(
-      collection(db, "gpsSuggestions"),
+      tenantCollection(db, companyId, "gpsSuggestions"),
       where("status", "==", "pending"),
     );
     const unsub = onSnapshot(q, (snap) => {
       setPendingGPS(snap.size);
     });
     return () => unsub();
-  }, []);
+  }, [companyId]);
 
   useEffect(() => {
+    if (!companyId) return;
     const q = query(
-      collection(db, "materialRequests"),
+      tenantCollection(db, companyId, "materialRequests"),
       where("status", "==", "pending"),
     );
     const unsub = onSnapshot(q, (snap) => {
       setPendingOrders(snap.size);
     });
     return () => unsub();
-  }, []);
+  }, [companyId]);
 
   useEffect(() => {
     const q = query(
@@ -869,7 +876,9 @@ export default function App() {
                   path="/admin"
                   element={
                     <ProtectedRoute requiredRole="admin">
-                      <AdminLayout />
+                      <RequireTenant>
+                        <AdminLayout />
+                      </RequireTenant>
                     </ProtectedRoute>
                   }
                 >
@@ -902,7 +911,9 @@ export default function App() {
                   path="/operario"
                   element={
                     <ProtectedRoute requiredRole="operario">
-                      <OperarioLayout />
+                      <RequireTenant>
+                        <OperarioLayout />
+                      </RequireTenant>
                     </ProtectedRoute>
                   }
                 >

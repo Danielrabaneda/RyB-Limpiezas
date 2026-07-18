@@ -19,6 +19,7 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { httpsCallable } from "firebase/functions";
 import { db, storage, functions } from "../config/firebase";
 import { getCommunities } from "./communityService";
+import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
 
 const COLLECTION = "invoices";
 
@@ -93,8 +94,8 @@ const DEFAULT_SETTINGS = {
   sepaSuffix: "000",
 };
 
-export async function getBillingSettings() {
-  const ref = doc(db, "settings", "billing");
+export async function getBillingSettings(companyId) {
+  const ref = tenantDoc(db, companyId, "settings", "billing");
   const snap = await getDoc(ref);
   if (!snap.exists()) {
     // Save defaults
@@ -104,15 +105,15 @@ export async function getBillingSettings() {
   return { ...DEFAULT_SETTINGS, ...snap.data() };
 }
 
-export async function saveBillingSettings(data) {
-  const ref = doc(db, "settings", "billing");
+export async function saveBillingSettings(companyId, data) {
+  const ref = tenantDoc(db, companyId, "settings", "billing");
   await setDoc(ref, data, { merge: true });
 }
 
 // ==================== INVOICE CRUD ====================
-export async function getInvoices(year, month) {
+export async function getInvoices(companyId, year, month) {
   let q = query(
-    collection(db, COLLECTION),
+    tenantCollection(db, companyId, COLLECTION),
     where("year", "==", parseInt(year)),
     where("month", "==", parseInt(month)),
     orderBy("createdAt", "desc"),
@@ -122,16 +123,16 @@ export async function getInvoices(year, month) {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
-export async function createInvoice(data) {
-  const ref = await addDoc(collection(db, COLLECTION), {
+export async function createInvoice(companyId, data) {
+  const ref = await addDoc(tenantCollection(db, companyId, COLLECTION), {
     ...data,
     createdAt: serverTimestamp(),
   });
   return ref.id;
 }
 
-export async function updateInvoice(id, data) {
-  const ref = doc(db, COLLECTION, id);
+export async function updateInvoice(companyId, id, data) {
+  const ref = tenantDoc(db, companyId, COLLECTION, id);
   // VERIFACTU: Inmutabilidad — solo se pueden editar borradores
   const snap = await getDoc(ref);
   if (!snap.exists()) throw new Error("La factura no existe");
@@ -146,8 +147,8 @@ export async function updateInvoice(id, data) {
   });
 }
 
-export async function deleteInvoice(id) {
-  const ref = doc(db, COLLECTION, id);
+export async function deleteInvoice(companyId, id) {
+  const ref = tenantDoc(db, companyId, COLLECTION, id);
   // VERIFACTU: Inmutabilidad — solo se pueden eliminar borradores
   const snap = await getDoc(ref);
   if (!snap.exists()) throw new Error("La factura no existe");
@@ -159,11 +160,11 @@ export async function deleteInvoice(id) {
   await deleteDoc(ref);
 }
 
-export async function deleteMultipleInvoices(ids) {
+export async function deleteMultipleInvoices(companyId, ids) {
   if (!ids || ids.length === 0) return;
   // VERIFACTU: Inmutabilidad — verificar que todas son borradores antes de eliminar
   for (const id of ids) {
-    const snap = await getDoc(doc(db, COLLECTION, id));
+    const snap = await getDoc(tenantDoc(db, companyId, COLLECTION, id));
     if (snap.exists() && snap.data().status !== "draft") {
       throw new Error(
         `No se puede eliminar la factura ${snap.data().invoiceNumber || id}: solo se pueden eliminar borradores`,
@@ -175,15 +176,15 @@ export async function deleteMultipleInvoices(ids) {
     const chunk = ids.slice(i, i + CHUNK_SIZE);
     const batch = writeBatch(db);
     for (const id of chunk) {
-      batch.delete(doc(db, COLLECTION, id));
+      batch.delete(tenantDoc(db, companyId, COLLECTION, id));
     }
     await batch.commit();
   }
 }
 
 // Get the next invoice number for display/preview purposes
-export async function getNextInvoiceNumber(year) {
-  const settings = await getBillingSettings();
+export async function getNextInvoiceNumber(companyId, year) {
+  const settings = await getBillingSettings(companyId);
   const nextSeq = parseInt(settings.nextInvoiceSeq) || 1;
   const fmt = settings.invoiceNumberFormat || "numeric";
 
@@ -195,9 +196,9 @@ export async function getNextInvoiceNumber(year) {
 
 // Emit Invoice: Change status from draft to pending, assign number atomically
 // VERIFACTU: Calcula y almacena hash encadenado con la factura anterior
-export async function emitInvoice(id) {
-  const invoiceRef = doc(db, COLLECTION, id);
-  const settingsRef = doc(db, "settings", "billing");
+export async function emitInvoice(companyId, id) {
+  const invoiceRef = tenantDoc(db, companyId, COLLECTION, id);
+  const settingsRef = tenantDoc(db, companyId, "settings", "billing");
 
   await runTransaction(db, async (transaction) => {
     const [invoiceSnap, settingsSnap] = await Promise.all([
@@ -269,8 +270,8 @@ export async function emitInvoice(id) {
 }
 
 // Mark invoice as Paid
-export async function updateInvoiceStatus(id, status) {
-  const ref = doc(db, COLLECTION, id);
+export async function updateInvoiceStatus(companyId, id, status) {
+  const ref = tenantDoc(db, companyId, COLLECTION, id);
   await updateDoc(ref, {
     status,
     updatedAt: serverTimestamp(),
@@ -278,10 +279,10 @@ export async function updateInvoiceStatus(id, status) {
 }
 
 // ==================== AUTO GENERATE DRAFTS ====================
-export async function generateMonthlyDrafts(month, year) {
+export async function generateMonthlyDrafts(companyId, month, year) {
   const [comms, existing] = await Promise.all([
-    getCommunities(),
-    getInvoices(year, month),
+    getCommunities(companyId),
+    getInvoices(companyId, year, month),
   ]);
 
   // Filter communities that have a base price greater than 0
@@ -353,7 +354,7 @@ export async function generateMonthlyDrafts(month, year) {
       createdAt: serverTimestamp(),
     };
 
-    await addDoc(collection(db, COLLECTION), invoiceData);
+    await addDoc(tenantCollection(db, companyId, COLLECTION), invoiceData);
     count++;
   }
 
@@ -361,15 +362,15 @@ export async function generateMonthlyDrafts(month, year) {
 }
 
 // ==================== INVOICE TEMPLATES ====================
-export async function getInvoiceTemplates() {
-  const q = query(collection(db, "invoice_templates"), orderBy("name", "asc"));
+export async function getInvoiceTemplates(companyId) {
+  const q = query(tenantCollection(db, companyId, "invoice_templates"), orderBy("name", "asc"));
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
-export async function saveInvoiceTemplate(data) {
+export async function saveInvoiceTemplate(companyId, data) {
   const q = query(
-    collection(db, "invoice_templates"),
+    tenantCollection(db, companyId, "invoice_templates"),
     where("name", "==", data.name),
   );
   const snap = await getDocs(q);
@@ -380,27 +381,27 @@ export async function saveInvoiceTemplate(data) {
   };
 
   if (!snap.empty) {
-    const docRef = doc(db, "invoice_templates", snap.docs[0].id);
+    const docRef = tenantDoc(db, companyId, "invoice_templates", snap.docs[0].id);
     await updateDoc(docRef, templateData);
     return snap.docs[0].id;
   } else {
     templateData.createdAt = serverTimestamp();
     const docRef = await addDoc(
-      collection(db, "invoice_templates"),
+      tenantCollection(db, companyId, "invoice_templates"),
       templateData,
     );
     return docRef.id;
   }
 }
 
-export async function deleteInvoiceTemplate(id) {
-  await deleteDoc(doc(db, "invoice_templates", id));
+export async function deleteInvoiceTemplate(companyId, id) {
+  await deleteDoc(tenantDoc(db, companyId, "invoice_templates", id));
 }
 
 // Get the last emitted invoice ordered by invoiceSeq descending
-export async function getLastEmittedInvoice() {
+export async function getLastEmittedInvoice(companyId) {
   const q = query(
-    collection(db, COLLECTION),
+    tenantCollection(db, companyId, COLLECTION),
     orderBy("invoiceSeq", "desc"),
     limit(1),
   );
@@ -411,10 +412,10 @@ export async function getLastEmittedInvoice() {
 
 // Emit multiple invoices at once atomically using a single transaction
 // VERIFACTU: Encadena hashes secuencialmente dentro del lote
-export async function emitAllInvoices(ids) {
+export async function emitAllInvoices(companyId, ids) {
   if (!ids || ids.length === 0) return;
 
-  const settingsRef = doc(db, "settings", "billing");
+  const settingsRef = tenantDoc(db, companyId, "settings", "billing");
 
   await runTransaction(db, async (transaction) => {
     const settingsSnap = await transaction.get(settingsRef);
@@ -425,10 +426,18 @@ export async function emitAllInvoices(ids) {
 
     const invoiceSnaps = [];
     for (const id of ids) {
-      const ref = doc(db, COLLECTION, id);
+      const ref = tenantDoc(db, companyId, COLLECTION, id);
       const snap = await transaction.get(ref);
       invoiceSnaps.push({ ref, snap });
     }
+
+    // Ordenamiento determinista de los borradores para la asignación secuencial de números y hashes
+    invoiceSnaps.sort((a, b) => {
+      const tA = a.snap.data().createdAt?.toDate ? a.snap.data().createdAt.toDate().getTime() : new Date(a.snap.data().createdAt || 0).getTime();
+      const tB = b.snap.data().createdAt?.toDate ? b.snap.data().createdAt.toDate().getTime() : new Date(b.snap.data().createdAt || 0).getTime();
+      if (tA !== tB) return tA - tB;
+      return a.snap.id.localeCompare(b.snap.id);
+    });
 
     let issueDate;
     if (settings.issueDateMode === "custom" && settings.customIssueDate) {
@@ -495,8 +504,8 @@ export async function emitAllInvoices(ids) {
   });
 }
 
-export async function uploadInvoicePDFToStorage(invoiceId, pdfBlob, filename) {
-  const path = `invoices/${invoiceId}/${filename}`;
+export async function uploadInvoicePDFToStorage(companyId, invoiceId, pdfBlob, filename) {
+  const path = `companies/${companyId}/invoices/${invoiceId}/${filename}`;
   const storageRef = ref(storage, path);
   const metadata = {
     contentType: "application/pdf",
@@ -506,15 +515,15 @@ export async function uploadInvoicePDFToStorage(invoiceId, pdfBlob, filename) {
   return url;
 }
 
-export async function sendInvoiceEmails(invoiceIds) {
+export async function sendInvoiceEmails(companyId, invoiceIds) {
   const fn = httpsCallable(functions, "sendInvoiceEmails");
-  const result = await fn({ invoiceIds });
+  const result = await fn({ companyId, invoiceIds });
   return result.data;
 }
 
-export async function sendGroupedInvoiceEmails(invoiceIds) {
+export async function sendGroupedInvoiceEmails(companyId, invoiceIds) {
   const fn = httpsCallable(functions, "sendGroupedInvoiceEmails");
-  const result = await fn({ invoiceIds });
+  const result = await fn({ companyId, invoiceIds });
   return result.data;
 }
 
@@ -525,10 +534,11 @@ export async function sendGroupedInvoiceEmails(invoiceIds) {
  * La rectificativa pasa por el mismo flujo de emitInvoice() (número correlativo, hash encadenado).
  */
 export async function createRectifyingInvoice(
+  companyId,
   originalInvoiceId,
   correctionData,
 ) {
-  const originalRef = doc(db, COLLECTION, originalInvoiceId);
+  const originalRef = tenantDoc(db, companyId, COLLECTION, originalInvoiceId);
   const originalSnap = await getDoc(originalRef);
   if (!originalSnap.exists()) throw new Error("La factura original no existe");
   const original = originalSnap.data();
@@ -559,7 +569,7 @@ export async function createRectifyingInvoice(
     createdAt: serverTimestamp(),
   };
 
-  const newRef = await addDoc(collection(db, COLLECTION), rectifyingData);
+  const newRef = await addDoc(tenantCollection(db, companyId, COLLECTION), rectifyingData);
   return newRef.id;
 }
 

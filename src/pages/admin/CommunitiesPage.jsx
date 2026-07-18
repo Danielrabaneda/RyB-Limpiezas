@@ -152,8 +152,9 @@ function CommunitiesContent() {
   const [filterGPS, setFilterGPS] = useState(false);
 
   useEffect(() => {
+    if (!companyId) return;
     const q = query(
-      collection(db, "gpsSuggestions"),
+      tenantCollection(db, companyId, "gpsSuggestions"),
       where("status", "==", "pending"),
     );
     const unsub = onSnapshot(q, (snap) => {
@@ -164,7 +165,7 @@ function CommunitiesContent() {
       if (ids.size === 0) setFilterGPS(false);
     });
     return () => unsub();
-  }, []);
+  }, [companyId]);
 
   // Orchestrator selectCommunity function (Option B)
   const selectCommunity = async (community) => {
