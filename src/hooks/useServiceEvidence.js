@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useTenant } from "../contexts/TenantContext";
 import { uploadPhoto } from "../services/storageService";
 import { updateScheduledServiceNotesAndPhotos } from "../services/scheduleService";
 
@@ -8,6 +9,7 @@ export function useServiceEvidence(
   service,
   options = {},
 ) {
+  const { companyId } = useTenant();
   const [showSignatureModal, setShowSignatureModal] = useState(false);
   const [clientSignature, setClientSignature] = useState(null);
 
@@ -45,7 +47,7 @@ export function useServiceEvidence(
 
     setUploadingGeneralPhoto(true);
     try {
-      const url = await uploadPhoto(file, userProfile.uid, serviceId);
+      const url = await uploadPhoto(companyId, file, userProfile.uid, serviceId);
       setGeneralPhotos((prev) => [...prev, url]);
     } catch (err) {
       alert("Error al subir foto: " + err.message);
@@ -92,7 +94,7 @@ export function useServiceEvidence(
         { type: "image/png" },
       );
 
-      const imageUrl = await uploadPhoto(file, userProfile.uid, serviceId);
+      const imageUrl = await uploadPhoto(companyId, file, userProfile.uid, serviceId);
       setClientSignature({
         imageUrl,
         signerName,

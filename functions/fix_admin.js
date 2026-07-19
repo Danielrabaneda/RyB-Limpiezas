@@ -1,3 +1,5 @@
+// LEGACY / NO PRODUCTION - DO NOT EXECUTE IN PRODUCTION
+// This is a legacy developer script accessing global collections.
 const admin = require("firebase-admin");
 admin.initializeApp({
   projectId: "ryb-limpiezas-app",

@@ -56,7 +56,7 @@ export default function AbsencesPage() {
 
     setUploading(true);
     try {
-      const url = await uploadPhoto(file, userProfile.uid, "absence_proof");
+      const url = await uploadPhoto(companyId, file, userProfile.uid, "absence_proof");
       setDocUrl(url);
       alert("Justificante subido correctamente.");
     } catch (err) {

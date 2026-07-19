@@ -221,7 +221,7 @@ export default function SettingsPage() {
     try {
       const storageRef = ref(
         storage,
-        `logos/company_logo_${Date.now()}_${file.name}`,
+        `companies/${companyId}/logos/company_logo_${Date.now()}_${file.name}`,
       );
       await uploadBytes(storageRef, file);
       const url = await getDownloadURL(storageRef);

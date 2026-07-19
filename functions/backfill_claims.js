@@ -1,3 +1,5 @@
+// LEGACY / NO PRODUCTION - DO NOT EXECUTE IN PRODUCTION
+// This is a legacy administrative claims bootstrapping script.
 const admin = require("firebase-admin");
 
 // Si se detectan variables de emulación en el entorno, inicializamos descriptivamente

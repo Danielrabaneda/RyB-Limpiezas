@@ -139,6 +139,7 @@ export default function useCommunityPortal({
     setUploadingDoc(true);
     try {
       const fileUrl = await uploadPhoto(
+        companyId,
         docForm.file,
         userProfile.uid,
         `guides_${selectedCommunity.id}`,

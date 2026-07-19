@@ -3,37 +3,77 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     
-    // Helper function to check if the user has 'admin' role in Firestore
-    function isAdmin() {
-      return request.auth != null && 
-        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    // =========================================================================
+    // HELPER FUNCTIONS (Custom Claims based, zero Firestore reads)
+    // =========================================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
     }
 
-    // Evidence photos: organized by userId/serviceId
-    match /evidence/{userId}/{serviceId}/{fileName} {
-      // Operario can upload to their own folder
-      allow write: if request.auth != null && request.auth.uid == userId
+    function isTenant(companyId) {
+      return isAuthenticated() && 
+        request.auth.token.companyId == companyId && 
+        request.auth.token.active == true;
+    }
+
+    function isTenantAdmin(companyId) {
+      return isTenant(companyId) && request.auth.token.role == 'admin';
+    }
+
+    function isTenantEmployee(companyId) {
+      return isTenant(companyId) && 
+        (request.auth.token.role == 'admin' || request.auth.token.role == 'operario');
+    }
+
+    // =========================================================================
+    // MULTI-TENANT STORAGE MATCHERS
+    // =========================================================================
+
+    // Invoices: tenant-scoped
+    match /companies/{companyId}/invoices/{invoiceId}/{fileName} {
+      allow read, write: if isTenantAdmin(companyId);
+    }
+
+    // Evidence, Guides and Absence Proofs: tenant-scoped
+    match /companies/{companyId}/evidence/{userId}/{serviceId}/{fileName} {
+      allow write: if isTenantEmployee(companyId) && request.auth.uid == userId
                    && request.resource.size < 20 * 1024 * 1024
-                   && request.resource.contentType.matches('image/.*');
-      // Admin can read all, operario can read own (prevents anonymous read)
-      allow read: if request.auth != null && (
-        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-        request.auth.uid == userId
+                   && request.resource.contentType.matches('image/.*|application/pdf');
+      allow read: if isTenantEmployee(companyId) && (
+        request.auth.uid == userId || 
+        request.auth.token.role == 'admin' || 
+        serviceId.matches('guides_.*')
       );
     }
     
-    // Logos: public read, admin-only write
-    match /logos/{fileName} {
+    // Logos: tenant-scoped, public read, admin-only write
+    match /companies/{companyId}/logos/{fileName} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if isTenantAdmin(companyId);
     }
 
-    // Invoices: authenticated-only read/write
-    match /invoices/{invoiceId}/{fileName} {
-      allow read, write: if request.auth != null;
+    // =========================================================================
+    // LEGACY / GLOBAL FALLBACKS (For backward compatibility, locked down where possible)
+    // =========================================================================
+
+    // Legacy logos (root folder)
+    match /logos/{fileName} {
+      allow read: if true;
+      allow write: if isAuthenticated() && request.auth.token.role == 'admin' && request.auth.token.active == true;
     }
-    
-    // Default: deny all
+
+    // Legacy evidence (root folder)
+    match /evidence/{userId}/{serviceId}/{fileName} {
+      allow read, write: if false; // Locked down to force multi-tenant paths!
+    }
+
+    // Legacy invoices (root folder)
+    match /invoices/{invoiceId}/{fileName} {
+      allow read, write: if false; // Locked down to force multi-tenant paths!
+    }
+
+    // Default deny-all
     match /{allPaths=**} {
       allow read, write: if false;
     }
