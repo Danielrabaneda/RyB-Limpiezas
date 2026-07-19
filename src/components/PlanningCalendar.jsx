@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useTenant } from "../contexts/TenantContext";
 import {
   format,
   startOfMonth,
@@ -28,8 +29,9 @@ import {
 } from "../services/transferService";
 import TransferModal from "./TransferModal";
 import RescheduleModal from "./RescheduleModal";
-import { collection, query, where, getDocs } from "firebase/firestore";
+import { query, where, getDocs } from "firebase/firestore";
 import { db } from "../config/firebase";
+import { tenantCollection } from "../utils/tenantFirestore";
 import PrintableCalendar from "./PrintableCalendar";
 import ServiceItem from "./ServiceItem";
 import jsPDF from "jspdf";
@@ -39,6 +41,7 @@ export default function PlanningCalendar({
   isAdmin = false,
   operarios = [],
 }) {
+  const { companyId } = useTenant();
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [monthServices, setMonthServices] = useState([]);
@@ -65,15 +68,16 @@ export default function PlanningCalendar({
   const [selectedPrintOpId, setSelectedPrintOpId] = useState("all");
 
   useEffect(() => {
+    if (!companyId) return;
     loadMonthData();
-  }, [currentMonth, userId]);
+  }, [currentMonth, userId, companyId]);
 
   useEffect(() => {
     // Load communities and tasks for reference
     async function loadRefs() {
       console.log("Cargando referencias (comunidades y tareas)...");
       try {
-        const comSnap = await getDocs(collection(db, "communities"));
+        const comSnap = await getDocs(tenantCollection(db, companyId, "communities"));
         const comData = comSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
         setCommunities(comData);
         console.log(`${comData.length} comunidades totales cargadas.`);
@@ -83,7 +87,7 @@ export default function PlanningCalendar({
 
       try {
         const q = query(
-          collection(db, "communityTasks"),
+          tenantCollection(db, companyId, "communityTasks"),
           where("active", "==", true),
         );
         const tasksSnap = await getDocs(q);
@@ -95,12 +99,12 @@ export default function PlanningCalendar({
       }
     }
     loadRefs();
-  }, []);
+  }, [companyId]);
 
   async function loadMonthData() {
     setLoading(true);
     try {
-      await checkAndRolloverGarages();
+      await checkAndRolloverGarages(companyId);
       const start = startOfMonth(currentMonth);
       const end = endOfMonth(currentMonth);
       const filters = userId ? { userId } : {};
@@ -108,7 +112,7 @@ export default function PlanningCalendar({
       const [svcs, absSnap] = await Promise.all([
         getScheduledServicesRange(start, end, filters),
         getDocs(
-          query(collection(db, "absences"), where("status", "==", "approved")),
+          query(tenantCollection(db, companyId, "absences"), where("status", "==", "approved")),
         ),
       ]);
 
@@ -150,7 +154,7 @@ export default function PlanningCalendar({
       return;
     setGenerating(true);
     try {
-      const created = await generateServicesForMonth(currentMonth);
+      const created = await generateServicesForMonth(companyId, currentMonth);
       alert(`Se han generado ${created} nuevos servicios.`);
       await loadMonthData();
     } catch (err) {
@@ -171,7 +175,7 @@ export default function PlanningCalendar({
       return;
     setGenerating(true);
     try {
-      const result = await syncServicesForMonth(currentMonth);
+      const result = await syncServicesForMonth(companyId, currentMonth);
 
       if (result.createdCount === 0 && result.deletedCount === 0) {
         alert(

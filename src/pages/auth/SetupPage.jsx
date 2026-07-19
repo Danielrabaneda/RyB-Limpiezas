@@ -31,13 +31,14 @@ export default function SetupPage() {
         phone: "",
         role: "admin",
         active: true,
+        companyId: "rayba",
         createdAt: serverTimestamp(),
       });
       setStatus("Perfil admin guardado. Creando plantillas de tareas...");
 
       // Create task templates
       for (const template of SEED_TASK_TEMPLATES) {
-        await addDoc(collection(db, "taskTemplates"), {
+        await addDoc(collection(db, "companies", "rayba", "taskTemplates"), {
           ...template,
           createdAt: serverTimestamp(),
         });
@@ -54,7 +55,7 @@ export default function SetupPage() {
         // Try to still set up templates
         try {
           for (const template of SEED_TASK_TEMPLATES) {
-            await addDoc(collection(db, "taskTemplates"), {
+            await addDoc(collection(db, "companies", "rayba", "taskTemplates"), {
               ...template,
               createdAt: serverTimestamp(),
             });

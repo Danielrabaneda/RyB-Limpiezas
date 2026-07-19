@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { doc, updateDoc } from "firebase/firestore";
 import { db } from "../config/firebase";
+import { tenantDoc } from "../utils/tenantFirestore";
+import { useTenant } from "../contexts/TenantContext";
 import {
   enableClientPortal,
   disableClientPortal,
@@ -20,6 +22,7 @@ export default function useCommunityPortal({
   setActionLoading,
   userProfile,
 }) {
+  const { companyId } = useTenant();
   // Document library and portal states
   const [communityDocs, setCommunityDocs] = useState([]);
   const [showDocModal, setShowDocModal] = useState(false);
@@ -39,6 +42,7 @@ export default function useCommunityPortal({
         )
           return;
         await disableClientPortal(
+          companyId,
           selectedCommunity.id,
           selectedCommunity.portalToken,
         );
@@ -53,7 +57,7 @@ export default function useCommunityPortal({
         );
         alert("Portal público desactivado correctamente.");
       } else {
-        const token = await enableClientPortal(selectedCommunity.id);
+        const token = await enableClientPortal(companyId, selectedCommunity.id);
         const updated = {
           ...selectedCommunity,
           portalToken: token,
@@ -85,10 +89,11 @@ export default function useCommunityPortal({
     setActionLoading(true);
     try {
       await disableClientPortal(
+        companyId,
         selectedCommunity.id,
         selectedCommunity.portalToken,
       );
-      const token = await enableClientPortal(selectedCommunity.id);
+      const token = await enableClientPortal(companyId, selectedCommunity.id);
       const updated = {
         ...selectedCommunity,
         portalToken: token,
@@ -111,7 +116,7 @@ export default function useCommunityPortal({
     if (!selectedCommunity) return;
     const newValue = !(selectedCommunity.showVisitTimes !== false);
     try {
-      const communityRef = doc(db, "communities", selectedCommunity.id);
+      const communityRef = tenantDoc(db, companyId, "communities", selectedCommunity.id);
       await updateDoc(communityRef, { showVisitTimes: newValue });
 
       const updated = { ...selectedCommunity, showVisitTimes: newValue };
@@ -138,7 +143,7 @@ export default function useCommunityPortal({
         userProfile.uid,
         `guides_${selectedCommunity.id}`,
       );
-      await uploadDocument({
+      await uploadDocument(companyId, {
         title: docForm.title,
         category: "community_guide",
         communityId: selectedCommunity.id,
@@ -147,7 +152,7 @@ export default function useCommunityPortal({
       alert("Documento guardado con éxito.");
       setShowDocModal(false);
       setDocForm({ title: "", file: null });
-      const updatedDocs = await getCommunityGuides(selectedCommunity.id);
+      const updatedDocs = await getCommunityGuides(companyId, selectedCommunity.id);
       setCommunityDocs(updatedDocs);
     } catch (err) {
       console.error(err);
@@ -160,9 +165,9 @@ export default function useCommunityPortal({
   const handleDeleteDoc = async (docId) => {
     if (!confirm("¿Seguro que deseas eliminar este documento?")) return;
     try {
-      await deleteDocument(docId);
+      await deleteDocument(companyId, docId);
       alert("Documento eliminado.");
-      const updatedDocs = await getCommunityGuides(selectedCommunity.id);
+      const updatedDocs = await getCommunityGuides(companyId, selectedCommunity.id);
       setCommunityDocs(updatedDocs);
     } catch (err) {
       console.error(err);

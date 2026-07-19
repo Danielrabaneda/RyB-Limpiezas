@@ -1,5 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useAuth } from "../../contexts/AuthContext";
+import { useTenant } from "../../contexts/TenantContext";
+import { tenantCollection } from "../../utils/tenantFirestore";
 import { getActiveWorkday } from "../../services/workdayService";
 import { getScheduledServicesForDate } from "../../services/scheduleService";
 import { getCommunity } from "../../services/communityService";
@@ -85,6 +87,7 @@ function markServiceCompletedToday(serviceId) {
 // ==================== COMPONENTE PRINCIPAL ====================
 export default function GeolocationTracker() {
   const { userProfile, isOperario } = useAuth();
+  const { companyId } = useTenant();
   const [activeWorkday, setActiveWorkday] = useState(null);
 
   // Refs para mantener estado entre actualizaciones del GPS sin re-renders
@@ -114,7 +117,7 @@ export default function GeolocationTracker() {
     if (!isOperario || !userProfile?.uid || fcmRegisteredRef.current) return;
     fcmRegisteredRef.current = true;
 
-    registerForPushNotifications(userProfile.uid).catch((err) => {
+    registerForPushNotifications(companyId, userProfile.uid).catch((err) => {
       console.warn("[Tracker] FCM registration failed (non-blocking):", err);
     });
   }, [isOperario, userProfile]);
@@ -168,7 +171,7 @@ export default function GeolocationTracker() {
 
     // --- SUSCRIPCIONES EN TIEMPO REAL PARA JORNADA Y CHECK-IN ---
     const qWorkday = query(
-      collection(db, "workdays"),
+      tenantCollection(db, companyId, "workdays"),
       where("userId", "==", userProfile.uid),
     );
     const unsubscribeWorkday = onSnapshot(
@@ -191,7 +194,7 @@ export default function GeolocationTracker() {
     );
 
     const qCheckIn = query(
-      collection(db, "checkIns"),
+      tenantCollection(db, companyId, "checkIns"),
       where("userId", "==", userProfile.uid),
     );
     const unsubscribeCheckIn = onSnapshot(
@@ -503,6 +506,7 @@ export default function GeolocationTracker() {
           // Notificación Push (FCM) únicamente si la app está en segundo plano (Background)
           if (document.visibilityState !== "visible") {
             createSystemNotification(
+              companyId,
               userProfile.uid,
               title,
               body,
@@ -576,8 +580,8 @@ export default function GeolocationTracker() {
                         confirmedExitTime.toISOString(),
                       );
                       localStorage.removeItem(pendingKey);
-
                       persistExitDetection(
+                        companyId,
                         userProfile.uid,
                         activeSvc.id,
                         activeSvc.communityName,
@@ -657,8 +661,8 @@ export default function GeolocationTracker() {
                     confirmedKey,
                     estimatedExitTime.toISOString(),
                   );
-
                   persistExitDetection(
+                    companyId,
                     userProfile.uid,
                     activeSvc.id,
                     activeSvc.communityName,
@@ -747,8 +751,8 @@ export default function GeolocationTracker() {
                         confirmedExitTime.toISOString(),
                       );
                       localStorage.removeItem(pendingKey);
-
                       persistExitDetection(
+                        companyId,
                         userProfile.uid,
                         activeSvc.id,
                         activeSvc.communityName,
@@ -1008,8 +1012,8 @@ export default function GeolocationTracker() {
                   detectedAt: detectedEntryTime.toISOString(),
                 }),
               );
-
               persistEntryDetection(
+                companyId,
                 userProfile.uid,
                 closest.id,
                 closest.communityName,
@@ -1056,6 +1060,7 @@ export default function GeolocationTracker() {
                   exitTime.toISOString(),
                 );
                 persistExitDetection(
+                  companyId,
                   userProfile.uid,
                   s.id,
                   s.communityName,

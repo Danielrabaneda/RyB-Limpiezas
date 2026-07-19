@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../../contexts/AuthContext";
+import { useTenant } from "../../contexts/TenantContext";
 import {
   getAllAbsences,
   approveAbsence,
@@ -11,6 +12,7 @@ import { es } from "date-fns/locale";
 
 export default function AbsencesAdminPage() {
   const { userProfile } = useAuth();
+  const { companyId } = useTenant();
   const [absences, setAbsences] = useState([]);
   const [operarios, setOperarios] = useState([]);
   const [operariosMap, setOperariosMap] = useState({});
@@ -26,7 +28,7 @@ export default function AbsencesAdminPage() {
     setLoading(true);
     try {
       const [absList, opsList] = await Promise.all([
-        getAllAbsences(),
+        getAllAbsences(companyId),
         getOperarios(),
       ]);
 
@@ -55,14 +57,14 @@ export default function AbsencesAdminPage() {
     setActionLoading((prev) => ({ ...prev, [absenceId]: true }));
     try {
       if (action === "approve") {
-        await approveAbsence(absenceId, userProfile.uid);
+        await approveAbsence(companyId, absenceId, userProfile.uid);
         alert("Solicitud aprobada correctamente.");
       } else if (action === "reject") {
-        await rejectAbsence(absenceId, userProfile.uid);
+        await rejectAbsence(companyId, absenceId, userProfile.uid);
         alert("Solicitud rechazada.");
       }
       // Reload lists
-      const updatedAbsences = await getAllAbsences();
+      const updatedAbsences = await getAllAbsences(companyId);
       setAbsences(
         updatedAbsences.sort((a, b) => {
           const tA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;

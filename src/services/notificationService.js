@@ -11,6 +11,8 @@ import {
   doc,
   updateDoc,
 } from "firebase/firestore";
+import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
+
 
 const BATCH_LIMIT = 500;
 
@@ -31,6 +33,7 @@ async function commitInChunks(refs, operation) {
  * Se utiliza para activar el "punto rojo" (Badge) en la app.
  */
 export const createSystemNotification = async (
+  companyId,
   userId,
   title,
   body,
@@ -40,7 +43,7 @@ export const createSystemNotification = async (
   triggerEvent = "immediate",
 ) => {
   try {
-    await addDoc(collection(db, "systemNotifications"), {
+    await addDoc(tenantCollection(db, companyId, "systemNotifications"), {
       userId,
       title,
       body,
@@ -62,10 +65,10 @@ export const createSystemNotification = async (
 /**
  * Marca una única notificación específica como leída.
  */
-export const markNotificationAsRead = async (notificationId) => {
+export const markNotificationAsRead = async (companyId, notificationId) => {
   if (!notificationId) return;
   try {
-    const ref = doc(db, "systemNotifications", notificationId);
+    const ref = tenantDoc(db, companyId, "systemNotifications", notificationId);
     await updateDoc(ref, { read: true });
     console.log(`[NotificationService] Marcada como leída: ${notificationId}`);
   } catch (error) {
@@ -80,11 +83,11 @@ export const markNotificationAsRead = async (notificationId) => {
  * Marca todas las notificaciones de un usuario como leídas.
  * Soporta más de 500 notificaciones mediante chunking de batches.
  */
-export const markAllNotificationsAsRead = async (userId) => {
+export const markAllNotificationsAsRead = async (companyId, userId) => {
   if (!userId) return;
   try {
     const q = query(
-      collection(db, "systemNotifications"),
+      tenantCollection(db, companyId, "systemNotifications"),
       where("userId", "==", userId),
       where("read", "==", false),
     );
@@ -112,7 +115,7 @@ export const markAllNotificationsAsRead = async (userId) => {
  * - No leídas con más de 30 días → se eliminan
  * Se ejecuta una vez por sesión de forma silenciosa.
  */
-export const deleteOldNotifications = async (userId) => {
+export const deleteOldNotifications = async (companyId, userId) => {
   if (!userId) return;
   try {
     const now = new Date();
@@ -123,7 +126,7 @@ export const deleteOldNotifications = async (userId) => {
 
     // Notificaciones leídas antiguas (>7 días)
     const readQ = query(
-      collection(db, "systemNotifications"),
+      tenantCollection(db, companyId, "systemNotifications"),
       where("userId", "==", userId),
       where("read", "==", true),
       where("createdAt", "<", Timestamp.fromDate(sevenDaysAgo)),
@@ -131,7 +134,7 @@ export const deleteOldNotifications = async (userId) => {
 
     // Notificaciones no leídas muy antiguas (>30 días)
     const unreadQ = query(
-      collection(db, "systemNotifications"),
+      tenantCollection(db, companyId, "systemNotifications"),
       where("userId", "==", userId),
       where("read", "==", false),
       where("createdAt", "<", Timestamp.fromDate(thirtyDaysAgo)),

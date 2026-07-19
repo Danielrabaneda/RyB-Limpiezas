@@ -211,13 +211,31 @@ async function recordReminderSent(userId, type, workdayId) {
 }
 
 /**
- * Obtiene todos los tokens FCM de un usuario (puede tener múltiples dispositivos).
+/**
+ * Obtiene el companyId de un usuario a partir de su documento en users/{userId}.
+ * @param {string} userId
+ * @returns {Promise<string|null>} companyId o null si no se encuentra
+ */
+async function getCompanyIdForUser(userId) {
+  try {
+    const userDoc = await db.collection("users").doc(userId).get();
+    if (userDoc.exists) {
+      return userDoc.data().companyId || null;
+    }
+  } catch (e) {
+    logger.error(`Error al obtener companyId para usuario ${userId}:`, e);
+  }
+  return null;
+}
+
+/**
+ * Obtiene todos los tokens FCM de un usuario (puede tener múltiples dispositivos) de forma transversal a los tenants.
  * @param {string} userId
  * @returns {Promise<string[]>} Array de tokens FCM
  */
 async function getUserFcmTokens(userId) {
   const snap = await db
-    .collection("fcmTokens")
+    .collectionGroup("fcmTokens")
     .where("userId", "==", userId)
     .get();
 
@@ -243,7 +261,7 @@ async function sendPushNotification(
 ) {
   const tokens = await getUserFcmTokens(userId);
 
-  // Crear notificación de respaldo en Firestore siempre
+  // Crear notificación de respaldo en Firestore siempre bajo el tenant correspondiente
   const systemNotifData = {
     userId,
     title,
@@ -253,14 +271,22 @@ async function sendPushNotification(
     read: false,
     createdAt: FieldValue.serverTimestamp(),
   };
-  await db.collection("systemNotifications").add(systemNotifData);
-  logger.info(
-    `[Notificación] systemNotification creada para usuario ${userId}, tipo: ${type}`,
-  );
+
+  const companyId = await getCompanyIdForUser(userId);
+  if (companyId) {
+    await db.collection(`companies/${companyId}/systemNotifications`).add(systemNotifData);
+    logger.info(
+      `[Notificación] systemNotification creada para usuario ${userId} en tenant ${companyId}, tipo: ${type}`,
+    );
+  } else {
+    logger.warn(
+      `[Notificación] No se pudo crear systemNotification para ${userId} porque no se encontró su companyId.`,
+    );
+  }
 
   if (tokens.length === 0) {
     logger.warn(
-      `[Notificación] Usuario ${userId} no tiene tokens FCM registrados. Solo se creó systemNotification.`,
+      `[Notificación] Usuario ${userId} no tiene tokens FCM registrados. Solo se creó systemNotification (si companyId era válido).`,
     );
     return;
   }
@@ -333,7 +359,7 @@ async function sendPushNotification(
     );
     const deletePromises = invalidTokens.map(async (token) => {
       const tokenSnap = await db
-        .collection("fcmTokens")
+        .collectionGroup("fcmTokens")
         .where("token", "==", token)
         .get();
       const batch = db.batch();
@@ -346,18 +372,22 @@ async function sendPushNotification(
 
 /**
  * Obtiene el nombre de una comunidad por su ID.
+ * @param {string} companyId
  * @param {string} communityId
  * @returns {Promise<string>} Nombre de la comunidad o "la comunidad"
  */
-async function getCommunityName(communityId) {
+async function getCommunityName(companyId, communityId) {
   try {
-    const doc = await db.collection("communities").doc(communityId).get();
+    const doc = await db
+      .collection(`companies/${companyId}/communities`)
+      .doc(communityId)
+      .get();
     if (doc.exists) {
       return doc.data().name || "la comunidad";
     }
   } catch (e) {
     logger.warn(
-      `[getCommunityName] Error obteniendo comunidad ${communityId}:`,
+      `[getCommunityName] Error obteniendo comunidad ${communityId} en tenant ${companyId}:`,
       e,
     );
   }
@@ -383,7 +413,7 @@ exports.checkWorkdayReminders = onSchedule(
     try {
       // 1. Obtener todas las jornadas activas
       const activeWorkdaysSnap = await db
-        .collection("workdays")
+        .collectionGroup("workdays")
         .where("status", "==", "active")
         .get();
 
@@ -405,10 +435,11 @@ exports.checkWorkdayReminders = onSchedule(
           const workday = workdayDoc.data();
           const workdayId = workdayDoc.id;
           const userId = workday.userId;
+          const companyId = workdayDoc.ref.parent.parent.id;
 
           try {
             logger.info(
-              `[Jornada ${workdayId}] Procesando usuario ${userId}...`,
+              `[Jornada ${workdayId}] Procesando usuario ${userId} en tenant ${companyId}...`,
             );
 
             // Calcular tiempo activo de la jornada
@@ -455,7 +486,7 @@ exports.checkWorkdayReminders = onSchedule(
             // CHECK 2: Check-ins activos de más de 5 horas
             // -----------------------------------------------------------
             const activeCheckInsSnap = await db
-              .collection("checkIns")
+              .collection(`companies/${companyId}/checkIns`)
               .where("userId", "==", userId)
               .where("checkOutTime", "==", null)
               .get();
@@ -474,6 +505,7 @@ exports.checkWorkdayReminders = onSchedule(
                 );
                 if (!alreadySent) {
                   const communityName = await getCommunityName(
+                    companyId,
                     checkIn.communityId,
                   );
                   const roundedHours = Math.floor(checkInHours);
@@ -506,7 +538,7 @@ exports.checkWorkdayReminders = onSchedule(
             ) {
               // Verificar si tiene servicios pendientes hoy
               const pendingServicesSnap = await db
-                .collection("scheduledServices")
+                .collection(`companies/${companyId}/scheduledServices`)
                 .where("assignedUserId", "==", userId)
                 .where("status", "==", "pending")
                 .where("scheduledDate", ">=", startOfDay)
@@ -658,7 +690,7 @@ exports.cleanupStaleFcmTokens = onSchedule(
 
 exports.onGpsNotificationCreated = onDocumentCreated(
   {
-    document: "systemNotifications/{notifId}",
+    document: "companies/{companyId}/systemNotifications/{notifId}",
     region: "europe-west1",
     memory: "128MiB",
     timeoutSeconds: 30,
@@ -829,6 +861,14 @@ exports.sendInvoiceEmails = onCall(
       `[sendInvoiceEmails] Iniciando proceso de envío de correos para ${invoiceIds.length} facturas. Solicitado por: ${request.auth.uid}`,
     );
 
+    const companyId = request.auth.token.companyId;
+    if (!companyId) {
+      throw new HttpsError(
+        "permission-denied",
+        "El usuario debe pertenecer a una organización (companyId faltante).",
+      );
+    }
+
     // Verify user role is admin
     const userDoc = await db.collection("users").doc(request.auth.uid).get();
     if (!userDoc.exists || userDoc.data().role !== "admin") {
@@ -840,7 +880,7 @@ exports.sendInvoiceEmails = onCall(
 
     // Load billing settings for SMTP configuration
     const billingSettingsSnap = await db
-      .collection("settings")
+      .collection(`companies/${companyId}/settings`)
       .doc("billing")
       .get();
     if (!billingSettingsSnap.exists) {
@@ -878,7 +918,7 @@ exports.sendInvoiceEmails = onCall(
     // Process each invoice
     for (const invoiceId of invoiceIds) {
       try {
-        const invoiceRef = db.collection("invoices").doc(invoiceId);
+        const invoiceRef = db.collection(`companies/${companyId}/invoices`).doc(invoiceId);
         const invoiceDoc = await invoiceRef.get();
         if (!invoiceDoc.exists) {
           results.push({
@@ -1016,7 +1056,7 @@ exports.sendInvoiceEmails = onCall(
         // Save error status to document
         try {
           await db
-            .collection("invoices")
+            .collection(`companies/${companyId}/invoices`)
             .doc(invoiceId)
             .update({
               emailSentError: err.message || String(err),
@@ -1080,6 +1120,14 @@ exports.sendGroupedInvoiceEmails = onCall(
       `[sendGroupedInvoiceEmails] Iniciando proceso agrupado para ${invoiceIds.length} facturas. Solicitado por: ${request.auth.uid}`,
     );
 
+    const companyId = request.auth.token.companyId;
+    if (!companyId) {
+      throw new HttpsError(
+        "permission-denied",
+        "El usuario debe pertenecer a una organización (companyId faltante).",
+      );
+    }
+
     // Verify user role is admin
     const userDoc = await db.collection("users").doc(request.auth.uid).get();
     if (!userDoc.exists || userDoc.data().role !== "admin") {
@@ -1091,7 +1139,7 @@ exports.sendGroupedInvoiceEmails = onCall(
 
     // Load billing settings for SMTP configuration
     const billingSettingsSnap = await db
-      .collection("settings")
+      .collection(`companies/${companyId}/settings`)
       .doc("billing")
       .get();
     if (!billingSettingsSnap.exists) {
@@ -1127,7 +1175,7 @@ exports.sendGroupedInvoiceEmails = onCall(
     const invoices = [];
     // Load all invoice details from database
     for (const invoiceId of invoiceIds) {
-      const invoiceDoc = await db.collection("invoices").doc(invoiceId).get();
+      const invoiceDoc = await db.collection(`companies/${companyId}/invoices`).doc(invoiceId).get();
       if (invoiceDoc.exists) {
         invoices.push({ id: invoiceDoc.id, ...invoiceDoc.data() });
       }
@@ -1139,7 +1187,7 @@ exports.sendGroupedInvoiceEmails = onCall(
 
     // Load all active administrators to resolve association names and emails
     const adminsSnap = await db
-      .collection("administrators")
+      .collection(`companies/${companyId}/administrators`)
       .where("active", "==", true)
       .get();
     const administrators = {};
@@ -1363,7 +1411,7 @@ exports.sendGroupedInvoiceEmails = onCall(
 
         // Update sent status in Firestore for all invoices in the group
         for (const inv of group.invoices) {
-          await db.collection("invoices").doc(inv.id).update({
+          await db.collection(`companies/${companyId}/invoices`).doc(inv.id).update({
             emailSent: true,
             emailSentAt: FieldValue.serverTimestamp(),
             emailSentError: null,
@@ -1422,20 +1470,34 @@ exports.getClientPortalData = onCall(
       `[getClientPortalData] Solicitando datos para token: ${token.substring(0, 5)}...`,
     );
 
-    // 1. Validar el token en publicPortals
-    const portalSnap = await db.collection("publicPortals").doc(token).get();
-    if (!portalSnap.exists || !portalSnap.data().isActive) {
+    // 1. Validar el token en publicPortals usando collectionGroup
+    const portalQuerySnap = await db
+      .collectionGroup("publicPortals")
+      .where("token", "==", token)
+      .limit(1)
+      .get();
+
+    if (portalQuerySnap.empty) {
       throw new HttpsError(
         "not-found",
         "El portal de cliente solicitado no existe o no está activo.",
       );
     }
 
-    const { communityId } = portalSnap.data();
+    const portalDoc = portalQuerySnap.docs[0];
+    const portalData = portalDoc.data();
+    if (!portalData.isActive) {
+      throw new HttpsError(
+        "not-found",
+        "El portal de cliente solicitado no existe o no está activo.",
+      );
+    }
+
+    const { companyId, communityId } = portalData;
 
     // 2. Obtener datos de la comunidad
     const communitySnap = await db
-      .collection("communities")
+      .collection(`companies/${companyId}/communities`)
       .doc(communityId)
       .get();
     if (!communitySnap.exists || !communitySnap.data().active) {
@@ -1452,7 +1514,7 @@ exports.getClientPortalData = onCall(
 
     // 3. Obtener fichajes (checkIns) de los últimos 30 días (limitado a 15 recientes)
     const checkInsSnap = await db
-      .collection("checkIns")
+      .collection(`companies/${companyId}/checkIns`)
       .where("communityId", "==", communityId)
       .orderBy("checkInTime", "desc")
       .limit(15)
@@ -1460,7 +1522,7 @@ exports.getClientPortalData = onCall(
 
     // 4. Obtener evidencias de los últimos 30 días (limitado a 15 recientes)
     const evidenceSnap = await db
-      .collection("evidenceReports")
+      .collection(`companies/${companyId}/evidenceReports`)
       .where("communityId", "==", communityId)
       .orderBy("createdAt", "desc")
       .limit(15)
@@ -1468,7 +1530,7 @@ exports.getClientPortalData = onCall(
 
     // 5. Obtener tareas de la comunidad
     const tasksSnap = await db
-      .collection("communityTasks")
+      .collection(`companies/${companyId}/communityTasks`)
       .where("communityId", "==", communityId)
       .get();
 
@@ -1639,6 +1701,14 @@ exports.secureCheckIn = onCall(
       throw new HttpsError(
         "unauthenticated",
         "El usuario debe estar autenticado.",
+      );
+    }
+
+    const companyId = auth.token.companyId;
+    if (!companyId) {
+      throw new HttpsError(
+        "permission-denied",
+        "El usuario debe pertenecer a una organización (companyId faltante).",
       );
     }
 
@@ -1822,7 +1892,7 @@ exports.secureCheckIn = onCall(
     const checkInId = await db.runTransaction(async (transaction) => {
       // 1. Obtener servicio programado
       const serviceRef = db
-        .collection("scheduledServices")
+        .collection(`companies/${companyId}/scheduledServices`)
         .doc(scheduledServiceId);
       const serviceSnap = await transaction.get(serviceRef);
       if (!serviceSnap.exists) {
@@ -1855,7 +1925,7 @@ exports.secureCheckIn = onCall(
       if (!isAuthorized) {
         // Comprobar jornada activa del titular hoy
         const titularWorkdayQuery = db
-          .collection("workdays")
+          .collection(`companies/${companyId}/workdays`)
           .where("userId", "==", serviceData.assignedUserId)
           .where("status", "==", "active");
         const titularWorkdaySnap = await transaction.get(titularWorkdayQuery);
@@ -1881,7 +1951,7 @@ exports.secureCheckIn = onCall(
         (serviceData.companionIds && serviceData.companionIds.includes(userId));
       if (!isTargetValid) {
         const titularWorkdayQuery = db
-          .collection("workdays")
+          .collection(`companies/${companyId}/workdays`)
           .where("userId", "==", serviceData.assignedUserId)
           .where("status", "==", "active");
         const titularWorkdaySnap = await transaction.get(titularWorkdayQuery);
@@ -1901,7 +1971,7 @@ exports.secureCheckIn = onCall(
       }
 
       // 4. Obtener coordenadas de la comunidad
-      const communityRef = db.collection("communities").doc(communityId);
+      const communityRef = db.collection(`companies/${companyId}/communities`).doc(communityId);
       const communitySnap = await transaction.get(communityRef);
       if (!communitySnap.exists) {
         throw new HttpsError(
@@ -1913,7 +1983,7 @@ exports.secureCheckIn = onCall(
 
       // 5. Verificar si ya tiene un fichaje abierto para este servicio
       const existingQuery = db
-        .collection("checkIns")
+        .collection(`companies/${companyId}/checkIns`)
         .where("userId", "==", userId)
         .where("scheduledServiceId", "==", scheduledServiceId)
         .where("checkOutTime", "==", null);
@@ -1994,7 +2064,7 @@ exports.secureCheckIn = onCall(
       const officialCheckInTime = isManual ? new Date(manualTime) : serverTime;
 
       // 8. Guardar telemetría real y crear documento
-      const checkInRef = db.collection("checkIns").doc();
+      const checkInRef = db.collection(`companies/${companyId}/checkIns`).doc();
       const checkInData = {
         userId,
         communityId,
@@ -2054,6 +2124,14 @@ exports.secureCheckOut = onCall(
       throw new HttpsError(
         "unauthenticated",
         "El usuario debe estar autenticado.",
+      );
+    }
+
+    const companyId = auth.token.companyId;
+    if (!companyId) {
+      throw new HttpsError(
+        "permission-denied",
+        "El usuario debe pertenecer a una organización (companyId faltante).",
       );
     }
 
@@ -2169,7 +2247,7 @@ exports.secureCheckOut = onCall(
 
     const checkoutResult = await db.runTransaction(async (transaction) => {
       // 1. Obtener fichaje
-      const checkInRef = db.collection("checkIns").doc(checkInId);
+      const checkInRef = db.collection(`companies/${companyId}/checkIns`).doc(checkInId);
       const checkInSnap = await transaction.get(checkInRef);
       if (!checkInSnap.exists) {
         throw new HttpsError("not-found", "Fichaje no encontrado.");
@@ -2190,7 +2268,7 @@ exports.secureCheckOut = onCall(
 
       if (!isAuthorized) {
         const serviceRef = db
-          .collection("scheduledServices")
+          .collection(`companies/${companyId}/scheduledServices`)
           .doc(checkInData.scheduledServiceId);
         const serviceSnap = await transaction.get(serviceRef);
         if (serviceSnap.exists) {
@@ -2214,7 +2292,7 @@ exports.secureCheckOut = onCall(
 
       // 3. Obtener coordenadas de la comunidad y calcular distancia
       const communityRef = db
-        .collection("communities")
+        .collection(`companies/${companyId}/communities`)
         .doc(checkInData.communityId);
       const communitySnap = await transaction.get(communityRef);
       if (!communitySnap.exists) {
@@ -2321,18 +2399,26 @@ exports.secureDeleteCheckIn = onCall(
   { region: "europe-west1", memory: "256MiB", timeoutSeconds: 60 },
   async (request) => {
     const { auth } = request;
-    const { checkInId } = request.data || {};
-    if (!auth)
+    if (!auth) {
       throw new HttpsError(
         "unauthenticated",
         "El usuario debe estar autenticado.",
       );
+    }
+    const { checkInId } = request.data || {};
     if (!checkInId || typeof checkInId !== "string") {
       throw new HttpsError("invalid-argument", "checkInId es obligatorio.");
     }
+    const companyId = auth.token.companyId;
+    if (!companyId) {
+      throw new HttpsError(
+        "permission-denied",
+        "El usuario debe pertenecer a una organización (companyId faltante).",
+      );
+    }
 
     await db.runTransaction(async (transaction) => {
-      const checkInRef = db.collection("checkIns").doc(checkInId);
+      const checkInRef = db.collection(`companies/${companyId}/checkIns`).doc(checkInId);
       const checkInSnap = await transaction.get(checkInRef);
       if (!checkInSnap.exists)
         throw new HttpsError("not-found", "Fichaje no encontrado.");
@@ -2348,7 +2434,7 @@ exports.secureDeleteCheckIn = onCall(
       let isAuthorized = isAdmin || checkIn.userId === auth.uid;
       if (!isAuthorized && checkIn.scheduledServiceId) {
         const serviceSnap = await transaction.get(
-          db.collection("scheduledServices").doc(checkIn.scheduledServiceId),
+          db.collection(`companies/${companyId}/scheduledServices`).doc(checkIn.scheduledServiceId),
         );
         if (serviceSnap.exists) {
           isAuthorized = serviceSnap.data().assignedUserId === auth.uid;
@@ -2397,7 +2483,7 @@ exports.cleanupDetailedGpsTelemetry = onSchedule(
       );
 
       const querySnap = await db
-        .collection("checkIns")
+        .collectionGroup("checkIns")
         .where("checkInTime", "<", cutoffTimestamp)
         .get();
 

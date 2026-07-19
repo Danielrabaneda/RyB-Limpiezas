@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../../contexts/AuthContext";
+import { useTenant } from "../../contexts/TenantContext";
 import { requestAbsence, getUserAbsences } from "../../services/absenceService";
 import { uploadPhoto } from "../../services/storageService";
 import { format } from "date-fns";
@@ -7,6 +8,7 @@ import { es } from "date-fns/locale";
 
 export default function AbsencesPage() {
   const { userProfile } = useAuth();
+  const { companyId } = useTenant();
   const [absences, setAbsences] = useState([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
@@ -27,7 +29,7 @@ export default function AbsencesPage() {
 
   async function loadAbsences() {
     try {
-      const data = await getUserAbsences(userProfile.uid);
+      const data = await getUserAbsences(companyId, userProfile.uid);
       // Sort: newest request first
       setAbsences(
         data.sort((a, b) => {
@@ -79,7 +81,7 @@ export default function AbsencesPage() {
 
     setActionLoading(true);
     try {
-      await requestAbsence({
+      await requestAbsence(companyId, {
         userId: userProfile.uid,
         userName: userProfile.name || userProfile.email || "Operario",
         type,

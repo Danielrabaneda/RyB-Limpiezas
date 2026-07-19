@@ -597,19 +597,21 @@ function AdminLayout() {
 
 function OperarioLayout() {
   const { userProfile, logout } = useAuth();
+  const { companyId } = useTenant();
   const { unreadCount, dismissAll } = useNotifications();
   const navigate = useNavigate();
   const location = useLocation();
   const [globalSettings, setGlobalSettings] = useState(null);
 
   useEffect(() => {
-    const unsub = onSnapshot(doc(db, "settings", "global"), (docSnap) => {
+    if (!companyId) return;
+    const unsub = onSnapshot(tenantDoc(db, companyId, "settings", "global"), (docSnap) => {
       if (docSnap.exists()) {
         setGlobalSettings(docSnap.data());
       }
     });
     return () => unsub();
-  }, []);
+  }, [companyId]);
 
   // Escuchar mensajes del Service Worker para navegación desde notificaciones
   useEffect(() => {

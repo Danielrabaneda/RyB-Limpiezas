@@ -16,6 +16,7 @@ import {
 } from "firebase/firestore";
 import { db, functions } from "../config/firebase";
 import { httpsCallable } from "firebase/functions";
+import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
 
 /**
  * Genera un token aleatorio seguro de 32 caracteres alfanuméricos.
@@ -34,20 +35,22 @@ function generatePortalToken() {
 /**
  * Activa el portal de cliente para una comunidad, generando un token único.
  */
-export async function enableClientPortal(communityId) {
+export async function enableClientPortal(companyId, communityId) {
   const token = generatePortalToken();
   const batch = writeBatch(db);
 
   // 1. Actualizar comunidad con el token
-  const communityRef = doc(db, "communities", communityId);
+  const communityRef = tenantDoc(db, companyId, "communities", communityId);
   batch.update(communityRef, {
     portalToken: token,
     portalTokenCreatedAt: serverTimestamp(),
   });
 
   // 2. Crear documento validador en publicPortals
-  const portalRef = doc(db, "publicPortals", token);
+  const portalRef = tenantDoc(db, companyId, "publicPortals", token);
   batch.set(portalRef, {
+    companyId,
+    token,
     communityId,
     isActive: true,
     createdAt: serverTimestamp(),
@@ -60,11 +63,11 @@ export async function enableClientPortal(communityId) {
 /**
  * Desactiva el portal de cliente de una comunidad, revocando el acceso.
  */
-export async function disableClientPortal(communityId, currentToken) {
+export async function disableClientPortal(companyId, communityId, currentToken) {
   const batch = writeBatch(db);
 
   // 1. Limpiar token en la comunidad
-  const communityRef = doc(db, "communities", communityId);
+  const communityRef = tenantDoc(db, companyId, "communities", communityId);
   batch.update(communityRef, {
     portalToken: null,
     portalTokenCreatedAt: null,
@@ -72,7 +75,7 @@ export async function disableClientPortal(communityId, currentToken) {
 
   // 2. Eliminar el documento validador
   if (currentToken) {
-    const portalRef = doc(db, "publicPortals", currentToken);
+    const portalRef = tenantDoc(db, companyId, "publicPortals", currentToken);
     batch.delete(portalRef);
   }
 
@@ -81,6 +84,7 @@ export async function disableClientPortal(communityId, currentToken) {
 
 /**
  * Valida un token de portal público y devuelve la información de la comunidad.
+ * TODO: Deprecated in favor of the Cloud Function `getClientPortalDataCallable`.
  */
 export async function getCommunityByPortalToken(token) {
   if (!token) return null;
@@ -124,7 +128,7 @@ export async function getClientAssignedCommunities(clientId) {
  * @param {Array<string>} communityIds - Lista de comunidades a consultar.
  * @returns {Promise<Array>} Listado de servicios reportados filtrados.
  */
-export async function getClientReports(communityIds) {
+export async function getClientReports(companyId, communityIds) {
   if (!communityIds || communityIds.length === 0) return [];
 
   const CHUNK_LIMIT = 10;
@@ -135,14 +139,14 @@ export async function getClientReports(communityIds) {
     let q;
     if (chunk.length === 1) {
       q = query(
-        collection(db, "checkIns"),
+        tenantCollection(db, companyId, "checkIns"),
         where("communityId", "==", chunk[0]),
         orderBy("checkInTime", "desc"),
         limit(10),
       );
     } else {
       q = query(
-        collection(db, "checkIns"),
+        tenantCollection(db, companyId, "checkIns"),
         where("communityId", "in", chunk),
         orderBy("checkInTime", "desc"),
         limit(10),
@@ -168,7 +172,7 @@ export async function getClientReports(communityIds) {
   // Enriquecer reportes con los nombres de las comunidades
   for (const rep of filteredReports) {
     try {
-      const commSnap = await getDoc(doc(db, "communities", rep.communityId));
+      const commSnap = await getDoc(tenantDoc(db, companyId, "communities", rep.communityId));
       if (commSnap.exists()) {
         rep.communityName = commSnap.data().name;
       }
@@ -186,7 +190,7 @@ export async function getClientReports(communityIds) {
  * @param {Array<string>} communityIds - Lista de comunidades a consultar.
  * @returns {Promise<Array>} Listado de reportes de evidencias.
  */
-export async function getClientEvidence(communityIds) {
+export async function getClientEvidence(companyId, communityIds) {
   if (!communityIds || communityIds.length === 0) return [];
 
   const CHUNK_LIMIT = 10;
@@ -197,14 +201,14 @@ export async function getClientEvidence(communityIds) {
     let q;
     if (chunk.length === 1) {
       q = query(
-        collection(db, "evidenceReports"),
+        tenantCollection(db, companyId, "evidenceReports"),
         where("communityId", "==", chunk[0]),
         orderBy("createdAt", "desc"),
         limit(10),
       );
     } else {
       q = query(
-        collection(db, "evidenceReports"),
+        tenantCollection(db, companyId, "evidenceReports"),
         where("communityId", "in", chunk),
         orderBy("createdAt", "desc"),
         limit(10),

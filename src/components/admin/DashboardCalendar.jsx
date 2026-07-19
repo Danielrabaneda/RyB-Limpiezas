@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useTenant } from "../../contexts/TenantContext";
 import {
   format,
   startOfMonth,
@@ -21,6 +22,7 @@ import {
 } from "../../services/scheduleService";
 
 export default function DashboardCalendar({ operarios }) {
+  const { companyId } = useTenant();
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [monthServices, setMonthServices] = useState([]);
@@ -28,15 +30,16 @@ export default function DashboardCalendar({ operarios }) {
   const [generating, setGenerating] = useState(false);
 
   useEffect(() => {
+    if (!companyId) return;
     loadMonthData();
-  }, [currentMonth]);
+  }, [currentMonth, companyId]);
 
   async function loadMonthData() {
     setLoading(true);
     try {
       const start = startOfMonth(currentMonth);
       const end = endOfMonth(currentMonth);
-      const svcs = await getScheduledServicesRange(start, end);
+      const svcs = await getScheduledServicesRange(companyId, start, end);
       setMonthServices(svcs);
     } catch (err) {
       console.error(err);
@@ -54,7 +57,7 @@ export default function DashboardCalendar({ operarios }) {
       return;
     setGenerating(true);
     try {
-      const created = await generateServicesForMonth(currentMonth);
+      const created = await generateServicesForMonth(companyId, currentMonth);
       alert(`Se han generado ${created} nuevos servicios.`);
       await loadMonthData();
     } catch (err) {
@@ -73,7 +76,7 @@ export default function DashboardCalendar({ operarios }) {
       return;
     setGenerating(true);
     try {
-      const result = await syncServicesForMonth(currentMonth);
+      const result = await syncServicesForMonth(companyId, currentMonth);
       alert(
         `Sincronización completada:\n${result.createdCount} creados.\n${result.deletedCount} obsoletos eliminados.`,
       );

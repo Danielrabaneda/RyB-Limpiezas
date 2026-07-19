@@ -92,7 +92,7 @@ export default function DashboardPage() {
         getScheduledServicesRange(new Date(), new Date()),
         getCheckInsRange(new Date(), new Date()),
         getDocs(
-          query(collection(db, "workdays"), where("status", "==", "active")),
+          query(tenantCollection(db, companyId, "workdays"), where("status", "==", "active")),
         ),
       ]);
 

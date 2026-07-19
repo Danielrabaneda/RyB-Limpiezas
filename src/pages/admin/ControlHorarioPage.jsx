@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useTenant } from "../../contexts/TenantContext";
 import {
   getWorkdaysForAdmin,
   deleteWorkday,
@@ -22,6 +23,7 @@ import jsPDF from "jspdf";
 import "jspdf-autotable";
 
 export default function ControlHorarioPage() {
+  const { companyId } = useTenant();
   const [workdays, setWorkdays] = useState([]);
   const [users, setUsers] = useState([]);
   const [expandedWeeks, setExpandedWeeks] = useState(new Set());
@@ -65,7 +67,7 @@ export default function ControlHorarioPage() {
 
   async function loadInitialData() {
     try {
-      const allUsers = await getAllUsers();
+      const allUsers = await getAllUsers(companyId);
       setUsers(allUsers);
     } catch (err) {
       console.error("Error loading users:", err);
@@ -76,6 +78,7 @@ export default function ControlHorarioPage() {
     setLoading(true);
     try {
       const data = await getWorkdaysForAdmin(
+        companyId,
         new Date(filters.startDate),
         new Date(filters.endDate),
         filters.userId || null,
@@ -101,7 +104,7 @@ export default function ControlHorarioPage() {
       )
     ) {
       try {
-        await deleteWorkday(id);
+        await deleteWorkday(companyId, id);
         setWorkdays((prev) => prev.filter((wd) => wd.id !== id));
       } catch (err) {
         alert("Error al eliminar el registro");
@@ -131,6 +134,7 @@ export default function ControlHorarioPage() {
     setActionLoading(true);
     try {
       await updateWorkdayTimes(
+        companyId,
         editingWorkday.id,
         new Date(editForm.startTime),
         new Date(editForm.endTime),

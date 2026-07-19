@@ -1155,10 +1155,10 @@ export async function generateServicesForTask(
 /**
  * Convenience function to generate services for a whole month
  */
-export async function generateServicesForMonth(monthDate) {
+export async function generateServicesForMonth(companyId, monthDate) {
   const start = startOfMonth(monthDate);
   const end = endOfMonth(monthDate);
-  return generateServicesForRange(start, end);
+  return generateServicesForRange(companyId, start, end);
 }
 
 // Deprecated alias for backward compatibility
@@ -1170,9 +1170,9 @@ export async function generateServicesForDays(daysAhead = 14) {
  * Synchronizes services for a specific date range: deletes pending services
  * that are no longer matching current configuration and creates missing ones.
  */
-export async function syncServicesForRange(startDate, endDate) {
+export async function syncServicesForRange(companyId, startDate, endDate) {
   try {
-    await checkAndRolloverGarages();
+    await checkAndRolloverGarages(companyId);
     const days = eachDayOfInterval({
       start: startOfDay(startDate),
       end: startOfDay(endDate),
@@ -1182,7 +1182,7 @@ export async function syncServicesForRange(startDate, endDate) {
     );
 
     const commsSnap = await getDocs(
-      query(collection(db, "communities"), where("active", "==", true)),
+      query(tenantCollection(db, companyId, "communities"), where("active", "==", true)),
     );
     const activeCommunityIds = new Set(commsSnap.docs.map((d) => d.id));
 
@@ -1353,10 +1353,10 @@ export async function syncServicesForRange(startDate, endDate) {
   }
 }
 
-export async function syncServicesForMonth(monthDate) {
+export async function syncServicesForMonth(companyId, monthDate) {
   const start = startOfMonth(monthDate);
   const end = endOfMonth(monthDate);
-  return syncServicesForRange(start, end);
+  return syncServicesForRange(companyId, start, end);
 }
 
 export function shouldScheduleOnDay(task, date, options = {}) {

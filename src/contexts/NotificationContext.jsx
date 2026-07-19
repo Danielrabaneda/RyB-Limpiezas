@@ -6,7 +6,8 @@ import {
   useRef,
   useCallback,
 } from "react";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { query, where, onSnapshot } from "firebase/firestore";
+import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
 import { db } from "../config/firebase";
 import { useAuth } from "./AuthContext";
 import {
@@ -44,7 +45,7 @@ const updateIconBadge = (count) => {
  * Un único onSnapshot para toda la app.
  */
 export function NotificationProvider({ children }) {
-  const { currentUser, isOperario } = useAuth();
+  const { currentUser, isOperario, companyId } = useAuth();
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [activePopupNotif, setActivePopupNotif] = useState(null);
@@ -75,8 +76,9 @@ export function NotificationProvider({ children }) {
       return;
     }
 
+    if (!companyId) return;
     const q = query(
-      collection(db, "systemNotifications"),
+      tenantCollection(db, companyId, "systemNotifications"),
       where("userId", "==", currentUser.uid),
       where("read", "==", false),
     );
@@ -165,13 +167,15 @@ export function NotificationProvider({ children }) {
     );
 
     // Limpieza periódica de notificaciones antiguas (una vez por sesión)
-    deleteOldNotifications(currentUser.uid).catch(() => {});
+    if (companyId) {
+      deleteOldNotifications(companyId, currentUser.uid).catch(() => {});
+    }
 
     return () => {
       unsubscribe();
       Object.keys(repeatTrackersRef.current).forEach(cleanupTracker);
     };
-  }, [currentUser, cleanupTracker]);
+  }, [currentUser, companyId, cleanupTracker]);
 
   // Auto-trigger popups for new notifications (immediate only)
   useEffect(() => {
@@ -219,7 +223,7 @@ export function NotificationProvider({ children }) {
   const dismissAll = useCallback(async () => {
     if (!currentUser?.uid) return;
     try {
-      await markAllNotificationsAsRead(currentUser.uid);
+      await markAllNotificationsAsRead(companyId, currentUser.uid);
     } catch (err) {
       console.error("[NotificationContext] Error dismissing:", err);
     }
@@ -319,7 +323,7 @@ export function NotificationProvider({ children }) {
                 const notifId = activePopupNotif.id;
                 setActivePopupNotif(null);
                 try {
-                  await markNotificationAsRead(notifId);
+                  await markNotificationAsRead(companyId, notifId);
                 } catch (err) {
                   console.error("Error marking notification as read:", err);
                 }

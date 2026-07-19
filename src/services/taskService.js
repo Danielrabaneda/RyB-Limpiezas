@@ -21,8 +21,8 @@ import {
 import { startOfMonth, endOfMonth, addDays } from "date-fns";
 
 // ==================== TASK TEMPLATES ====================
-export async function createTaskTemplate(data) {
-  const ref = await addDoc(collection(db, "taskTemplates"), {
+export async function createTaskTemplate(companyId, data) {
+  const ref = await addDoc(tenantCollection(db, companyId, "taskTemplates"), {
     name: data.name,
     description: data.description || "",
     category: data.category || "general",
@@ -31,15 +31,15 @@ export async function createTaskTemplate(data) {
   return { id: ref.id, ...data };
 }
 
-export async function getTaskTemplates() {
+export async function getTaskTemplates(companyId) {
   const snap = await getDocs(
-    query(collection(db, "taskTemplates"), orderBy("name")),
+    query(tenantCollection(db, companyId, "taskTemplates"), orderBy("name")),
   );
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
-export async function updateTaskTemplate(id, data) {
-  await updateDoc(doc(db, "taskTemplates", id), data);
+export async function updateTaskTemplate(companyId, id, data) {
+  await updateDoc(tenantDoc(db, companyId, "taskTemplates", id), data);
 }
 
 // ==================== COMMUNITY TASKS ====================

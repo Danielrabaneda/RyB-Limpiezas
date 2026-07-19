@@ -6,6 +6,7 @@ import { getMessaging, getToken, onMessage } from "firebase/messaging";
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../config/firebase";
 import app from "../config/firebase";
+import { tenantDoc } from "../utils/tenantFirestore";
 
 let messagingInstance = null;
 
@@ -34,7 +35,7 @@ function getMessagingInstance() {
  * @param {string} userId - UID del usuario
  * @returns {string|null} El token FCM o null si no se pudo registrar
  */
-export async function registerForPushNotifications(userId) {
+export async function registerForPushNotifications(companyId, userId) {
   if (!userId) return null;
 
   const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY;
@@ -75,7 +76,7 @@ export async function registerForPushNotifications(userId) {
 
       // Guardar token en Firestore (un doc por dispositivo)
       const tokenDocId = `${userId}_${hashToken(token)}`;
-      await setDoc(doc(db, "fcmTokens", tokenDocId), {
+      await setDoc(tenantDoc(db, companyId, "fcmTokens", tokenDocId), {
         token,
         userId,
         platform: "web",

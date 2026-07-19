@@ -78,7 +78,7 @@ export function AuthProvider({ children }) {
     [],
   );
 
-  const signup = useCallback(async (email, password, name) => {
+  const signup = useCallback(async (email, password, name, companyId = null) => {
     const cred = await createUserWithEmailAndPassword(auth, email, password);
     const profile = {
       uid: cred.user.uid,
@@ -89,6 +89,9 @@ export function AuthProvider({ children }) {
       allowDirectTransfers: false,
       createdAt: serverTimestamp(),
     };
+    if (companyId) {
+      profile.companyId = companyId;
+    }
     await setDoc(doc(db, "users", cred.user.uid), profile);
 
     // Esperar reactivamente a que la Cloud Function asigne los claims

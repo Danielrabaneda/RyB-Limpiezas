@@ -16,6 +16,7 @@ import {
   deleteDoc,
 } from "firebase/firestore";
 import { db } from "../config/firebase";
+import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
 import { startOfDay, endOfDay } from "date-fns";
 
 const COLLECTION = "geoDetections";
@@ -30,6 +31,7 @@ const COLLECTION = "geoDetections";
  * @param {number} distance - Distancia en metros al punto de la comunidad
  */
 export async function persistEntryDetection(
+  companyId,
   userId,
   serviceId,
   communityName,
@@ -68,7 +70,7 @@ export async function persistEntryDetection(
     }
 
     await setDoc(
-      doc(db, COLLECTION, docId),
+      tenantDoc(db, companyId, COLLECTION, docId),
       {
         type: "entry",
         userId,
@@ -105,6 +107,7 @@ export async function persistEntryDetection(
  * @param {'confirmed'|'estimated'} source - Si fue confirmada por GPS o estimada tras suspensión
  */
 export async function persistExitDetection(
+  companyId,
   userId,
   serviceId,
   communityName,
@@ -142,7 +145,7 @@ export async function persistExitDetection(
     }
 
     await setDoc(
-      doc(db, COLLECTION, docId),
+      tenantDoc(db, companyId, COLLECTION, docId),
       {
         type: "exit",
         userId,
@@ -175,11 +178,11 @@ export async function persistExitDetection(
  * @param {string} userId
  * @returns {Array} Lista de detecciones { type, serviceId, communityName, detectedAt, ... }
  */
-export async function getTodayDetections(userId) {
+export async function getTodayDetections(companyId, userId) {
   try {
     const today = new Date();
     const q = query(
-      collection(db, COLLECTION),
+      tenantCollection(db, companyId, COLLECTION),
       where("userId", "==", userId),
       where("detectedAt", ">=", Timestamp.fromDate(startOfDay(today))),
       where("detectedAt", "<=", Timestamp.fromDate(endOfDay(today))),
@@ -199,11 +202,11 @@ export async function getTodayDetections(userId) {
  * @param {string} serviceId
  * @returns {Object|null} La detección de entrada o null
  */
-export async function getEntryDetection(userId, serviceId) {
+export async function getEntryDetection(companyId, userId, serviceId) {
   try {
     const todayStr = new Date().toISOString().slice(0, 10);
     const docId = `entry_${userId}_${serviceId}_${todayStr}`;
-    const snap = await getDoc(doc(db, COLLECTION, docId));
+    const snap = await getDoc(tenantDoc(db, companyId, COLLECTION, docId));
     if (snap.exists()) {
       return { id: snap.id, ...snap.data() };
     }
@@ -221,11 +224,11 @@ export async function getEntryDetection(userId, serviceId) {
  * @param {string} serviceId
  * @returns {Object|null}
  */
-export async function getExitDetection(userId, serviceId) {
+export async function getExitDetection(companyId, userId, serviceId) {
   try {
     const todayStr = new Date().toISOString().slice(0, 10);
     const docId = `exit_${userId}_${serviceId}_${todayStr}`;
-    const snap = await getDoc(doc(db, COLLECTION, docId));
+    const snap = await getDoc(tenantDoc(db, companyId, COLLECTION, docId));
     if (snap.exists()) {
       return { id: snap.id, ...snap.data() };
     }

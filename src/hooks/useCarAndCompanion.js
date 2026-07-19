@@ -15,6 +15,8 @@ import { getDistance } from "../utils/geolocation";
 import { format } from "date-fns";
 import { collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "../config/firebase";
+import { useTenant } from "../contexts/TenantContext";
+import { tenantCollection } from "../utils/tenantFirestore";
 
 export function useCarAndCompanion(
   userProfile,
@@ -27,6 +29,7 @@ export function useCarAndCompanion(
     setActionLoading,
   },
 ) {
+  const { companyId } = useTenant();
   const [allOperarios, setAllOperarios] = useState([]);
   const [companionSelectorOpen, setCompanionSelectorOpen] = useState(false);
   const [mileageModalOpen, setMileageModalOpen] = useState(false);
@@ -35,9 +38,9 @@ export function useCarAndCompanion(
   // Cargar lista de operarios
   useEffect(() => {
     async function loadOps() {
-      if (!userProfile?.uid) return;
+      if (!userProfile?.uid || !companyId) return;
       try {
-        const ops = await getOperarios();
+        const ops = await getOperarios(companyId);
         setAllOperarios(
           ops.filter((o) => o.uid !== userProfile.uid && o.active),
         );
@@ -46,7 +49,7 @@ export function useCarAndCompanion(
       }
     }
     loadOps();
-  }, [userProfile]);
+  }, [userProfile, companyId]);
 
   // Wake lock y watchPosition para registrar el trayecto del vehículo
   useEffect(() => {
@@ -159,19 +162,20 @@ export function useCarAndCompanion(
     const oldCompanionId = activeWorkday.currentCompanionId;
     setActionLoading(true);
     try {
-      await updateWorkdayCompanion(activeWorkday.id, companionId);
+      await updateWorkdayCompanion(companyId, activeWorkday.id, companionId);
 
       if (activeCheckIn?.scheduledServiceId) {
         // Eliminar acompañante viejo
         if (oldCompanionId && oldCompanionId !== companionId) {
           try {
             await removeCompanionFromService(
+              companyId,
               activeCheckIn.scheduledServiceId,
               oldCompanionId,
             );
 
             const qComp = query(
-              collection(db, "checkIns"),
+              tenantCollection(db, companyId, "checkIns"),
               where(
                 "scheduledServiceId",
                 "==",
@@ -191,6 +195,7 @@ export function useCarAndCompanion(
         // Añadir nuevo acompañante
         if (companionId && companionId !== oldCompanionId) {
           await addCompanionToService(
+            companyId,
             activeCheckIn.scheduledServiceId,
             companionId,
           );
@@ -231,11 +236,11 @@ export function useCarAndCompanion(
         const breadcrumbs = JSON.parse(
           localStorage.getItem("ryb_car_breadcrumbs") || "[]",
         );
-        await deactivateCar(activeWorkday.id, breadcrumbs);
+        await deactivateCar(companyId, activeWorkday.id, breadcrumbs);
         localStorage.removeItem("ryb_car_breadcrumbs");
       } else {
         localStorage.setItem("ryb_car_breadcrumbs", "[]");
-        await activateCar(activeWorkday.id);
+        await activateCar(companyId, activeWorkday.id);
       }
       await loadToday();
     } catch (err) {
@@ -253,7 +258,7 @@ export function useCarAndCompanion(
     setActionLoading(true);
     try {
       const name = userProfile.name || userProfile.displayName || "Operario";
-      await saveManualMileage(userProfile.uid, name, new Date(), manualKm);
+      await saveManualMileage(companyId, userProfile.uid, name, new Date(), manualKm);
       alert("Kilometraje guardado correctamente");
       setMileageModalOpen(false);
       setManualKm("");
@@ -273,11 +278,11 @@ export function useCarAndCompanion(
         const breadcrumbs = JSON.parse(
           localStorage.getItem("ryb_car_breadcrumbs") || "[]",
         );
-        await deactivateCar(activeWorkday.id, breadcrumbs);
+        await deactivateCar(companyId, activeWorkday.id, breadcrumbs);
         localStorage.removeItem("ryb_car_breadcrumbs");
       } else {
         // Desactivar coche del compañero
-        await deactivateCar(companionInfo.workday.id, []);
+        await deactivateCar(companyId, companionInfo.workday.id, []);
       }
       await loadToday();
     } catch (e) {

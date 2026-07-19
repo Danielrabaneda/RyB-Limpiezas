@@ -35,7 +35,7 @@ export default function RegisterPage() {
         return;
       }
 
-      const codeRef = doc(db, "accessCodes", normalizedCode);
+      const codeRef = doc(db, "accessCodeIndex", normalizedCode);
       const codeSnap = await getDoc(codeRef);
 
       if (!codeSnap.exists()) {
@@ -45,14 +45,16 @@ export default function RegisterPage() {
       }
 
       const codeData = codeSnap.data();
-      if (!codeData.active) {
+      if (codeData.active === false) {
         setError("El código de invitación ha expirado o no está activo");
         setLoading(false);
         return;
       }
 
+      const companyId = codeData.companyId;
+
       // 2. Si es válido, proceder con el registro
-      await signup(email, password, name);
+      await signup(email, password, name, companyId);
       navigate("/operario");
     } catch (err) {
       console.error(err);
