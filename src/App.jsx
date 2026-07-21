@@ -42,6 +42,25 @@ class ErrorBoundary extends React.Component {
   }
   render() {
     if (this.state.hasError) {
+      const handleForceReload = async () => {
+        try {
+          // 1. Unregister all service workers
+          if ('serviceWorker' in navigator) {
+            const registrations = await navigator.serviceWorker.getRegistrations();
+            await Promise.all(registrations.map(r => r.unregister()));
+          }
+          // 2. Clear all caches
+          if ('caches' in window) {
+            const cacheNames = await caches.keys();
+            await Promise.all(cacheNames.map(name => caches.delete(name)));
+          }
+        } catch (e) {
+          console.error("Error clearing caches:", e);
+        }
+        // 3. Hard reload bypassing cache
+        window.location.reload(true);
+      };
+
       return (
         <div className="flex flex-col items-center justify-center p-10 text-center h-screen bg-slate-50">
           <div style={{ fontSize: "4rem", marginBottom: "1rem" }}>⚠️</div>
@@ -51,7 +70,7 @@ class ErrorBoundary extends React.Component {
           </p>
           <button
             className="btn btn-primary"
-            onClick={() => window.location.reload()}
+            onClick={handleForceReload}
           >
             🔄 Recargar aplicación
           </button>
@@ -733,6 +752,27 @@ function OperarioLayout() {
           >
             🍪
           </button>
+          {userProfile?.role === "admin" && (
+            <button
+              onClick={() => navigate("/admin")}
+              className="btn btn-ghost btn-sm"
+              title="Volver al Panel de Administración"
+              style={{
+                color: "#93c5fd",
+                padding: "4px 8px",
+                fontSize: "0.85rem",
+                fontWeight: "bold",
+                border: "1px solid rgba(147, 197, 253, 0.3)",
+                borderRadius: "6px",
+                marginRight: "4px",
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center"
+              }}
+            >
+              📊 Admin
+            </button>
+          )}
           <button
             className="btn btn-ghost btn-sm"
             onClick={handleLogout}
