@@ -130,6 +130,14 @@
         { "fieldPath": "assignedUserId", "order": "ASCENDING" },
         { "fieldPath": "scheduledDate", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "scheduledServices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "companionIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "scheduledDate", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

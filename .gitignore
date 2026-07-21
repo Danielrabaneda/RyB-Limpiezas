@@ -45,4 +45,9 @@ dist-ssr
 /check_*.js
 /check_*.cjs
 /check_*.py
+# Firebase cache and local audit artifacts
+.firebase/
+audit_results.json
 
+# Credenciales temporales generadas por google-github-actions/auth
+gha-creds-*.json
