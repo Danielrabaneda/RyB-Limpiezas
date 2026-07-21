@@ -122,7 +122,7 @@ describe('AuthService Fail-Closed & Zero-Read Hardening', () => {
       function mountTenantHook(companyId) {
         currentState = `Loaded data for ${companyId}`;
         activeListeners++;
-        
+
         // Return unsubscribe function
         return () => {
           activeListeners--;
