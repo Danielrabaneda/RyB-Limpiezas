@@ -227,7 +227,7 @@ export default function useCommunityTasks({
     if (actionLoading) return;
     setActionLoading(true);
     try {
-      await transferPermanent({
+      await transferPermanent(companyId, {
         communityTaskId: reassignModal.task.id,
         fromUserId: reassignModal.task.assignedUserId,
         toUserId,

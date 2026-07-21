@@ -96,13 +96,8 @@ export default function MaterialRequestPage() {
                   const isOutOfStock =
                     p.currentStock !== undefined && p.currentStock <= 0;
                   return (
-                    <option
-                      key={p.id}
-                      value={p.id}
-                      disabled={isOutOfStock}
-                      style={{ color: isOutOfStock ? "red" : "inherit" }}
-                    >
-                      {p.name} ({p.unit}){isOutOfStock ? " - SIN STOCK" : ""}
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.unit}){isOutOfStock ? " — SIN STOCK" : ""}
                     </option>
                   );
                 })}

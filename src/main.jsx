@@ -11,6 +11,9 @@ if (!window.location.pathname.startsWith("/portal/")) {
     onNeedRefresh() {
       // Automatically update to the new service worker version
       updateSW(true);
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
     },
     onOfflineReady() {
       console.log("App lista para uso offline.");

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { getCommunities } from "../services/communityService";
 import { getAllActiveTasks } from "../services/taskService";
+import { useTenant } from "../contexts/TenantContext";
 import {
   getScheduledServicesRange,
   shouldScheduleOnDay,
@@ -19,6 +20,7 @@ import {
 import { es } from "date-fns/locale";
 
 export default function GarageYearlyView() {
+  const { companyId } = useTenant();
   const [loading, setLoading] = useState(true);
   const [year, setYear] = useState(new Date().getFullYear());
   const [data, setData] = useState([]);
@@ -36,8 +38,8 @@ export default function GarageYearlyView() {
   async function loadData() {
     setLoading(true);
     try {
-      const allComms = await getCommunities();
-      const allTasks = await getAllActiveTasks();
+      const allComms = await getCommunities(companyId);
+      const allTasks = await getAllActiveTasks(companyId);
 
       // Filter tasks: marked as garage OR belonging to a community of type 'garaje'
       const garageTasks = allTasks.filter((task) => {
@@ -67,7 +69,7 @@ export default function GarageYearlyView() {
       // Load services for the whole year
       const yearStart = startOfYear(new Date(year, 0, 1));
       const yearEnd = endOfYear(new Date(year, 0, 1));
-      const allServices = await getScheduledServicesRange(yearStart, yearEnd);
+      const allServices = await getScheduledServicesRange(companyId, yearStart, yearEnd);
 
       setData(finalData);
       setServices(allServices);

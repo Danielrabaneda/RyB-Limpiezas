@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../../contexts/AuthContext";
+import { useTenant } from "../../contexts/TenantContext";
 import { getScheduledServicesForWeek } from "../../services/scheduleService";
 import { getCommunity } from "../../services/communityService";
 import { getCommunityTasks } from "../../services/taskService";
@@ -30,6 +31,7 @@ import PlanningCalendar from "../../components/PlanningCalendar";
 
 export default function HistoryPage() {
   const { userProfile } = useAuth();
+  const { companyId } = useTenant();
   const [currentWeek, setCurrentWeek] = useState(new Date());
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [activeTab, setActiveTab] = useState("calendar"); // 'calendar', 'services', 'workdays', 'mileage'
@@ -60,6 +62,7 @@ export default function HistoryPage() {
     setLoading(true);
     try {
       const svcs = await getScheduledServicesForWeek(
+        companyId,
         userProfile.uid,
         currentWeek,
       );
@@ -74,8 +77,8 @@ export default function HistoryPage() {
         uniqueCommunityIds.map(async (commId) => {
           try {
             const [comm, tasks] = await Promise.all([
-              getCommunity(commId),
-              getCommunityTasks(commId),
+              getCommunity(companyId, commId),
+              getCommunityTasks(companyId, commId),
             ]);
             cache[commId] = comm;
             taskCache[commId] = tasks;
@@ -129,7 +132,7 @@ export default function HistoryPage() {
     try {
       const start = startOfWeek(currentWeek, { weekStartsOn: 1 });
       const end = endOfWeek(currentWeek, { weekStartsOn: 1 });
-      const data = await getWorkdaysForOperario(userProfile.uid, start, end);
+      const data = await getWorkdaysForOperario(companyId, userProfile.uid, start, end);
       setWorkdays(data);
     } catch (err) {
       console.error(err);
@@ -144,8 +147,9 @@ export default function HistoryPage() {
       const weekStart = startOfWeek(currentWeek, { weekStartsOn: 1 });
       const weekEnd = endOfWeek(currentWeek, { weekStartsOn: 1 });
       const [weekData, monthData] = await Promise.all([
-        getMileageForWeek(userProfile.uid, weekStart, weekEnd),
+        getMileageForWeek(companyId, userProfile.uid, weekStart, weekEnd),
         getMileageForMonth(
+          companyId,
           userProfile.uid,
           currentMonth.getFullYear(),
           currentMonth.getMonth(),
@@ -165,7 +169,7 @@ export default function HistoryPage() {
     setActionLoading(true);
     try {
       if (transferModal.type === "day") {
-        await transferDay({
+        await transferDay(companyId, {
           date: transferModal.date,
           fromUserId: userProfile.uid,
           toUserId,
@@ -173,7 +177,7 @@ export default function HistoryPage() {
         });
         alert("Traspaso de día solicitado correctamente.");
       } else if (transferModal.type === "week") {
-        await transferWeek({
+        await transferWeek(companyId, {
           dateInWeek: currentWeek,
           fromUserId: userProfile.uid,
           toUserId,

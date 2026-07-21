@@ -6,11 +6,13 @@ import {
 } from "../../services/evidenceService";
 import { getCommunities } from "../../services/communityService";
 import { getOperarios } from "../../services/authService";
+import { useTenant } from "../../contexts/TenantContext";
 import { format, subDays } from "date-fns";
 import { es } from "date-fns/locale";
 import { groupFlatList } from "../../utils/dateGrouping";
 
 export default function EvidenceReportsPage() {
+  const { companyId } = useTenant();
   const [startDate, setStartDate] = useState(
     format(subDays(new Date(), 30), "yyyy-MM-dd"),
   );
@@ -37,7 +39,10 @@ export default function EvidenceReportsPage() {
   }, []);
 
   async function loadBaseData() {
-    const [comms, ops] = await Promise.all([getCommunities(), getOperarios()]);
+    const [comms, ops] = await Promise.all([
+      getCommunities(companyId),
+      getOperarios(companyId),
+    ]);
     setCommunities(comms);
     setOperarios(ops);
     await loadReports();
@@ -51,6 +56,7 @@ export default function EvidenceReportsPage() {
       if (filterOperario) filters.userId = filterOperario;
 
       const data = await getEvidenceReportsRange(
+        companyId,
         new Date(startDate),
         new Date(endDate),
         filters,
@@ -71,7 +77,7 @@ export default function EvidenceReportsPage() {
     )
       return;
     try {
-      await deleteEvidenceReport(id);
+      await deleteEvidenceReport(companyId, id);
       setReports((prev) => prev.filter((r) => r.id !== id));
       if (expandedReport === id) setExpandedReport(null);
     } catch (err) {
@@ -81,7 +87,7 @@ export default function EvidenceReportsPage() {
 
   async function handleMarkReviewed(id) {
     try {
-      await markEvidenceReviewed(id);
+      await markEvidenceReviewed(companyId, id);
       setReports((prev) =>
         prev.map((r) => (r.id === id ? { ...r, status: "reviewed" } : r)),
       );

@@ -1,6 +1,7 @@
-import { createContext, useContext } from "react";
+import { createContext, useContext, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "./AuthContext";
+import { getAuth } from "firebase/auth";
 
 const TenantContext = createContext();
 
@@ -13,8 +14,9 @@ export function useTenant() {
 }
 
 export function RequireTenant({ children }) {
-  const { currentUser, companyId, authClaimsLoaded, loading } = useAuth();
+  const { currentUser, companyId, authClaimsLoaded, loading, logout } = useAuth();
   const location = useLocation();
+  const [retrying, setRetrying] = useState(false);
 
   if (loading) {
     return (
@@ -44,6 +46,30 @@ export function RequireTenant({ children }) {
 
   if (!companyId) {
     // Fail-closed: El usuario está autenticado pero no tiene un tenant asignado.
+    const handleRetry = async () => {
+      setRetrying(true);
+      try {
+        const auth = getAuth();
+        if (auth.currentUser) {
+          // Forzar refresco del token para obtener claims actualizados
+          await auth.currentUser.getIdToken(true);
+          // Recargar la página para que AuthContext re-evalúe los claims
+          window.location.reload();
+        }
+      } catch (err) {
+        console.error("Error al refrescar token:", err);
+        setRetrying(false);
+      }
+    };
+
+    const handleLogout = async () => {
+      try {
+        await logout();
+      } catch (err) {
+        console.error("Error al cerrar sesión:", err);
+      }
+    };
+
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50">
         <div className="text-center p-8 bg-white rounded-xl shadow-md max-w-md w-full border border-red-100">
@@ -56,6 +82,40 @@ export function RequireTenant({ children }) {
           <p className="text-gray-600 mb-6">
             Su cuenta no está asociada a ninguna empresa (tenant activo). Contacte con su administrador para que asigne su cuenta correctamente.
           </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+            <button
+              onClick={handleRetry}
+              disabled={retrying}
+              style={{
+                padding: "12px 24px",
+                backgroundColor: "var(--color-primary, #2563eb)",
+                color: "white",
+                border: "none",
+                borderRadius: "8px",
+                fontSize: "16px",
+                fontWeight: 600,
+                cursor: retrying ? "not-allowed" : "pointer",
+                opacity: retrying ? 0.6 : 1,
+              }}
+            >
+              {retrying ? "Reintentando..." : "🔄 Reintentar"}
+            </button>
+            <button
+              onClick={handleLogout}
+              style={{
+                padding: "12px 24px",
+                backgroundColor: "transparent",
+                color: "#dc2626",
+                border: "2px solid #dc2626",
+                borderRadius: "8px",
+                fontSize: "16px",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              🚪 Cerrar Sesión
+            </button>
+          </div>
         </div>
       </div>
     );

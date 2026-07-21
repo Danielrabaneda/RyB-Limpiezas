@@ -61,6 +61,7 @@ export function useServiceEvidence(
     setSubmittingGeneralEvidence(true);
     try {
       await updateScheduledServiceNotesAndPhotos(
+        companyId,
         serviceId,
         generalNotes,
         generalPhotos,

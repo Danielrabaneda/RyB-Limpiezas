@@ -9,17 +9,17 @@ import {
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  deleteUser,
   signOut,
   onAuthStateChanged,
 } from "firebase/auth";
+import { httpsCallable } from "firebase/functions";
 import {
   doc,
   getDoc,
-  setDoc,
-  serverTimestamp,
   onSnapshot,
 } from "firebase/firestore";
-import { auth, db } from "../config/firebase";
+import { auth, db, functions } from "../config/firebase";
 import { createUserWithoutLogout } from "../services/adminAuthService";
 
 const AuthContext = createContext();
@@ -60,39 +60,25 @@ export function AuthProvider({ children }) {
 
   const createOperario = useCallback(
     async (email, password, name, phone, allowDirectTransfers = false) => {
-      // We create the user via secondary app to avoid logging out the admin
-      const user = await createUserWithoutLogout(email, password);
-      const profile = {
-        uid: user.uid,
+      if (!companyId) throw new Error("No hay una empresa activa para crear el operario.");
+      return createUserWithoutLogout(email, password, {
         name,
-        email,
         phone: phone || "",
-        role: "operario",
-        active: true,
         allowDirectTransfers: !!allowDirectTransfers,
-        createdAt: serverTimestamp(),
-      };
-      await setDoc(doc(db, "users", user.uid), profile);
-      return profile;
+      });
     },
-    [],
+    [companyId],
   );
 
-  const signup = useCallback(async (email, password, name, companyId = null) => {
+  const signup = useCallback(async (email, password, name, accessCode) => {
     const cred = await createUserWithEmailAndPassword(auth, email, password);
-    const profile = {
-      uid: cred.user.uid,
-      name,
-      email,
-      role: "operario",
-      active: true,
-      allowDirectTransfers: false,
-      createdAt: serverTimestamp(),
-    };
-    if (companyId) {
-      profile.companyId = companyId;
+    try {
+      const completeRegistration = httpsCallable(functions, "completeTenantRegistration");
+      await completeRegistration({ name, accessCode });
+    } catch (error) {
+      await deleteUser(cred.user).catch(() => {});
+      throw error;
     }
-    await setDoc(doc(db, "users", cred.user.uid), profile);
 
     // Esperar reactivamente a que la Cloud Function asigne los claims
     let claimConfirmed = false;
@@ -130,7 +116,11 @@ export function AuthProvider({ children }) {
     }
 
     setUserProfile(profile);
-    return { user: cred.user, profile };
+    const profileSnap = await getDoc(doc(db, "users", cred.user.uid));
+    return {
+      user: cred.user,
+      profile: profileSnap.exists() ? profileSnap.data() : null,
+    };
   }, []);
 
   useEffect(() => {

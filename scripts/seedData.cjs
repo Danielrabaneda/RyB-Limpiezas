@@ -18,6 +18,10 @@ async function seed() {
     issueDateMode: "auto",
     nif: "B12345678"
   });
+  await db.collection("settings").doc("global").set({
+    companyName: "Rayba Limpiezas",
+    invitationCode: "TEST-CODE-123",
+  });
 
   await db.collection("accessCodes").doc("TEST-CODE-123").set({
     role: "operario",

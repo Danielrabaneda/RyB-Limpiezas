@@ -2,12 +2,13 @@ import { useState, useEffect } from "react";
 import {
   getMileageReport,
   recalculateBulk,
+  calculateDailyMileage,
 } from "../../services/mileageService";
 import { getCheckInsRange } from "../../services/checkInService";
 import { getCommunities } from "../../services/communityService";
 import { getOperarios } from "../../services/authService";
+import { useTenant } from "../../contexts/TenantContext";
 import { getWorkdaysForAdmin } from "../../services/workdayService";
-import { calculateDailyMileage } from "../../services/mileageService";
 import {
   format,
   subDays,
@@ -161,6 +162,7 @@ const WeeklyTooltip = ({ active, payload, label }) => {
 };
 
 export default function KilometrajePage() {
+  const { companyId } = useTenant();
   const [startDate, setStartDate] = useState(
     format(subDays(new Date(), 30), "yyyy-MM-dd"),
   );
@@ -202,7 +204,10 @@ export default function KilometrajePage() {
   }, []);
 
   async function loadBaseData() {
-    const [comms, ops] = await Promise.all([getCommunities(), getOperarios()]);
+    const [comms, ops] = await Promise.all([
+      getCommunities(companyId),
+      getOperarios(companyId),
+    ]);
     setCommunities(comms);
     setOperarios(ops);
     await loadReport();
@@ -218,7 +223,7 @@ export default function KilometrajePage() {
       const filters = {};
       if (filterOperario) filters.userId = filterOperario;
 
-      let allData = await getMileageReport(queryStart, queryEnd, filters);
+      let allData = await getMileageReport(companyId, queryStart, queryEnd, filters);
 
       // Filtro por comunidad en memoria
       if (filterCommunity) {
@@ -271,6 +276,7 @@ export default function KilometrajePage() {
     try {
       const operario = operarios.find((o) => o.uid === filterOperario);
       const workdays = await getWorkdaysForAdmin(
+        companyId,
         new Date(startDate),
         new Date(endDate),
         filterOperario,
@@ -291,6 +297,7 @@ export default function KilometrajePage() {
       });
 
       await recalculateBulk(
+        companyId,
         new Date(startDate),
         new Date(endDate),
         filterOperario,
@@ -318,6 +325,7 @@ export default function KilometrajePage() {
     setRecalculating(true);
     try {
       const workdays = await getWorkdaysForAdmin(
+        companyId,
         new Date(record.date),
         new Date(record.date),
         record.userId,
@@ -328,6 +336,7 @@ export default function KilometrajePage() {
       }, []);
 
       await calculateDailyMileage(
+        companyId,
         record.userId,
         new Date(record.date),
         record.userName,

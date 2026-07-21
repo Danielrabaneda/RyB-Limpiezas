@@ -450,25 +450,70 @@ export async function getScheduledServicesRange(
   const start = Timestamp.fromDate(startOfDay(startDate));
   const end = Timestamp.fromDate(endOfDay(endDate));
 
-  let q;
+  let results = [];
+
   if (filters.userId) {
-    q = query(
+    // 1. Fetch own services in range
+    const qOwn = query(
       tenantCollection(db, companyId, "scheduledServices"),
       where("assignedUserId", "==", filters.userId),
       where("scheduledDate", ">=", start),
       where("scheduledDate", "<=", end),
       orderBy("scheduledDate"),
     );
+
+    // 2. Fetch services where the user is a companion (without date filters to avoid Firestore index requirement)
+    const qCompanion = query(
+      tenantCollection(db, companyId, "scheduledServices"),
+      where("companionIds", "array-contains", filters.userId),
+      where("scheduledDate", ">=", start),
+      where("scheduledDate", "<=", end),
+      orderBy("scheduledDate"),
+    );
+
+    const [ownSnap, companionSnap] = await Promise.all([
+      getDocs(qOwn),
+      getDocs(qCompanion),
+    ]);
+
+    const ownServices = ownSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+    const companionServicesInPeriod = companionSnap.docs.map((d) => ({
+      id: d.id,
+      ...d.data(),
+    }));
+
+    // Merge and deduplicate
+    const resultsMap = new Map();
+    ownServices.forEach((s) => resultsMap.set(s.id, s));
+    companionServicesInPeriod.forEach((s) => {
+      if (!resultsMap.has(s.id)) {
+        resultsMap.set(s.id, { ...s, isCompanion: true });
+      } else {
+        resultsMap.set(s.id, { ...resultsMap.get(s.id), isCompanion: true });
+      }
+    });
+
+    results = Array.from(resultsMap.values()).sort((a, b) => {
+      const da = a.scheduledDate.toDate
+        ? a.scheduledDate.toDate().getTime()
+        : new Date(a.scheduledDate).getTime();
+      const db = b.scheduledDate.toDate
+        ? b.scheduledDate.toDate().getTime()
+        : new Date(b.scheduledDate).getTime();
+      return da - db;
+    });
   } else {
-    q = query(
+    // Admin view: query all services in the date range
+    const q = query(
       tenantCollection(db, companyId, "scheduledServices"),
       where("scheduledDate", ">=", start),
       where("scheduledDate", "<=", end),
       orderBy("scheduledDate"),
     );
+    const snap = await getDocs(q);
+    results = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
   }
-
-  let results = (await getDocs(q)).docs.map((d) => ({ id: d.id, ...d.data() }));
 
   if (filters.communityId) {
     results = results.filter((r) => r.communityId === filters.communityId);

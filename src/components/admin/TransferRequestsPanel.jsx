@@ -5,10 +5,12 @@ import {
   rejectTransfer,
 } from "../../services/transferService";
 import { getOperarios } from "../../services/authService";
+import { useTenant } from "../../contexts/TenantContext";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 
 export default function TransferRequestsPanel({ onActionComplete }) {
+  const { companyId } = useTenant();
   const [requests, setRequests] = useState([]);
   const [operarios, setOperarios] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -22,8 +24,8 @@ export default function TransferRequestsPanel({ onActionComplete }) {
     setLoading(true);
     try {
       const [transfers, ops] = await Promise.all([
-        getPendingTransfers(),
-        getOperarios(),
+        getPendingTransfers(companyId),
+        getOperarios(companyId),
       ]);
       setRequests(transfers);
       setOperarios(ops);
@@ -41,7 +43,7 @@ export default function TransferRequestsPanel({ onActionComplete }) {
     if (!confirm("¿Validar este traspaso?")) return;
     setProcessingId(id);
     try {
-      await approveTransfer(id);
+      await approveTransfer(companyId, id);
       setRequests((prev) => prev.filter((r) => r.id !== id));
       alert("Traspaso validado correctamente.");
       if (onActionComplete) onActionComplete();
@@ -61,7 +63,7 @@ export default function TransferRequestsPanel({ onActionComplete }) {
       return;
     setProcessingId(id);
     try {
-      await rejectTransfer(id);
+      await rejectTransfer(companyId, id);
       setRequests((prev) => prev.filter((r) => r.id !== id));
       alert(
         "Traspaso rechazado. Los servicios han vuelto al operario original.",

@@ -5,10 +5,12 @@ import {
   rejectSuggestion,
 } from "../../services/gpsSuggestionService";
 import { updateCommunity } from "../../services/communityService";
+import { useTenant } from "../../contexts/TenantContext";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 
 export default function GPSSuggestionsPanel({ onActionComplete }) {
+  const { companyId } = useTenant();
   const [suggestions, setSuggestions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState(null);
@@ -20,7 +22,7 @@ export default function GPSSuggestionsPanel({ onActionComplete }) {
   async function loadData() {
     setLoading(true);
     try {
-      const data = await getAllPendingSuggestions();
+      const data = await getAllPendingSuggestions(companyId);
       setSuggestions(data);
     } catch (err) {
       console.error("Error loading GPS suggestions:", err);
@@ -40,13 +42,13 @@ export default function GPSSuggestionsPanel({ onActionComplete }) {
     setProcessingId(suggestion.id);
     try {
       // 1. Actualizar la comunidad
-      await updateCommunity(suggestion.communityId, {
+      await updateCommunity(companyId, suggestion.communityId, {
         lat: suggestion.lat,
         lng: suggestion.lng,
       });
 
       // 2. Marcar sugerencia como aceptada
-      await acceptSuggestion(suggestion.id);
+      await acceptSuggestion(companyId, suggestion.id);
 
       setSuggestions((prev) => prev.filter((s) => s.id !== suggestion.id));
       alert("✅ Ubicación de la comunidad actualizada correctamente.");
@@ -64,7 +66,7 @@ export default function GPSSuggestionsPanel({ onActionComplete }) {
 
     setProcessingId(id);
     try {
-      await rejectSuggestion(id);
+      await rejectSuggestion(companyId, id);
       setSuggestions((prev) => prev.filter((s) => s.id !== id));
       if (onActionComplete) onActionComplete();
     } catch (err) {

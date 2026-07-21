@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../../contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
+import { useTenant } from "../../contexts/TenantContext";
 import { getCommunities } from "../../services/communityService";
 import { getOperarios } from "../../services/authService";
 import { getScheduledServicesRange } from "../../services/scheduleService";
@@ -24,10 +25,12 @@ import {
   getDocs,
 } from "firebase/firestore";
 import { db } from "../../config/firebase";
+import { tenantCollection } from "../../utils/tenantFirestore";
 import { createSystemNotification } from "../../services/notificationService";
 
 export default function DashboardPage() {
   const { userProfile } = useAuth();
+  const { companyId } = useTenant();
   const navigate = useNavigate();
   const [refreshKey, setRefreshKey] = useState(0);
   const [stats, setStats] = useState({
@@ -79,7 +82,7 @@ export default function DashboardPage() {
 
   async function loadDashboard() {
     try {
-      await checkAndRolloverGarages();
+      await checkAndRolloverGarages(companyId);
       const [
         communitiesList,
         ops,
@@ -87,10 +90,10 @@ export default function DashboardPage() {
         checkIns,
         activeWorkdaysSnap,
       ] = await Promise.all([
-        getCommunities(),
-        getOperarios(),
-        getScheduledServicesRange(new Date(), new Date()),
-        getCheckInsRange(new Date(), new Date()),
+        getCommunities(companyId),
+        getOperarios(companyId),
+        getScheduledServicesRange(companyId, new Date(), new Date()),
+        getCheckInsRange(companyId, new Date(), new Date()),
         getDocs(
           query(tenantCollection(db, companyId, "workdays"), where("status", "==", "active")),
         ),
@@ -254,6 +257,31 @@ export default function DashboardPage() {
 
   return (
     <div className="animate-fadeIn">
+      {/* Mobile-friendly banner for Admins to switch to Operario view */}
+      <div
+        className="mb-6 p-4 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
+        style={{
+          background: "linear-gradient(135deg, var(--color-primary-50) 0%, #e0e7ff 100%)",
+          border: "1px solid var(--color-primary-100)",
+        }}
+      >
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700, color: "var(--color-primary)", marginBottom: "4px", display: "flex", alignItems: "center", gap: "8px" }}>
+            <span>📱</span> Vista de Operario Móvil
+          </div>
+          <div style={{ fontSize: "0.85rem", color: "var(--color-text-muted)" }}>
+            Como administrador, puedes usar la aplicación de operario en ruta para pedir productos, registrar jornadas o realizar check-ins en tiempo real.
+          </div>
+        </div>
+        <button
+          onClick={() => navigate("/operario")}
+          className="btn btn-primary btn-sm flex items-center gap-2"
+          style={{ whiteSpace: "nowrap", width: "100%", sm: { width: "auto" } }}
+        >
+          👷 Entrar como Operario
+        </button>
+      </div>
+
       <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
         <div>
           <h2
@@ -507,7 +535,7 @@ export default function DashboardPage() {
             )
               return;
             try {
-              const n = await cleanupDuplicateScheduledServices();
+              const n = await cleanupDuplicateScheduledServices(companyId);
               alert(`✅ Limpieza completada. ${n} duplicado(s) eliminado(s).`);
               loadDashboard();
             } catch (err) {

@@ -81,7 +81,7 @@ export function useWorkdayLifecycle(
         const lat = loc?.lat || 0;
         const lng = loc?.lng || 0;
 
-        await completeCheckOut(companyId, activeCheckIn.id, lat, lng, null, null, loc);
+        await completeCheckOut(activeCheckIn.id, lat, lng, null, null, loc);
 
         // Cargar check-ins de los acompañantes
         try {
@@ -93,7 +93,7 @@ export function useWorkdayLifecycle(
           const compSnap = await getDocs(qComp);
           for (const docSnap of compSnap.docs) {
             if (docSnap.id !== activeCheckIn.id) {
-              await completeCheckOut(companyId, docSnap.id, lat, lng, null, null, loc);
+              await completeCheckOut(docSnap.id, lat, lng, null, null, loc);
             }
           }
         } catch (compErr) {
@@ -159,7 +159,7 @@ export function useWorkdayLifecycle(
     }
   };
 
-  const handleResolveEndWorkday = async (useRetroactive) => {
+  const handleResolveEndWorkday = async (useRetroactive, exceptionReason = null) => {
     if (!activeWorkday) return;
     setActionLoading(true);
     try {
@@ -176,17 +176,12 @@ export function useWorkdayLifecycle(
           const loc = await getCurrentLocation();
           const lat = loc?.lat || activeCheckIn.checkInLocation?.latitude || 0;
           const lng = loc?.lng || activeCheckIn.checkInLocation?.longitude || 0;
-          const exceptionReason = useRetroactive
-            ? window.prompt(
-                "Indica el motivo del cierre retroactivo del servicio (obligatorio):",
-              )
-            : null;
+
           if (useRetroactive && (!exceptionReason || !exceptionReason.trim())) {
             setActionLoading(false);
             return;
           }
           await completeCheckOut(
-            companyId,
             activeCheckIn.id,
             lat,
             lng,
@@ -212,7 +207,6 @@ export function useWorkdayLifecycle(
             for (const docSnap of compSnap.docs) {
               if (docSnap.id !== activeCheckIn.id) {
                 await completeCheckOut(
-                  companyId,
                   docSnap.id,
                   lat,
                   lng,
@@ -276,6 +270,7 @@ export function useWorkdayLifecycle(
     setActionLoading(true);
     try {
       await closeStaleWorkday(
+        companyId,
         staleWorkday.workday.id,
         staleWorkday.suggestedEndTime,
       );

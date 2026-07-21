@@ -167,7 +167,7 @@ export async function updateRequestStatus(
       transaction.update(productRef, { currentStock: newStock });
 
       // 2. Registrar movimiento de stock
-      const movementRef = tenantDoc(tenantCollection(db, companyId, "stockMovements"));
+      const movementRef = doc(tenantCollection(db, companyId, "stockMovements"));
       transaction.set(movementRef, {
         productId: requestData.productId,
         productName: requestData.productName || productData.name,
@@ -229,7 +229,7 @@ export async function addStock(
     transaction.update(productRef, { currentStock: newStock });
 
     // 2. Log movement
-    const movementRef = tenantDoc(tenantCollection(db, companyId, "stockMovements"));
+    const movementRef = doc(tenantCollection(db, companyId, "stockMovements"));
     transaction.set(movementRef, {
       productId,
       productName: productName || productData.name,
@@ -271,7 +271,7 @@ export async function adjustStock(
     transaction.update(productRef, { currentStock: finalStock });
 
     // 2. Log movement
-    const movementRef = tenantDoc(tenantCollection(db, companyId, "stockMovements"));
+    const movementRef = doc(tenantCollection(db, companyId, "stockMovements"));
     transaction.set(movementRef, {
       productId,
       productName: productName || productData.name,

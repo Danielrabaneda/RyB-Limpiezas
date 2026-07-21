@@ -9,6 +9,7 @@ import TransferModal from "../../components/TransferModal";
 import GarageYearlyView from "../../components/GarageYearlyView";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "../../config/firebase";
+import { tenantCollection } from "../../utils/tenantFirestore";
 import { getCommunityGuides } from "../../services/documentVaultService";
 import useCommunitiesData from "../../hooks/useCommunitiesData";
 import useCommunityTasks from "../../hooks/useCommunityTasks";
@@ -18,7 +19,7 @@ import AdministratorTab from "../../components/admin/communities/AdministratorTa
 import CommunityListPanel from "../../components/admin/communities/CommunityListPanel";
 import CommunityDetailPanel from "../../components/admin/communities/CommunityDetailPanel";
 import CommunityFormModal from "../../components/admin/communities/CommunityFormModal";
-import { RequireTenant } from "../../contexts/TenantContext";
+import { RequireTenant, useTenant } from "../../contexts/TenantContext";
 import TaskFormModal from "../../components/admin/communities/TaskFormModal";
 
 export default function CommunitiesPage() {
@@ -31,6 +32,7 @@ export default function CommunitiesPage() {
 
 function CommunitiesContent() {
   const { userProfile } = useAuth();
+  const { companyId } = useTenant();
   const [actionLoading, setActionLoading] = useState(false);
 
   // Custom Hooks
@@ -173,9 +175,9 @@ function CommunitiesContent() {
     try {
       setSelectedCommunity(community);
       const [tasks, assigns, docs] = await Promise.all([
-        getCommunityTasks(community.id),
-        getAssignmentsForCommunity(community.id),
-        getCommunityGuides(community.id),
+        getCommunityTasks(companyId, community.id),
+        getAssignmentsForCommunity(companyId, community.id),
+        getCommunityGuides(companyId, community.id),
       ]);
       setCommunityTasks(tasks || []);
       setAssignments(assigns || []);

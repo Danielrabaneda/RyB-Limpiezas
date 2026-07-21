@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useAuth } from "../../contexts/AuthContext";
+import { useTenant } from "../../contexts/TenantContext";
 import { useNotifications } from "../../contexts/NotificationContext";
 import {
   transferService,
@@ -9,6 +10,7 @@ import {
 } from "../../services/transferService";
 import TransferModal from "../../components/TransferModal";
 import RescheduleModal from "../../components/RescheduleModal";
+import ExceptionPromptModal from "../../components/operario/ExceptionPromptModal";
 import WorkdayHeaderCard from "../../components/operario/WorkdayHeaderCard";
 import CarAndCompanionControl from "../../components/operario/CarAndCompanionControl";
 import TodayServicesList from "../../components/operario/TodayServicesList";
@@ -22,6 +24,7 @@ import { getDistance } from "../../utils/geolocation";
 
 export default function TodayPage() {
   const { userProfile } = useAuth();
+  const { companyId } = useTenant();
   const {
     notifications,
     unreadCount,
@@ -41,6 +44,7 @@ export default function TodayPage() {
     serviceId: null,
     currentDate: null,
   });
+  const [showWorkdayExceptionModal, setShowWorkdayExceptionModal] = useState(false);
 
   // Hook de carga y sincronización de datos de hoy (Paso 4)
   const todayData = useTodayData(userProfile);
@@ -115,6 +119,12 @@ export default function TodayPage() {
     handleResolveStaleWorkday,
   } = workdayLifecycle;
 
+  const handleConfirmWorkdayException = async (reason) => {
+    setShowWorkdayExceptionModal(false);
+    setRetroactiveModal((prev) => ({ ...prev, open: false }));
+    await handleResolveEndWorkday(true, reason);
+  };
+
   const handleTransferConfirm = async (toUserId) => {
     if (!toUserId) return;
     setActionLoading(true);
@@ -124,7 +134,7 @@ export default function TodayPage() {
           transferModal.service,
         ];
         for (const s of servicesToTransfer) {
-          await transferService({
+          await transferService(companyId, {
             serviceId: s.id,
             fromUserId: userProfile.uid,
             toUserId,
@@ -133,7 +143,7 @@ export default function TodayPage() {
         }
       } else if (transferModal.type === "day") {
         const today = new Date();
-        await transferDay({
+        await transferDay(companyId, {
           date: today,
           fromUserId: userProfile.uid,
           toUserId,
@@ -141,7 +151,7 @@ export default function TodayPage() {
         });
       } else if (transferModal.type === "week") {
         const nextWeekDate = addDays(new Date(), 7);
-        await transferWeek({
+        await transferWeek(companyId, {
           dateInWeek: nextWeekDate,
           fromUserId: userProfile.uid,
           toUserId,
@@ -163,7 +173,7 @@ export default function TodayPage() {
     if (!rescheduleModal.serviceId) return;
     setActionLoading(true);
     try {
-      await rescheduleService({
+      await rescheduleService(companyId, {
         serviceId: rescheduleModal.serviceId,
         newDate,
         requesterRole: "operario",
@@ -413,6 +423,15 @@ export default function TodayPage() {
         loading={actionLoading}
       />
 
+      <ExceptionPromptModal
+        isOpen={showWorkdayExceptionModal}
+        onClose={() => setShowWorkdayExceptionModal(false)}
+        onConfirm={handleConfirmWorkdayException}
+        title="Motivo de Cierre Retroactivo"
+        message="Indica el motivo del cierre retroactivo de este servicio (obligatorio):"
+        loading={actionLoading}
+      />
+
       {/* MODAL KILOMETRAJE MANUAL */}
       {mileageModalOpen && (
         <div
@@ -609,7 +628,7 @@ export default function TodayPage() {
             <div className="flex flex-col gap-3">
               <button
                 className="btn btn-primary w-full py-4 font-bold flex justify-center items-center gap-2"
-                onClick={() => handleResolveEndWorkday(true)}
+                onClick={() => setShowWorkdayExceptionModal(true)}
                 disabled={actionLoading}
                 style={{
                   backgroundColor: "var(--color-success)",

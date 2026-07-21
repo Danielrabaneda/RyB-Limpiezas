@@ -474,7 +474,7 @@ export default function CheckInControl({
               <button
                 className="checkin-btn start"
                 onClick={() => handleCheckIn()}
-                disabled={actionLoading || geoLoading}
+                disabled={actionLoading}
               >
                 {actionLoading
                   ? "📍 Obteniendo ubicación..."
@@ -590,7 +590,7 @@ export default function CheckInControl({
               <button
                 className="checkin-btn stop"
                 onClick={() => handleCheckOut()}
-                disabled={actionLoading || geoLoading}
+                disabled={actionLoading}
               >
                 {actionLoading ? "📍 Finalizando..." : "🛑 Finalizar servicio"}
               </button>

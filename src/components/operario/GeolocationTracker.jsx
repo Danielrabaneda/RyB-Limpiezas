@@ -129,7 +129,7 @@ export default function GeolocationTracker() {
       return cached.data;
     }
 
-    const community = await getCommunity(communityId);
+    const community = await getCommunity(companyId, communityId);
     if (community) {
       communityCacheRef.current[communityId] = {
         data: community,
@@ -137,7 +137,7 @@ export default function GeolocationTracker() {
       };
     }
     return community;
-  }, []);
+  }, [companyId]);
 
   // ==================== WAKE LOCK ====================
   const requestWakeLock = useCallback(async () => {
@@ -404,6 +404,7 @@ export default function GeolocationTracker() {
           servicesRef.current.length === 0
         ) {
           const freshServices = await getScheduledServicesForDate(
+            companyId,
             userProfile.uid,
             new Date(),
           );

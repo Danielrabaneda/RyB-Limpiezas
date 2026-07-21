@@ -35,6 +35,10 @@ export async function createAdminUser(companyId, email, password, name) {
 }
 
 export async function getOperarios(companyId) {
+  if (!companyId) {
+    console.warn("getOperarios invocado sin companyId. Retornando vacío sin consultar Firestore.");
+    return [];
+  }
   const q = query(collection(db, "users"), where("companyId", "==", companyId));
   const snap = await getDocs(q);
   return snap.docs
@@ -43,6 +47,10 @@ export async function getOperarios(companyId) {
 }
 
 export async function getAllUsers(companyId) {
+  if (!companyId) {
+    console.warn("getAllUsers invocado sin companyId. Retornando vacío sin consultar Firestore.");
+    return [];
+  }
   const q = query(collection(db, "users"), where("companyId", "==", companyId));
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ uid: d.id, ...d.data() }));

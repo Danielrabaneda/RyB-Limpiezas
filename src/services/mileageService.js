@@ -91,7 +91,7 @@ export async function calculateDailyMileage(
     const breadcrumbsKm = calculateBreadcrumbsDistance(carSessions);
 
     // 2. Obtener todos los fichajes del día (propios y de compañeros de equipo)
-    const ownCheckIns = await getCheckInsForDate(userId, date);
+    const ownCheckIns = await getCheckInsForDate(companyId, userId, date);
     const relatedCheckIns = await getRelatedCheckIns(companyId, userId, date);
 
     // Unificar y deduplicar por communityId y hora aproximada
@@ -540,7 +540,7 @@ async function getRelatedCheckIns(companyId, userId, date) {
 
     // 4. OBTENER FICHAJES DE TODOS ELLOS
     for (const memberId of teamMemberIds) {
-      const memberCheckIns = await getCheckInsForDate(memberId, date);
+      const memberCheckIns = await getCheckInsForDate(companyId, memberId, date);
       relatedCheckIns.push(...memberCheckIns);
     }
 

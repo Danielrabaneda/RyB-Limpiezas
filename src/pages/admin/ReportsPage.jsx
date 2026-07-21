@@ -7,6 +7,7 @@ import {
 import { getCheckInsRange, deleteCheckIn } from "../../services/checkInService";
 import { getCommunities } from "../../services/communityService";
 import { getOperarios } from "../../services/authService";
+import { useTenant } from "../../contexts/TenantContext";
 import { transferService } from "../../services/transferService";
 import TransferModal from "../../components/TransferModal";
 import {
@@ -23,6 +24,7 @@ import { es } from "date-fns/locale";
 import { formatDecimalHours, formatMinutes } from "../../utils/formatTime";
 
 export default function ReportsPage() {
+  const { companyId } = useTenant();
   const [startDate, setStartDate] = useState(
     format(subDays(new Date(), 30), "yyyy-MM-dd"),
   );
@@ -74,7 +76,10 @@ export default function ReportsPage() {
   }, []);
 
   async function loadBaseData() {
-    const [comms, ops] = await Promise.all([getCommunities(), getOperarios()]);
+    const [comms, ops] = await Promise.all([
+      getCommunities(companyId),
+      getOperarios(companyId),
+    ]);
     setCommunities(comms);
     setOperarios(ops);
     await loadReport();
@@ -91,11 +96,12 @@ export default function ReportsPage() {
 
       const [svcs, chks] = await Promise.all([
         getScheduledServicesRange(
+          companyId,
           new Date(startDate),
           new Date(endDate),
           filters,
         ),
-        getCheckInsRange(new Date(startDate), new Date(endDate), filters),
+        getCheckInsRange(companyId, new Date(startDate), new Date(endDate), filters),
       ]);
 
       // Sort newest first
@@ -384,6 +390,7 @@ export default function ReportsPage() {
                             )
                           ) {
                             await updateScheduledServiceStatus(
+                              companyId,
                               s.id,
                               "completed",
                             );
@@ -602,7 +609,7 @@ export default function ReportsPage() {
     if (!transferModal.service) return;
     setActionLoading(true);
     try {
-      await transferService({
+      await transferService(companyId, {
         serviceId: transferModal.service.id,
         fromUserId: transferModal.service.assignedUserId,
         toUserId: targetUser,
@@ -626,7 +633,7 @@ export default function ReportsPage() {
       )
     ) {
       try {
-        await deleteScheduledService(id);
+        await deleteScheduledService(companyId, id);
         setServices(services.filter((s) => s.id !== id));
         const newSet = new Set(selectedServices);
         newSet.delete(id);
@@ -680,7 +687,7 @@ export default function ReportsPage() {
       setActionLoading(true);
       try {
         await Promise.all(
-          Array.from(selectedServices).map((id) => deleteScheduledService(id)),
+          Array.from(selectedServices).map((id) => deleteScheduledService(companyId, id)),
         );
         setServices(services.filter((s) => !selectedServices.has(s.id)));
         setSelectedServices(new Set());
@@ -1186,6 +1193,7 @@ export default function ReportsPage() {
                                       )
                                     ) {
                                       await updateScheduledServiceStatus(
+                                        companyId,
                                         s.id,
                                         "completed",
                                       );

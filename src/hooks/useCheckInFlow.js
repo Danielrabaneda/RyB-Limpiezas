@@ -88,8 +88,10 @@ export function useCheckInFlow(
   const [showFullManualForm, setShowFullManualForm] = useState(false);
   const [manualEntryTime, setManualEntryTime] = useState("");
   const [manualExitTime, setManualExitTime] = useState("");
+  const [pendingAction, setPendingAction] = useState(null);
 
   const lastEstimatedServiceId = useRef(null);
+  const executingRef = useRef(false);
 
   // Cargar sugerencias de geolocalización
   useEffect(() => {
@@ -126,7 +128,7 @@ export function useCheckInFlow(
               "realtime",
           );
         } else {
-          const dbEntry = await getEntryDetection(userProfile.uid, serviceId);
+          const dbEntry = await getEntryDetection(companyId, userProfile.uid, serviceId);
           if (dbEntry && dbEntry.detectedAt) {
             setSuggestedIn(
               dbEntry.detectedAt.toDate
@@ -148,7 +150,7 @@ export function useCheckInFlow(
         if (sOut) {
           setSuggestedOut(new Date(sOut));
         } else {
-          const dbExit = await getExitDetection(userProfile.uid, serviceId);
+          const dbExit = await getExitDetection(companyId, userProfile.uid, serviceId);
           if (dbExit && dbExit.detectedAt) {
             setSuggestedOut(
               dbExit.detectedAt.toDate
@@ -396,7 +398,10 @@ export function useCheckInFlow(
         }
       }
 
-      let exceptionReason = null;
+      let needsException = false;
+      let isOutOfBounds = false;
+      let isManual = !!manualTime;
+
       if (community?.location) {
         const commLat =
           community.location._lat || community.location.latitude || 0;
@@ -405,40 +410,51 @@ export function useCheckInFlow(
         const check = isWithinRange(pos.lat, pos.lng, commLat, commLng, 500);
         setDistanceInfo(check);
 
-        const isOutOfBounds = !check.withinRange;
-        const isManual = !!manualTime;
+        isOutOfBounds = !check.withinRange;
 
         if (isOutOfBounds || isManual) {
-          exceptionReason = window.prompt(
-            "Ubicación fuera de rango o fichaje manual. Introduce el motivo de la excepción (obligatorio):",
-          );
-          if (!exceptionReason || !exceptionReason.trim()) {
-            alert(
-              "Operación cancelada: El motivo de la excepción es obligatorio.",
-            );
-            setActionLoading(false);
-            return;
-          }
+          needsException = true;
         }
-      } else if (!!manualTime) {
-        exceptionReason = window.prompt(
-          "Fichaje manual. Introduce el motivo de la excepción (obligatorio):",
-        );
-        if (!exceptionReason || !exceptionReason.trim()) {
-          alert(
-            "Operación cancelada: El motivo de la excepción es obligatorio.",
-          );
-          setActionLoading(false);
-          return;
-        }
+      } else if (isManual) {
+        needsException = true;
       }
 
-      if (activeCheckIn) {
-        console.warn("Ya hay un fichaje activo. No se creará otro.");
+      if (needsException) {
+        setPendingAction({
+          type: "checkin",
+          manualTime,
+          pos,
+          isOutOfBounds,
+          isManual,
+        });
+        setActionLoading(false);
         return;
       }
 
-      const checkInId = await createCheckIn(companyId, {
+      await executeCheckIn(pos, manualTime, null);
+    } catch (err) {
+      alert("Error al iniciar servicio: " + err);
+      console.error(err);
+      setActionLoading(false);
+    }
+  }
+
+  async function executeCheckIn(pos, manualTime, exceptionReason) {
+    if (executingRef.current) {
+      console.warn("[useCheckInFlow] executeCheckIn already in progress, ignoring duplicate call.");
+      return;
+    }
+    executingRef.current = true;
+    setActionLoading(true);
+    try {
+      if (activeCheckIn) {
+        console.warn("Ya hay un fichaje activo. No se creará otro.");
+        setActionLoading(false);
+        executingRef.current = false;
+        return;
+      }
+
+      const checkInId = await createCheckIn({
         userId: userProfile.uid,
         scheduledServiceId: serviceId,
         lat: pos.lat,
@@ -498,7 +514,7 @@ export function useCheckInFlow(
 
       for (const companionId of otherUsers) {
         try {
-          await createCheckIn(companyId, {
+          await createCheckIn({
             userId: companionId,
             scheduledServiceId: serviceId,
             lat: pos.lat,
@@ -675,6 +691,7 @@ export function useCheckInFlow(
     } catch (err) {
       alert("Error: " + err);
     } finally {
+      executingRef.current = false;
       setActionLoading(false);
     }
   }
@@ -754,49 +771,14 @@ export function useCheckInFlow(
         activeCheckIn?.checkInLocation?._long ||
         0;
 
-      let exceptionReason = null;
-      if (community?.location) {
-        const commLat =
-          community.location._lat || community.location.latitude || 0;
-        const commLng =
-          community.location._long || community.location.longitude || 0;
-        const check = isWithinRange(lat, lng, commLat, commLng, 500);
-        setDistanceInfo(check);
-
-        const isOutOfBounds = !check.withinRange;
-        const isManual = !!manualTime;
-
-        if (isOutOfBounds || isManual) {
-          exceptionReason = window.prompt(
-            "Ubicación fuera de rango o salida manual. Introduce el motivo de la excepción (obligatorio):",
-          );
-          if (!exceptionReason || !exceptionReason.trim()) {
-            alert(
-              "Operación cancelada: El motivo de la excepción es obligatorio.",
-            );
-            setActionLoading(false);
-            return;
-          }
-        }
-      } else if (!!manualTime) {
-        exceptionReason = window.prompt(
-          "Salida manual. Introduce el motivo de la excepción (obligatorio):",
-        );
-        if (!exceptionReason || !exceptionReason.trim()) {
-          alert(
-            "Operación cancelada: El motivo de la excepción es obligatorio.",
-          );
-          setActionLoading(false);
-          return;
-        }
-      }
-
+      // First, check for exit geofence/detection if not manualTime and out of bounds
+      let check = null;
       if (!manualTime && community?.location) {
         const commLat =
           community.location._lat || community.location.latitude || 0;
         const commLng =
           community.location._long || community.location.longitude || 0;
-        const check = isWithinRange(lat, lng, commLat, commLng, 500);
+        check = isWithinRange(lat, lng, commLat, commLng, 500);
         setDistanceInfo(check);
 
         if (!check.withinRange) {
@@ -839,8 +821,67 @@ export function useCheckInFlow(
         }
       }
 
+      // Now determine if we need an exception reason
+      let needsException = false;
+      let isOutOfBounds = false;
+      let isManual = !!manualTime;
+
+      if (community?.location) {
+        const commLat =
+          community.location._lat || community.location.latitude || 0;
+        const commLng =
+          community.location._long || community.location.longitude || 0;
+        if (!check) {
+          check = isWithinRange(lat, lng, commLat, commLng, 500);
+          setDistanceInfo(check);
+        }
+        isOutOfBounds = !check.withinRange;
+
+        if (isOutOfBounds || isManual) {
+          needsException = true;
+        }
+      } else if (isManual) {
+        needsException = true;
+      }
+
+      if (needsException) {
+        setPendingAction({
+          type: "checkout",
+          manualTime,
+          pos,
+          lat,
+          lng,
+          clientSignature,
+          isOutOfBounds,
+          isManual,
+        });
+        setActionLoading(false);
+        return;
+      }
+
+      await executeCheckOut(pos, lat, lng, manualTime, clientSignature, null);
+    } catch (err) {
+      console.error(err);
+      setActionLoading(false);
+    }
+  }
+
+  async function executeCheckOut(
+    pos,
+    lat,
+    lng,
+    manualTime,
+    clientSignature,
+    exceptionReason,
+  ) {
+    if (executingRef.current) {
+      console.warn("[useCheckInFlow] executeCheckOut already in progress, ignoring duplicate call.");
+      return;
+    }
+    executingRef.current = true;
+    setActionLoading(true);
+    try {
       const result = await completeCheckOut(
-        companyId,
         activeCheckIn.id,
         lat,
         lng,
@@ -861,7 +902,7 @@ export function useCheckInFlow(
         const compSnap = await getDocs(qComp);
         for (const docSnap of compSnap.docs) {
           if (docSnap.id !== activeCheckIn.id) {
-            await completeCheckOut(companyId, docSnap.id, lat, lng, manualTime, null, {
+            await completeCheckOut(docSnap.id, lat, lng, manualTime, null, {
               ...pos,
               exceptionReason,
             });
@@ -914,6 +955,7 @@ export function useCheckInFlow(
     } catch (err) {
       alert("Error: " + err);
     } finally {
+      executingRef.current = false;
       setActionLoading(false);
     }
   }
@@ -937,15 +979,26 @@ export function useCheckInFlow(
         return;
       }
 
-      const exceptionReason = window.prompt(
-        "Indica el motivo del fichaje manual o retroactivo (obligatorio):",
-      );
-      if (!exceptionReason || !exceptionReason.trim()) {
-        alert("Operación cancelada: el motivo de la excepción es obligatorio.");
-        setActionLoading(false);
-        return;
-      }
+      setPendingAction({
+        type: "fullManual",
+        entryDate,
+        exitDate,
+      });
+      setActionLoading(false);
+    } catch (err) {
+      console.error(err);
+      setActionLoading(false);
+    }
+  }
 
+  async function executeFullManual(entryDate, exitDate, exceptionReason) {
+    if (executingRef.current) {
+      console.warn("[useCheckInFlow] executeFullManual already in progress, ignoring duplicate call.");
+      return;
+    }
+    executingRef.current = true;
+    setActionLoading(true);
+    try {
       let pos = null;
       try {
         pos = await getFilteredPosition();
@@ -968,7 +1021,7 @@ export function useCheckInFlow(
         }
       }
 
-      const checkInId = await createCheckIn(companyId, {
+      const checkInId = await createCheckIn({
         userId: userProfile.uid,
         communityId: service.communityId,
         scheduledServiceId: serviceId,
@@ -982,7 +1035,6 @@ export function useCheckInFlow(
       });
 
       await completeCheckOut(
-        companyId,
         checkInId,
         pos.lat,
         pos.lng,
@@ -1014,7 +1066,7 @@ export function useCheckInFlow(
 
       for (const companionId of otherUsers) {
         try {
-          const compCheckInId = await createCheckIn(companyId, {
+          const compCheckInId = await createCheckIn({
             userId: companionId,
             communityId: service.communityId,
             scheduledServiceId: serviceId,
@@ -1027,7 +1079,6 @@ export function useCheckInFlow(
             exceptionReason,
           });
           await completeCheckOut(
-            companyId,
             compCheckInId,
             pos.lat,
             pos.lng,
@@ -1077,6 +1128,7 @@ export function useCheckInFlow(
     } catch (err) {
       alert("Error al registrar servicio: " + err.message);
     } finally {
+      executingRef.current = false;
       setActionLoading(false);
     }
   }
@@ -1125,6 +1177,8 @@ export function useCheckInFlow(
         "No tienes un fichaje activo. ¿Deseas marcar este servicio como terminado directamente?",
       )
     ) {
+      if (executingRef.current) return;
+      executingRef.current = true;
       setActionLoading(true);
       try {
         for (const s of currentGroup) {
@@ -1159,6 +1213,7 @@ export function useCheckInFlow(
       } catch (e) {
         alert("Error: " + e.message);
       } finally {
+        executingRef.current = false;
         setActionLoading(false);
       }
     }
@@ -1168,7 +1223,7 @@ export function useCheckInFlow(
     setSendingGPS(true);
     try {
       const pos = await getFilteredPosition();
-      await createGPSSuggestion({
+      await createGPSSuggestion(companyId, {
         communityId: service.communityId,
         communityName: community.name,
         userId: userProfile.uid,
@@ -1220,10 +1275,15 @@ export function useCheckInFlow(
     setManualEntryTime,
     manualExitTime,
     setManualExitTime,
+    pendingAction,
+    setPendingAction,
     handleCheckIn,
     handleCheckOut,
     handleFullManualSubmit,
     handleForceComplete,
     sendGPSLocation,
+    executeCheckIn,
+    executeCheckOut,
+    executeFullManual,
   };
 }

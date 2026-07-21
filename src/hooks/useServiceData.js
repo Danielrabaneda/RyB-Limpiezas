@@ -43,28 +43,14 @@ export function useServiceData(serviceId, userProfile) {
   async function loadStaticData() {
     if (!serviceId || !userProfile?.uid) return;
     try {
-      const [ops, checkIn, workday] = await Promise.all([
+      const [ops, workday] = await Promise.all([
         getOperarios(companyId),
-        getActiveCheckIn(companyId, userProfile.uid),
         getActiveWorkday(companyId, userProfile.uid),
       ]);
 
       const map = {};
       ops.forEach((op) => (map[op.uid] = op.name));
       setOperariosMap(map);
-
-      if (checkIn) {
-        if (checkIn.scheduledServiceId === serviceId) {
-          setActiveCheckIn(checkIn);
-          setOtherActiveCheckIn(null);
-        } else {
-          setActiveCheckIn(null);
-          setOtherActiveCheckIn(checkIn);
-        }
-      } else {
-        setActiveCheckIn(null);
-        setOtherActiveCheckIn(null);
-      }
 
       setActiveWorkday(workday);
     } catch (err) {
@@ -198,7 +184,37 @@ export function useServiceData(serviceId, userProfile) {
       },
     );
 
-    // 2. Listen to task executions
+    // 2. Listen to active check-ins for the user
+    const qCheckIn = query(
+      tenantCollection(db, companyId, "checkIns"),
+      where("userId", "==", userProfile.uid),
+      where("checkOutTime", "==", null),
+    );
+    const unsubCheckIn = onSnapshot(
+      qCheckIn,
+      (snap) => {
+        const openCheckIns = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const activeForSvc = openCheckIns.find(
+          (c) => c.scheduledServiceId === serviceId,
+        );
+        const otherOpen = openCheckIns.find(
+          (c) => c.scheduledServiceId !== serviceId,
+        );
+
+        if (activeForSvc) {
+          setActiveCheckIn(activeForSvc);
+          setOtherActiveCheckIn(null);
+        } else {
+          setActiveCheckIn(null);
+          setOtherActiveCheckIn(otherOpen || null);
+        }
+      },
+      (err) => {
+        console.error("[useServiceData] Firestore checkIns snapshot error:", err);
+      },
+    );
+
+    // 3. Listen to task executions
     const qExecs = query(
       tenantCollection(db, companyId, "taskExecutions"),
       where("scheduledServiceId", "==", serviceId),
@@ -216,11 +232,12 @@ export function useServiceData(serviceId, userProfile) {
       },
     );
 
-    // 3. One-time fetches
+    // 4. One-time fetches
     loadStaticData();
 
     return () => {
       unsubService();
+      unsubCheckIn();
       unsubExecs();
     };
   }, [serviceId, userProfile?.uid, companyId]);

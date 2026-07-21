@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { getOperarios } from "../services/authService";
 import { findSubstitutesForService } from "../services/substitutionService";
+import { useTenant } from "../contexts/TenantContext";
 
 export default function TransferModal({
   isOpen,
@@ -13,6 +14,7 @@ export default function TransferModal({
   serviceId = null,
   date = null,
 }) {
+  const { companyId } = useTenant();
   const [operarios, setOperarios] = useState([]);
   const [selectedOp, setSelectedOp] = useState("");
   const [loading, setLoading] = useState(true);
@@ -29,9 +31,9 @@ export default function TransferModal({
       let ops = [];
       if (serviceId) {
         const dateObj = date ? new Date(date) : new Date();
-        ops = await findSubstitutesForService({ serviceId, date: dateObj });
+        ops = await findSubstitutesForService(companyId, { serviceId, date: dateObj });
       } else {
-        ops = await getOperarios();
+        ops = await getOperarios(companyId);
       }
 
       if (excludeUserId) {
@@ -40,7 +42,7 @@ export default function TransferModal({
       setOperarios(ops);
     } catch (err) {
       console.warn("GPS Proximity failed, falling back to all operators:", err);
-      let ops = await getOperarios();
+      let ops = await getOperarios(companyId);
       if (excludeUserId) {
         ops = ops.filter((op) => op.uid !== excludeUserId);
       }

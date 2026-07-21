@@ -29,7 +29,7 @@ export default function AbsencesAdminPage() {
     try {
       const [absList, opsList] = await Promise.all([
         getAllAbsences(companyId),
-        getOperarios(),
+        getOperarios(companyId),
       ]);
 
       const opMap = {};

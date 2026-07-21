@@ -51,10 +51,8 @@ export default function RegisterPage() {
         return;
       }
 
-      const companyId = codeData.companyId;
-
       // 2. Si es válido, proceder con el registro
-      await signup(email, password, name, companyId);
+      await signup(email, password, name, normalizedCode);
       navigate("/operario");
     } catch (err) {
       console.error(err);

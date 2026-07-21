@@ -110,7 +110,7 @@ export default function PlanningCalendar({
       const filters = userId ? { userId } : {};
 
       const [svcs, absSnap] = await Promise.all([
-        getScheduledServicesRange(start, end, filters),
+        getScheduledServicesRange(companyId, start, end, filters),
         getDocs(
           query(tenantCollection(db, companyId, "absences"), where("status", "==", "approved")),
         ),
@@ -202,21 +202,21 @@ export default function PlanningCalendar({
     try {
       const role = isAdmin ? "admin" : "operario";
       if (transferModal.type === "single") {
-        await transferService({
+        await transferService(companyId, {
           serviceId: transferModal.serviceId,
           fromUserId: transferModal.fromUserId,
           toUserId,
           requesterRole: role,
         });
       } else if (transferModal.type === "day") {
-        await transferDay({
+        await transferDay(companyId, {
           date: transferModal.date,
           fromUserId: transferModal.fromUserId,
           toUserId,
           requesterRole: role,
         });
       } else if (transferModal.type === "week") {
-        await transferWeek({
+        await transferWeek(companyId, {
           dateInWeek: transferModal.date,
           fromUserId: transferModal.fromUserId,
           toUserId,
@@ -250,7 +250,7 @@ export default function PlanningCalendar({
     setActionLoading(true);
     try {
       const role = isAdmin ? "admin" : "operario";
-      await rescheduleService({
+      await rescheduleService(companyId, {
         serviceId: rescheduleModal.serviceId,
         newDate,
         requesterRole: role,

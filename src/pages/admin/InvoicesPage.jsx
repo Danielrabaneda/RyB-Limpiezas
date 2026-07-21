@@ -501,7 +501,7 @@ export default function InvoicesPage() {
     setActionLoading(true);
     let nextNum = "Borrador";
     try {
-      nextNum = await getNextInvoiceNumber(filterYear);
+      nextNum = await getNextInvoiceNumber(companyId, filterYear);
     } catch (err) {
       console.error("Error fetching next invoice number:", err);
     } finally {

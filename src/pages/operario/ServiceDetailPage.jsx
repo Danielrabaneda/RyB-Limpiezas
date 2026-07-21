@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
+import { useTenant } from "../../contexts/TenantContext";
 import { useGeolocation } from "../../hooks/useGeolocation";
 import { useServiceData } from "../../hooks/useServiceData";
 import { useCheckInFlow } from "../../hooks/useCheckInFlow";
@@ -11,6 +12,7 @@ import {
 } from "../../services/transferService";
 import TransferModal from "../../components/TransferModal";
 import RescheduleModal from "../../components/RescheduleModal";
+import ExceptionPromptModal from "../../components/operario/ExceptionPromptModal";
 import SignatureCanvas from "../../components/SignatureCanvas";
 import CommunityInfoCard from "../../components/operario/CommunityInfoCard";
 import CommunityDocsCard from "../../components/operario/CommunityDocsCard";
@@ -22,6 +24,7 @@ import CompanionsCard from "../../components/operario/CompanionsCard";
 export default function ServiceDetailPage() {
   const { serviceId } = useParams();
   const { userProfile } = useAuth();
+  const { companyId } = useTenant();
   const {
     getCurrentPosition,
     getFilteredPosition,
@@ -106,18 +109,23 @@ export default function ServiceDetailPage() {
     setManualEntryTime,
     manualExitTime,
     setManualExitTime,
+    pendingAction,
+    setPendingAction,
     handleCheckIn,
     handleCheckOut,
     handleFullManualSubmit,
     handleForceComplete,
     sendGPSLocation,
+    executeCheckIn,
+    executeCheckOut,
+    executeFullManual,
   } = checkInFlow;
 
   async function handleTransferConfirm(toUserId) {
     if (!toUserId) return;
     setActionLoading(true);
     try {
-      await transferService({
+      await transferService(companyId, {
         serviceId,
         fromUserId: userProfile.uid,
         toUserId,
@@ -136,7 +144,7 @@ export default function ServiceDetailPage() {
   async function handleRescheduleConfirm(newDate) {
     setActionLoading(true);
     try {
-      await rescheduleService({
+      await rescheduleService(companyId, {
         serviceId,
         newDate,
         requesterRole: "operario",
@@ -149,6 +157,20 @@ export default function ServiceDetailPage() {
       alert("Error en el cambio de fecha: " + err.message);
     } finally {
       setActionLoading(false);
+    }
+  }
+
+  async function handleConfirmException(reason) {
+    if (!pendingAction) return;
+    const action = pendingAction;
+    setPendingAction(null); // Close modal
+
+    if (action.type === "checkin") {
+      await executeCheckIn(action.pos, action.manualTime, reason);
+    } else if (action.type === "checkout") {
+      await executeCheckOut(action.pos, action.lat, action.lng, action.manualTime, action.clientSignature, reason);
+    } else if (action.type === "fullManual") {
+      await executeFullManual(action.entryDate, action.exitDate, reason);
     }
   }
 
@@ -218,6 +240,25 @@ export default function ServiceDetailPage() {
         onClose={() => setRescheduleModalOpen(false)}
         onConfirm={handleRescheduleConfirm}
         currentDate={service?.scheduledDate}
+        loading={actionLoading}
+      />
+
+      <ExceptionPromptModal
+        isOpen={!!pendingAction}
+        onClose={() => setPendingAction(null)}
+        onConfirm={handleConfirmException}
+        title={pendingAction?.type === "checkin" ? "Excepción de Entrada" : pendingAction?.type === "checkout" ? "Excepción de Salida" : "Fichaje Retroactivo"}
+        message={
+          pendingAction?.type === "checkin"
+            ? pendingAction.isOutOfBounds
+              ? `Estás fuera de rango. Introduce el motivo de la excepción de entrada para la comunidad ${community?.name} (obligatorio):`
+              : "Introduce el motivo de la excepción de entrada manual (obligatorio):"
+            : pendingAction?.type === "checkout"
+              ? pendingAction.isOutOfBounds
+                ? `Estás fuera de rango. Introduce el motivo de la excepción de salida para la comunidad ${community?.name} (obligatorio):`
+                : "Introduce el motivo de la excepción de salida manual (obligatorio):"
+              : "Indica el motivo del fichaje manual o retroactivo (obligatorio):"
+        }
         loading={actionLoading}
       />
 

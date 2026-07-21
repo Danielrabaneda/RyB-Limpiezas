@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { getOperarios } from "../services/authService";
+import { useTenant } from "../contexts/TenantContext";
 
 export default function CompanionModal({
   isOpen,
@@ -8,6 +9,7 @@ export default function CompanionModal({
   loading: actionLoading,
   excludeUserIds,
 }) {
+  const { companyId } = useTenant();
   const [operarios, setOperarios] = useState([]);
   const [selectedOp, setSelectedOp] = useState("");
   const [loading, setLoading] = useState(true);
@@ -21,7 +23,7 @@ export default function CompanionModal({
 
   async function loadOperarios() {
     try {
-      let ops = await getOperarios();
+      let ops = await getOperarios(companyId);
       if (excludeUserIds && excludeUserIds.length > 0) {
         ops = ops.filter((op) => !excludeUserIds.includes(op.uid));
       }

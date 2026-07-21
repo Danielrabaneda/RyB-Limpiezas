@@ -4,12 +4,14 @@ import {
   updateAdministrator,
   deleteAdministrator,
 } from "../services/administratorService";
+import { useTenant } from "../contexts/TenantContext";
 
 export default function useAdministrators({
   onRefresh,
   actionLoading,
   setActionLoading,
 }) {
+  const { companyId } = useTenant();
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [editingAdmin, setEditingAdmin] = useState(null);
   const [adminForm, setAdminForm] = useState({
@@ -42,9 +44,9 @@ export default function useAdministrators({
     setActionLoading(true);
     try {
       if (editingAdmin) {
-        await updateAdministrator(editingAdmin.id, adminForm);
+        await updateAdministrator(companyId, editingAdmin.id, adminForm);
       } else {
-        await createAdministrator(adminForm);
+        await createAdministrator(companyId, adminForm);
       }
       setShowAdminModal(false);
       if (onRefresh) await onRefresh();
@@ -71,7 +73,7 @@ export default function useAdministrators({
     if (actionLoading) return; // Prevent concurrent submissions
     setActionLoading(true);
     try {
-      await deleteAdministrator(id);
+      await deleteAdministrator(companyId, id);
       if (onRefresh) await onRefresh();
       alert("Administrador eliminado correctamente.");
     } catch (err) {

@@ -175,8 +175,7 @@ async function migrateBillingSettings() {
   const billingSnap = await billingDocRef.get();
 
   if (!billingSnap.exists) {
-    console.log(`  - No existe documento settings/billing original. Saltando.`);
-    return;
+    throw new Error("ERROR FATAL: No existe settings/billing; no se puede preservar la secuencia legal de facturación.");
   }
 
   const data = billingSnap.data();
@@ -203,6 +202,27 @@ async function migrateBillingSettings() {
     console.log(`  ✅ Assert post-escritura verificado con éxito.`);
   } else {
     console.log(`  - [DRY RUN] Se escribiría exactamente en companies/${ANCHOR_TENANT}/settings/billing.`);
+  }
+}
+
+async function migrateGlobalSettings() {
+  console.log(`\n⏳ Migrando configuración global: [settings/global]...`);
+  const sourceSnap = await db.collection("settings").doc("global").get();
+  if (!sourceSnap.exists) {
+    throw new Error("ERROR FATAL: No existe settings/global para el tenant base rayba.");
+  }
+
+  const data = sourceSnap.data();
+  const target = db.collection(`companies/${ANCHOR_TENANT}/settings`).doc("global");
+  if (!IS_DRY_RUN) {
+    await target.set(data);
+    const verifySnap = await target.get();
+    if (!verifySnap.exists || JSON.stringify(verifySnap.data()) !== JSON.stringify(data)) {
+      throw new Error("ERROR FATAL: La copia de settings/global no coincide con el origen.");
+    }
+    console.log(`  ✅ settings/global copiado y verificado.`);
+  } else {
+    console.log(`  - [DRY RUN] Se copiaría en companies/${ANCHOR_TENANT}/settings/global.`);
   }
 }
 
@@ -236,6 +256,7 @@ async function runMigration() {
     
     // 1. Cirugía de Facturación (lo más crítico, primero)
     await migrateBillingSettings();
+    await migrateGlobalSettings();
 
     // 2. Casos especiales
     await migrateAccessCodes();

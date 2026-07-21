@@ -6,9 +6,11 @@ import {
   deleteOperario,
   updateUserProfile,
 } from "../../services/authService";
+import { useTenant } from "../../contexts/TenantContext";
 import { useAuth } from "../../contexts/AuthContext";
 
 export default function OperariosPage() {
+  const { companyId } = useTenant();
   const { createOperario } = useAuth();
   const [operarios, setOperarios] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -50,7 +52,7 @@ export default function OperariosPage() {
 
   async function loadOperarios() {
     try {
-      const ops = await getOperarios();
+      const ops = await getOperarios(companyId);
       setOperarios(ops);
     } catch (err) {
       console.error(err);
@@ -154,7 +156,7 @@ export default function OperariosPage() {
 
     setDeleting(true);
     try {
-      await deleteOperario(op.uid, deleteConfirm.options);
+      await deleteOperario(companyId, op.uid, deleteConfirm.options);
       setDeleteConfirm({
         open: false,
         operario: null,
