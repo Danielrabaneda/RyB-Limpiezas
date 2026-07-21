@@ -91,7 +91,6 @@ export function useCheckInFlow(
   const [pendingAction, setPendingAction] = useState(null);
 
   const lastEstimatedServiceId = useRef(null);
-  const executingRef = useRef(false);
 
   // Cargar sugerencias de geolocalización
   useEffect(() => {
@@ -440,17 +439,11 @@ export function useCheckInFlow(
   }
 
   async function executeCheckIn(pos, manualTime, exceptionReason) {
-    if (executingRef.current) {
-      console.warn("[useCheckInFlow] executeCheckIn already in progress, ignoring duplicate call.");
-      return;
-    }
-    executingRef.current = true;
     setActionLoading(true);
     try {
       if (activeCheckIn) {
         console.warn("Ya hay un fichaje activo. No se creará otro.");
         setActionLoading(false);
-        executingRef.current = false;
         return;
       }
 
@@ -691,7 +684,6 @@ export function useCheckInFlow(
     } catch (err) {
       alert("Error: " + err);
     } finally {
-      executingRef.current = false;
       setActionLoading(false);
     }
   }
@@ -874,11 +866,6 @@ export function useCheckInFlow(
     clientSignature,
     exceptionReason,
   ) {
-    if (executingRef.current) {
-      console.warn("[useCheckInFlow] executeCheckOut already in progress, ignoring duplicate call.");
-      return;
-    }
-    executingRef.current = true;
     setActionLoading(true);
     try {
       const result = await completeCheckOut(
@@ -955,7 +942,6 @@ export function useCheckInFlow(
     } catch (err) {
       alert("Error: " + err);
     } finally {
-      executingRef.current = false;
       setActionLoading(false);
     }
   }
@@ -992,11 +978,6 @@ export function useCheckInFlow(
   }
 
   async function executeFullManual(entryDate, exitDate, exceptionReason) {
-    if (executingRef.current) {
-      console.warn("[useCheckInFlow] executeFullManual already in progress, ignoring duplicate call.");
-      return;
-    }
-    executingRef.current = true;
     setActionLoading(true);
     try {
       let pos = null;
@@ -1128,7 +1109,6 @@ export function useCheckInFlow(
     } catch (err) {
       alert("Error al registrar servicio: " + err.message);
     } finally {
-      executingRef.current = false;
       setActionLoading(false);
     }
   }
@@ -1177,8 +1157,6 @@ export function useCheckInFlow(
         "No tienes un fichaje activo. ¿Deseas marcar este servicio como terminado directamente?",
       )
     ) {
-      if (executingRef.current) return;
-      executingRef.current = true;
       setActionLoading(true);
       try {
         for (const s of currentGroup) {
@@ -1213,7 +1191,6 @@ export function useCheckInFlow(
       } catch (e) {
         alert("Error: " + e.message);
       } finally {
-        executingRef.current = false;
         setActionLoading(false);
       }
     }

@@ -67,14 +67,62 @@ export function useTodayData(userProfile) {
         `[TodayPage] Loading data for ${userProfile.uid} at ${now.toISOString()}`,
       );
 
-      const [svcs, summary] = await Promise.all([
+      const [svcs, checkIn, summary] = await Promise.all([
         getScheduledServicesForDate(companyId, userProfile.uid, now),
+        getActiveCheckIn(companyId, userProfile.uid),
         getWorkdaysSummaryForDate(companyId, userProfile.uid, now),
       ]);
 
       console.log(
         `[TodayPage] Fetched ${svcs.length} services and summary (active: ${summary.hasActive})`,
       );
+
+      if (checkIn) {
+        try {
+          const comm = await getCommunity(companyId, checkIn.communityId);
+          checkIn.communityName = comm?.name || "Comunidad";
+        } catch (e) {
+          checkIn.communityName = "Comunidad";
+        }
+      }
+
+      setActiveCheckIn(checkIn);
+
+      // Auto-cerrar fichaje pendiente de días anteriores si existe (Stale Check-in)
+      if (checkIn) {
+        const checkInDate = checkIn.checkInTime?.toDate
+          ? checkIn.checkInTime.toDate()
+          : new Date(checkIn.checkInTime);
+        if (!isSameDay(checkInDate, now)) {
+          console.log(
+            `[TodayPage] Fichaje pendiente obsoleto detectado del día ${format(checkInDate, "dd/MM/yyyy")}. Auto-cerrando a las 23:59...`,
+          );
+          const endOfCheckInDay = new Date(checkInDate);
+          endOfCheckInDay.setHours(23, 59, 59, 999);
+          try {
+            await completeCheckOut(
+              checkIn.id,
+              null,
+              null,
+              endOfCheckInDay,
+              null,
+              {
+                exceptionReason:
+                  "Cierre automático de fichaje obsoleto al iniciar un nuevo día.",
+              },
+            );
+            setActiveCheckIn(null);
+            console.log(
+              "[TodayPage] Fichaje pendiente obsoleto cerrado correctamente.",
+            );
+          } catch (err) {
+            console.error(
+              "[TodayPage] Error auto-cerrando fichaje obsoleto:",
+              err,
+            );
+          }
+        }
+      }
 
       // Check for stale workday (orphaned from previous day)
       if (summary.activeWorkday) {
@@ -358,7 +406,6 @@ export function useTodayData(userProfile) {
     setLoading(true);
     let unsubWorkdays = () => {};
     let unsubMyServices = () => {};
-    let unsubCheckIn = () => {};
 
     const qWorkdays = query(
       tenantCollection(db, companyId, "workdays"),
@@ -393,89 +440,9 @@ export function useTodayData(userProfile) {
       },
     );
 
-    const qCheckIn = query(
-      tenantCollection(db, companyId, "checkIns"),
-      where("userId", "==", userProfile.uid),
-      where("checkOutTime", "==", null),
-    );
-
-    unsubCheckIn = onSnapshot(
-      qCheckIn,
-      async (snap) => {
-        const openCheckIns = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        
-        // Find the most recent check-in
-        const checkIn = openCheckIns.sort((a, b) => {
-          const aTime = a.checkInTime
-            ? a.checkInTime.toDate
-              ? a.checkInTime.toDate()
-              : new Date(a.checkInTime)
-            : new Date();
-          const bTime = b.checkInTime
-            ? b.checkInTime.toDate
-              ? b.checkInTime.toDate()
-              : new Date(b.checkInTime)
-            : new Date();
-          return bTime - aTime;
-        })[0] || null;
-
-        if (checkIn) {
-          try {
-            const comm = await getCommunity(companyId, checkIn.communityId);
-            checkIn.communityName = comm?.name || "Comunidad";
-          } catch (e) {
-            checkIn.communityName = "Comunidad";
-          }
-          
-          // Auto-cerrar fichaje pendiente de días anteriores si existe (Stale Check-in)
-          const now = new Date();
-          const checkInDate = checkIn.checkInTime?.toDate
-            ? checkIn.checkInTime.toDate()
-            : new Date(checkIn.checkInTime);
-            
-          if (!isSameDay(checkInDate, now)) {
-            console.log(
-              `[TodayPage] Fichaje pendiente obsoleto detectado del día ${format(checkInDate, "dd/MM/yyyy")}. Auto-cerrando a las 23:59...`,
-            );
-            const endOfCheckInDay = new Date(checkInDate);
-            endOfCheckInDay.setHours(23, 59, 59, 999);
-            try {
-              await completeCheckOut(
-                checkIn.id,
-                null,
-                null,
-                endOfCheckInDay,
-                null,
-                {
-                  exceptionReason:
-                    "Cierre automático de fichaje obsoleto al iniciar un nuevo día.",
-                },
-              );
-              console.log(
-                "[TodayPage] Fichaje pendiente obsoleto cerrado correctamente.",
-              );
-              setActiveCheckIn(null);
-            } catch (err) {
-              console.error(
-                "[TodayPage] Error auto-cerrando fichaje obsoleto:",
-                err,
-              );
-            }
-            return;
-          }
-        }
-
-        setActiveCheckIn(checkIn);
-      },
-      (err) => {
-        console.error("Error in checkIns snapshot:", err);
-      }
-    );
-
     return () => {
       unsubWorkdays();
       unsubMyServices();
-      unsubCheckIn();
     };
   }, [userProfile, companyId]);
 
