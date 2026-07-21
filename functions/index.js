@@ -1662,6 +1662,119 @@ exports.onUserDocumentWritten = onDocumentWritten(
 );
 
 // ============================================================================
+// GESTION SEGURA DE USUARIOS Y CODIGOS DE ACCESO MULTI-TENANT
+// ============================================================================
+
+exports.createOperarioUser = onCall(
+  { region: "europe-west1" },
+  async (request) => {
+    const caller = request.auth;
+    const companyId = caller?.token?.companyId;
+    if (!caller || caller.token.role !== "admin" || caller.token.active !== true || !companyId) {
+      throw new HttpsError("permission-denied", "Solo un administrador activo con tenant puede crear operarios.");
+    }
+
+    const { email, password, name, phone = "", allowDirectTransfers = false } = request.data || {};
+    if (!email || !password || !name) {
+      throw new HttpsError("invalid-argument", "Email, contraseña y nombre son obligatorios.");
+    }
+
+    let createdUser = null;
+    try {
+      createdUser = await auth.createUser({ email: String(email).trim(), password, displayName: String(name).trim() });
+      const profile = {
+        uid: createdUser.uid,
+        name: String(name).trim(),
+        email: String(email).trim(),
+        phone: String(phone || "").trim(),
+        role: "operario",
+        active: true,
+        companyId,
+        allowDirectTransfers: !!allowDirectTransfers,
+        createdAt: FieldValue.serverTimestamp(),
+      };
+      await db.collection("users").doc(createdUser.uid).set(profile);
+      await auth.setCustomUserClaims(createdUser.uid, { role: "operario", active: true, companyId });
+      return { uid: createdUser.uid, ...profile, createdAt: null };
+    } catch (error) {
+      if (createdUser) {
+        await auth.deleteUser(createdUser.uid).catch((rollbackError) =>
+          logger.error("No se pudo revertir el usuario tras fallar su perfil", rollbackError),
+        );
+      }
+      logger.error("createOperarioUser failed", error);
+      throw new HttpsError("internal", error.message || "No se pudo crear el operario.");
+    }
+  },
+);
+
+exports.completeTenantRegistration = onCall(
+  { region: "europe-west1" },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Debes autenticarte antes de completar el registro.");
+    }
+    const accessCode = String(request.data?.accessCode || "").trim().toUpperCase();
+    const name = String(request.data?.name || "").trim();
+    if (!accessCode || !name) {
+      throw new HttpsError("invalid-argument", "Nombre y código de invitación son obligatorios.");
+    }
+
+    const indexSnap = await db.collection("accessCodeIndex").doc(accessCode).get();
+    if (!indexSnap.exists || !indexSnap.data().companyId) {
+      throw new HttpsError("permission-denied", "Código de invitación no válido.");
+    }
+    const companyId = indexSnap.data().companyId;
+    const codeSnap = await db.collection(`companies/${companyId}/accessCodes`).doc(accessCode).get();
+    if (!codeSnap.exists || codeSnap.data().active === false) {
+      throw new HttpsError("permission-denied", "Código de invitación inactivo o caducado.");
+    }
+
+    const uid = request.auth.uid;
+    const existingProfile = await db.collection("users").doc(uid).get();
+    if (existingProfile.exists) {
+      throw new HttpsError("failed-precondition", "El usuario ya tiene un perfil asociado y no puede cambiar de tenant mediante registro.");
+    }
+    const userRecord = await auth.getUser(uid);
+    const profile = {
+      uid,
+      name,
+      email: userRecord.email || "",
+      role: "operario",
+      active: true,
+      companyId,
+      allowDirectTransfers: false,
+      createdAt: FieldValue.serverTimestamp(),
+    };
+    await db.collection("users").doc(uid).set(profile, { merge: false });
+    await auth.setCustomUserClaims(uid, { role: "operario", active: true, companyId });
+    return { companyId };
+  },
+);
+
+exports.onTenantAccessCodeWritten = onDocumentWritten(
+  "companies/{companyId}/accessCodes/{code}",
+  async (event) => {
+    const { companyId, code } = event.params;
+    const indexRef = db.collection("accessCodeIndex").doc(code);
+    if (event.data.after.exists && event.data.after.data().active !== false) {
+      await db.runTransaction(async (transaction) => {
+        const current = await transaction.get(indexRef);
+        if (current.exists && current.data().companyId !== companyId) {
+          throw new Error(`El código ${code} ya pertenece a otro tenant.`);
+        }
+        transaction.set(indexRef, { companyId, active: true }, { merge: false });
+      });
+      return;
+    }
+    const current = await indexRef.get();
+    if (current.exists && current.data().companyId === companyId) {
+      await indexRef.delete();
+    }
+  },
+);
+
+// ============================================================================
 // SISTEMA DE GEOLOCALIZACIÓN Y FICHAJES SEGUROS
 // ============================================================================
 
