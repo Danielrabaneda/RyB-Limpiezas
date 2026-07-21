@@ -1,0 +1,72 @@
+name: Deploy Staging
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: firebase-staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  validate-and-deploy:
+    if: github.ref == 'refs/heads/fix/companion-ops-and-rules'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: staging
+
+    steps:
+      - name: Checkout RC
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            functions/package-lock.json
+
+      - name: Use Java 21 for Firebase emulators
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install application dependencies
+        run: npm ci
+
+      - name: Install Cloud Functions dependencies
+        run: npm ci --prefix functions
+
+      - name: Audit tenant-aware service signatures
+        run: node scripts/audit_signatures.cjs
+
+      - name: Run complete emulator test suite
+        run: >-
+          npx --yes firebase-tools@latest emulators:exec
+          --project demo-project
+          --only auth,firestore,functions,storage
+          "npx mocha test/*.spec.cjs"
+
+      - name: Build production frontend
+        run: npm run build
+
+      - name: Authenticate to Google Cloud without stored keys
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ryb-limpiezas-app
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Deploy staging RC
+        run: >-
+          npx --yes firebase-tools@latest deploy
+          --project ryb-limpiezas-app
+          --only firestore:rules,firestore:indexes,storage,functions,hosting
+          --non-interactive
+          --message "Staging RC ${{ github.sha }}"
