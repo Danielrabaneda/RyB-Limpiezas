@@ -2,6 +2,11 @@ name: Deploy Staging
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - fix/companion-ops-and-rules
+    paths:
+      - .github/deploy-staging.request
 
 concurrency:
   group: firebase-staging
