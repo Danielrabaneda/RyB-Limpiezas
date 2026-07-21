@@ -17,7 +17,7 @@ function getServiceFunctions() {
   for (const file of files) {
     if (!file.endsWith('.js')) continue;
     const content = fs.readFileSync(path.join(SERVICES_DIR, file), 'utf8');
-    
+
     // Match export async function name(companyId, ...
     // Match export function name(companyId, ...
     const matches = content.matchAll(/export\s+(async\s+)?function\s+(\w+)\s*\(\s*companyId\b/g);
@@ -60,24 +60,24 @@ function auditCalls(functions) {
         let openParentheses = 1;
         let charIndex = index + fn.length + 1;
         let argsContent = '';
-        
+
         while (charIndex < fileContent.length && openParentheses > 0) {
           const char = fileContent[charIndex];
           if (char === '(') openParentheses++;
           else if (char === ')') openParentheses--;
-          
+
           if (openParentheses > 0) {
             argsContent += char;
           }
           charIndex++;
         }
-        
+
         const argsStr = argsContent.trim();
         const firstArg = argsStr.split(',')[0].trim();
-        
+
         // Check if the first argument is not companyId
         const isLegacy = firstArg !== 'companyId';
-        
+
         if (isLegacy) {
           // Find line number
           const lineNum = fileContent.substring(0, index).split('\n').length;
@@ -90,7 +90,7 @@ function auditCalls(functions) {
             snippet: fileContent.substring(index, index + 100).replace(/\s+/g, ' ') + '...'
           });
         }
-        
+
         index += fn.length + 1;
       }
     }
