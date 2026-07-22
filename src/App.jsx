@@ -18,8 +18,6 @@ import {
   collection,
   query,
   where,
-  limit,
-  getDocs,
   onSnapshot,
   doc,
 } from "firebase/firestore";
@@ -833,31 +831,7 @@ function OperarioLayout() {
 // ==================== ROOT REDIRECT ====================
 function RootRedirect() {
   const { currentUser, userProfile, loading } = useAuth();
-  const [hasAdmins, setHasAdmins] = useState(null);
-
-  useEffect(() => {
-    async function checkAdmins() {
-      try {
-        const q = query(
-          collection(db, "users"),
-          where("role", "==", "admin"),
-          limit(1),
-        );
-        const snap = await getDocs(q);
-        setHasAdmins(!snap.empty);
-      } catch (err) {
-        console.error("CheckAdmins error:", err);
-        // Si hay error de permisos (porque las reglas de seguridad ya están activas y bloquean lecturas públicas),
-        // significa que el sistema ya está configurado y seguro. Por tanto, asumimos que existen admins y redirigimos a login.
-        setHasAdmins(true);
-      }
-    }
-    if (!loading && !currentUser) {
-      checkAdmins();
-    }
-  }, [loading, currentUser]);
-
-  if (loading || (hasAdmins === null && !currentUser)) {
+  if (loading) {
     return (
       <div className="loading-page">
         <div className="spinner"></div>
@@ -867,7 +841,7 @@ function RootRedirect() {
   }
 
   if (!currentUser) {
-    return hasAdmins ? <LandingPage /> : <Navigate to="/setup" />;
+    return <LandingPage />;
   }
 
   if (userProfile?.role === "admin") {

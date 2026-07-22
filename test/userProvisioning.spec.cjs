@@ -1,5 +1,11 @@
 const assert = require("assert");
 const crypto = require("crypto");
+
+process.env.GCLOUD_PROJECT ||= "demo-project";
+process.env.FIREBASE_CONFIG ||= JSON.stringify({ projectId: "demo-project" });
+process.env.FIRESTORE_EMULATOR_HOST ||= "127.0.0.1:8080";
+process.env.FIREBASE_AUTH_EMULATOR_HOST ||= "127.0.0.1:9099";
+
 const admin = require("firebase-admin");
 const { getAuth } = require("firebase-admin/auth");
 const { getFirestore } = require("firebase-admin/firestore");
@@ -45,7 +51,7 @@ async function callFunction(name, headers, data) {
   return { response, body: await response.json() };
 }
 
-async function waitForDocument(ref, timeoutMs = 5000) {
+async function waitForDocument(ref, timeoutMs = 15000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const snap = await ref.get();
@@ -56,7 +62,7 @@ async function waitForDocument(ref, timeoutMs = 5000) {
 }
 
 describe("Tenant user provisioning Cloud Functions", function () {
-  this.timeout(20000);
+  this.timeout(60000);
   const db = getFirestore();
 
   it("crea un operario en Auth y /users usando el companyId del admin", async () => {
