@@ -1,7 +1,12 @@
 import { useState, useEffect } from "react";
 import { requestNotificationPermission } from "../../utils/geolocation";
+import { registerForPushNotifications } from "../../services/fcmService";
+import { useAuth } from "../../contexts/AuthContext";
+import { useTenant } from "../../contexts/TenantContext";
 
 export default function PermissionsCheck() {
+  const { userProfile } = useAuth();
+  const { companyId } = useTenant();
   const [showModal, setShowModal] = useState(false);
   const [status, setStatus] = useState("pending"); // 'pending', 'loading', 'granted', 'error'
   const [errorMessage, setErrorMessage] = useState("");
@@ -19,7 +24,22 @@ export default function PermissionsCheck() {
     setErrorMessage("");
     try {
       // Pedir notificaciones
-      await requestNotificationPermission();
+      const notificationsGranted = await requestNotificationPermission();
+      if (!notificationsGranted) {
+        throw new Error(
+          "No se concedió el permiso de notificaciones. Actívalo en los ajustes del dispositivo.",
+        );
+      }
+
+      const fcmToken = await registerForPushNotifications(
+        companyId,
+        userProfile?.uid,
+      );
+      if (!fcmToken) {
+        throw new Error(
+          "No se pudo activar este dispositivo para recibir notificaciones.",
+        );
+      }
 
       // Pedir ubicación con un getCurrentPosition
       await new Promise((resolve, reject) => {

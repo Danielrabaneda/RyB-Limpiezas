@@ -27,6 +27,7 @@ import {
 import { db } from "../../config/firebase";
 import { tenantCollection } from "../../utils/tenantFirestore";
 import { createSystemNotification } from "../../services/notificationService";
+import { buildSystemNotificationArgs } from "../../utils/notificationRequest";
 
 export default function DashboardPage() {
   const { userProfile } = useAuth();
@@ -211,13 +212,7 @@ export default function DashboardPage() {
         // Enviar a todos los operarios
         const promises = operarios.map((op) =>
           createSystemNotification(
-            op.uid,
-            notifForm.title.trim(),
-            notifForm.body.trim(),
-            notifForm.type,
-            null,
-            null,
-            notifForm.triggerEvent,
+            ...buildSystemNotificationArgs(companyId, op.uid, notifForm),
           ),
         );
         await Promise.all(promises);
@@ -226,13 +221,11 @@ export default function DashboardPage() {
         // Enviar a un operario concreto
         const selectedOp = operarios.find((op) => op.uid === notifForm.userId);
         await createSystemNotification(
-          notifForm.userId,
-          notifForm.title.trim(),
-          notifForm.body.trim(),
-          notifForm.type,
-          null,
-          null,
-          notifForm.triggerEvent,
+          ...buildSystemNotificationArgs(
+            companyId,
+            notifForm.userId,
+            notifForm,
+          ),
         );
         alert(
           `Notificación enviada con éxito a ${selectedOp?.name || "el operario seleccionado"}.`,

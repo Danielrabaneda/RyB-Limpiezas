@@ -114,12 +114,20 @@ export default function GeolocationTracker() {
 
   // ==================== REGISTRO FCM ====================
   useEffect(() => {
-    if (!isOperario || !userProfile?.uid || fcmRegisteredRef.current) return;
-    fcmRegisteredRef.current = true;
+    if (
+      !companyId ||
+      !isOperario ||
+      !userProfile?.uid ||
+      fcmRegisteredRef.current
+    ) return;
 
-    registerForPushNotifications(companyId, userProfile.uid).catch((err) => {
-      console.warn("[Tracker] FCM registration failed (non-blocking):", err);
-    });
+    registerForPushNotifications(companyId, userProfile.uid)
+      .then((token) => {
+        if (token) fcmRegisteredRef.current = true;
+      })
+      .catch((err) => {
+        console.warn("[Tracker] FCM registration failed (non-blocking):", err);
+      });
   }, [companyId, isOperario, userProfile]);
 
   // ==================== OBTENER COMUNIDAD CON CACHÉ ====================

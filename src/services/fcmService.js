@@ -36,7 +36,7 @@ function getMessagingInstance() {
  * @returns {string|null} El token FCM o null si no se pudo registrar
  */
 export async function registerForPushNotifications(companyId, userId) {
-  if (!userId) return null;
+  if (!companyId || !userId) return null;
 
   const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY;
   if (!vapidKey) {

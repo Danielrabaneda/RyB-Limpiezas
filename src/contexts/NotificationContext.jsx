@@ -15,6 +15,7 @@ import {
   deleteOldNotifications,
   markNotificationAsRead,
 } from "../services/notificationService";
+import { shouldAlertImmediately } from "../utils/notificationRequest";
 
 const NotificationContext = createContext({
   notifications: [],
@@ -111,9 +112,9 @@ export function NotificationProvider({ children }) {
 
           const data = docSnap.data();
 
-          // Las notificaciones 'push_only' (GPS/ubicación) se gestionan por FCM del servidor
-          // y el tracker ya envió la push local. No reproducir sonido ni re-alertas aquí.
-          if (data.triggerEvent === "push_only") {
+          // Los avisos push_only los gestiona FCM. Los avisos programados se
+          // muestran únicamente cuando se inicia/finaliza la jornada.
+          if (!shouldAlertImmediately(data.triggerEvent)) {
             trackers[docSnap.id] = { count: 0, intervalId: null }; // Marcar como procesada
             continue;
           }

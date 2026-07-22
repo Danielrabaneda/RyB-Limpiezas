@@ -42,23 +42,35 @@ export const createSystemNotification = async (
   targetUrl = null,
   triggerEvent = "immediate",
 ) => {
+  if (!companyId) {
+    throw new Error("No se puede crear una notificación sin companyId.");
+  }
+  if (!userId) {
+    throw new Error("No se puede crear una notificación sin destinatario.");
+  }
+
   try {
-    await addDoc(tenantCollection(db, companyId, "systemNotifications"), {
-      userId,
-      title,
-      body,
-      type,
-      serviceId,
-      targetUrl,
-      triggerEvent,
-      read: false,
-      createdAt: serverTimestamp(),
-    });
+    const notificationRef = await addDoc(
+      tenantCollection(db, companyId, "systemNotifications"),
+      {
+        userId,
+        title,
+        body,
+        type,
+        serviceId,
+        targetUrl,
+        triggerEvent,
+        read: false,
+        createdAt: serverTimestamp(),
+      },
+    );
     console.log(
       `[NotificationService] Alerta creada para ${userId}: ${title} (Trigger: ${triggerEvent})`,
     );
+    return notificationRef.id;
   } catch (error) {
     console.error("[NotificationService] Error creando notificación:", error);
+    throw error;
   }
 };
 

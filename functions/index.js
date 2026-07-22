@@ -8,6 +8,7 @@
  */
 
 const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { shouldSendPushNotification } = require("./notificationPolicy");
 const {
   onCall,
   HttpsError,
@@ -683,9 +684,8 @@ exports.cleanupStaleFcmTokens = onSchedule(
 
 // ============================================================================
 // FUNCIÓN 3: onGpsNotificationCreated
-// Trigger Firestore: cuando se crea una systemNotification con triggerEvent
-// 'push_only' (notificaciones GPS de entrada/salida de comunidades),
-// envía un push FCM real que puede despertar el teléfono en suspensión.
+// Trigger Firestore: envía FCM para avisos inmediatos y para notificaciones
+// GPS push_only. Los avisos programados de jornada se conservan hasta su evento.
 // ============================================================================
 
 exports.onGpsNotificationCreated = onDocumentCreated(
@@ -699,14 +699,14 @@ exports.onGpsNotificationCreated = onDocumentCreated(
     const data = event.data?.data();
     if (!data) return;
 
-    // Solo procesar notificaciones GPS (push_only)
-    if (data.triggerEvent !== "push_only") return;
+    const triggerEvent = data.triggerEvent || "immediate";
+    if (!shouldSendPushNotification(triggerEvent)) return;
 
     const { userId, title, body, type, serviceId } = data;
     if (!userId || !title) return;
 
     logger.info(
-      `[GPS Push] Notificación GPS detectada para ${userId}: ${title}`,
+      `[Notification Push] Aviso ${triggerEvent} detectado para ${userId}: ${title}`,
     );
 
     try {
@@ -730,7 +730,7 @@ exports.onGpsNotificationCreated = onDocumentCreated(
               type: type || "info",
               userId,
               serviceId: serviceId || "",
-              triggerEvent: "push_only",
+              triggerEvent,
             },
             android: {
               priority: "high",
@@ -765,7 +765,7 @@ exports.onGpsNotificationCreated = onDocumentCreated(
                 badge: "/icons/icon-192.png",
                 vibrate: [200, 100, 200, 100, 200],
                 requireInteraction: true,
-                tag: `gps-${serviceId || Date.now()}`,
+                tag: `${triggerEvent}-${serviceId || event.params.notifId}`,
               },
             },
           };
@@ -799,7 +799,7 @@ exports.onGpsNotificationCreated = onDocumentCreated(
       if (invalidTokens.length > 0) {
         const deletePromises = invalidTokens.map(async (token) => {
           const tokenSnap = await db
-            .collection("fcmTokens")
+            .collectionGroup("fcmTokens")
             .where("token", "==", token)
             .get();
           const batch = db.batch();
