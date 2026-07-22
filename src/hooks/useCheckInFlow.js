@@ -35,6 +35,7 @@ import { createTaskExecution } from "../services/checkInService";
 import { parseHHMM, formatTimeToHHMM } from "../utils/formatTime";
 import { useTenant } from "../contexts/TenantContext";
 import { tenantCollection } from "../utils/tenantFirestore";
+import { getCurrentServiceGroup } from "../utils/serviceGroup";
 
 export function useCheckInFlow(
   serviceId,
@@ -468,8 +469,7 @@ export function useCheckInFlow(
         checkOutTime: null,
       });
 
-      const currentGroup =
-        groupedServices.length > 0 ? groupedServices : [service];
+      const currentGroup = getCurrentServiceGroup(groupedServices, service);
       for (const s of currentGroup) {
         await updateScheduledServiceStatus(companyId, s.id, "in_progress");
         if (s.assignedUserId !== userProfile.uid) {
@@ -692,8 +692,7 @@ export function useCheckInFlow(
     if (!activeCheckIn) return;
 
     const pendingTasks = [];
-    const currentGroup =
-      groupedServices.length > 0 ? groupedServices : [service];
+    const currentGroup = getCurrentServiceGroup(groupedServices, service);
     for (const s of currentGroup) {
       if (s.communityTaskId) {
         const exec = taskExecutions.find(
@@ -868,6 +867,7 @@ export function useCheckInFlow(
   ) {
     setActionLoading(true);
     try {
+      const currentGroup = getCurrentServiceGroup(groupedServices, service);
       const result = await completeCheckOut(
         activeCheckIn.id,
         lat,
@@ -1075,8 +1075,7 @@ export function useCheckInFlow(
         }
       }
 
-      const currentGroup =
-        groupedServices.length > 0 ? groupedServices : [service];
+      const currentGroup = getCurrentServiceGroup(groupedServices, service);
       for (const s of currentGroup) {
         if (s.communityTaskId) {
           const exec = taskExecutions.find(
@@ -1115,8 +1114,7 @@ export function useCheckInFlow(
 
   async function handleForceComplete() {
     const pendingTasks = [];
-    const currentGroup =
-      groupedServices.length > 0 ? groupedServices : [service];
+    const currentGroup = getCurrentServiceGroup(groupedServices, service);
     for (const s of currentGroup) {
       if (s.communityTaskId) {
         const exec = taskExecutions.find(

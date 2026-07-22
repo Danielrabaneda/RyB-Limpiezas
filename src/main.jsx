@@ -6,14 +6,24 @@ import { registerSW } from "virtual:pwa-register";
 
 // Register service worker for PWA only if not in a client portal.
 if (!window.location.pathname.startsWith("/portal/")) {
+  let refreshing = false;
+  navigator.serviceWorker?.addEventListener("controllerchange", () => {
+    if (refreshing) return;
+    refreshing = true;
+    window.location.reload();
+  });
+
   const updateSW = registerSW({
     immediate: true,
     onNeedRefresh() {
-      // Automatically update to the new service worker version
+      // Activate first; controllerchange reloads only when the new worker owns the page.
       updateSW(true);
-      setTimeout(() => {
-        window.location.reload();
-      }, 1000);
+    },
+    onRegisteredSW(_swUrl, registration) {
+      // iOS standalone PWAs do not always check promptly for a newer worker.
+      registration?.update().catch((error) => {
+        console.warn("No se pudo comprobar la actualización de la PWA:", error);
+      });
     },
     onOfflineReady() {
       console.log("App lista para uso offline.");

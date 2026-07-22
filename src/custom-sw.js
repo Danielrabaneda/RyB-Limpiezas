@@ -8,6 +8,11 @@ import { ExpirationPlugin } from "workbox-expiration";
 import { CacheableResponsePlugin } from "workbox-cacheable-response";
 import { createHandlerBoundToURL } from "workbox-precaching";
 
+// Take control as soon as the newly deployed precache has finished installing.
+self.addEventListener("install", (event) => {
+  event.waitUntil(self.skipWaiting());
+});
+
 // Precache assets inyectados por Workbox
 precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
