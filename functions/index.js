@@ -821,6 +821,85 @@ exports.onGpsNotificationCreated = onDocumentCreated(
   },
 );
 
+/**
+ * Convierte cada llegada/salida persistida por un operario en una notificación
+ * para los administradores activos del mismo tenant. Los IDs deterministas
+ * evitan duplicados si Firestore reintenta el evento.
+ */
+exports.onGeoDetectionCreated = onDocumentCreated(
+  {
+    document: "companies/{companyId}/geoDetections/{detectionId}",
+    region: "europe-west1",
+  },
+  async (event) => {
+    const detection = event.data?.data();
+    if (!detection || !["entry", "exit"].includes(detection.type)) return;
+
+    const { companyId, detectionId } = event.params;
+    const [userSnap, adminsSnap] = await Promise.all([
+      db.doc(`users/${detection.userId}`).get(),
+      db
+        .collection("users")
+        .where("companyId", "==", companyId)
+        .where("role", "==", "admin")
+        .where("active", "==", true)
+        .get(),
+    ]);
+
+    if (adminsSnap.empty) {
+      logger.warn("Detección GPS sin administradores activos", {
+        companyId,
+        detectionId,
+      });
+      return;
+    }
+
+    const user = userSnap.data() || {};
+    const userName = user.name || user.email || detection.userId;
+    const isEntry = detection.type === "entry";
+    const title = `${isEntry ? "Llegada" : "Salida"} detectada: ${detection.communityName || "Comunidad"}`;
+    const detectedAt = detection.detectedAt?.toDate?.() || new Date();
+    const time = detectedAt.toLocaleTimeString("es-ES", {
+      timeZone: "Europe/Madrid",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const distance =
+      isEntry && Number.isFinite(detection.distance)
+        ? ` (${Math.round(detection.distance)}m)`
+        : "";
+    const body = `${userName} ${isEntry ? "llegó a" : "salió de"} ${detection.communityName || "la comunidad"} a las ${time}${distance}.`;
+
+    const batch = db.batch();
+    adminsSnap.docs.forEach((adminDoc) => {
+      const notificationRef = db.doc(
+        `companies/${companyId}/systemNotifications/geo_${detectionId}_${adminDoc.id}`,
+      );
+      batch.set(notificationRef, {
+        userId: adminDoc.id,
+        title,
+        body,
+        type: isEntry ? "success" : "warning",
+        serviceId: detection.serviceId || null,
+        targetUrl: "/admin",
+        triggerEvent: "push_only",
+        source: "geo_detection",
+        detectionId,
+        read: false,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    });
+    await batch.commit();
+
+    logger.info("Notificaciones GPS creadas para administradores", {
+      companyId,
+      detectionId,
+      adminCount: adminsSnap.size,
+      type: detection.type,
+    });
+  },
+);
+
 exports.sendInvoiceEmails = onCall(
   {
     region: "europe-west1",

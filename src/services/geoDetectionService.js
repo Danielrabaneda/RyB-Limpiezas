@@ -4,20 +4,17 @@
  * Permite que las detecciones de entrada/salida sobrevivan a limpiezas de caché.
  */
 import {
-  collection,
-  doc,
   setDoc,
-  getDoc,
   getDocs,
   query,
   where,
   serverTimestamp,
   Timestamp,
-  deleteDoc,
 } from "firebase/firestore";
 import { db } from "../config/firebase";
 import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
 import { startOfDay, endOfDay } from "date-fns";
+import { findLatestDetection } from "../utils/geoDetection";
 
 const COLLECTION = "geoDetections";
 
@@ -92,8 +89,10 @@ export async function persistEntryDetection(
     console.log(
       `[GeoDetection] Entrada persistida: ${communityName} a ${Math.round(distance)}m (${source}), confianza: ${confidence}`,
     );
+    return true;
   } catch (err) {
     console.error("[GeoDetection] Error persistiendo entrada:", err);
+    return false;
   }
 }
 
@@ -166,8 +165,10 @@ export async function persistExitDetection(
     console.log(
       `[GeoDetection] Salida persistida: ${communityName} (${source}), confianza: ${confidence}`,
     );
+    return true;
   } catch (err) {
     console.error("[GeoDetection] Error persistiendo salida:", err);
+    return false;
   }
 }
 
@@ -204,13 +205,8 @@ export async function getTodayDetections(companyId, userId) {
  */
 export async function getEntryDetection(companyId, userId, serviceId) {
   try {
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const docId = `entry_${userId}_${serviceId}_${todayStr}`;
-    const snap = await getDoc(tenantDoc(db, companyId, COLLECTION, docId));
-    if (snap.exists()) {
-      return { id: snap.id, ...snap.data() };
-    }
-    return null;
+    const detections = await getTodayDetections(companyId, userId);
+    return findLatestDetection(detections, serviceId, "entry");
   } catch (err) {
     console.error("[GeoDetection] Error obteniendo detección de entrada:", err);
     return null;
@@ -226,13 +222,8 @@ export async function getEntryDetection(companyId, userId, serviceId) {
  */
 export async function getExitDetection(companyId, userId, serviceId) {
   try {
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const docId = `exit_${userId}_${serviceId}_${todayStr}`;
-    const snap = await getDoc(tenantDoc(db, companyId, COLLECTION, docId));
-    if (snap.exists()) {
-      return { id: snap.id, ...snap.data() };
-    }
-    return null;
+    const detections = await getTodayDetections(companyId, userId);
+    return findLatestDetection(detections, serviceId, "exit");
   } catch (err) {
     console.error("[GeoDetection] Error obteniendo detección de salida:", err);
     return null;

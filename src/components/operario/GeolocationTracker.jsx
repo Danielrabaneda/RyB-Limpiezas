@@ -120,7 +120,7 @@ export default function GeolocationTracker() {
     registerForPushNotifications(companyId, userProfile.uid).catch((err) => {
       console.warn("[Tracker] FCM registration failed (non-blocking):", err);
     });
-  }, [isOperario, userProfile]);
+  }, [companyId, isOperario, userProfile]);
 
   // ==================== OBTENER COMUNIDAD CON CACHÉ ====================
   const getCommunityWithCache = useCallback(async (communityId) => {
@@ -581,7 +581,7 @@ export default function GeolocationTracker() {
                         confirmedExitTime.toISOString(),
                       );
                       localStorage.removeItem(pendingKey);
-                      persistExitDetection(
+                      const exitPersisted = await persistExitDetection(
                         companyId,
                         userProfile.uid,
                         activeSvc.id,
@@ -596,6 +596,9 @@ export default function GeolocationTracker() {
                           originalReadingTimestamp: gpsTimestamp,
                         },
                       );
+                      if (!exitPersisted) {
+                        console.warn("[Tracker] La salida no pudo persistirse en Firestore");
+                      }
 
                       // Comprobar si hay autocierre activo en comunidad
                       const community = await getCommunityWithCache(
@@ -662,7 +665,7 @@ export default function GeolocationTracker() {
                     confirmedKey,
                     estimatedExitTime.toISOString(),
                   );
-                  persistExitDetection(
+                  const exitPersisted = await persistExitDetection(
                     companyId,
                     userProfile.uid,
                     activeSvc.id,
@@ -677,6 +680,9 @@ export default function GeolocationTracker() {
                       originalReadingTimestamp: gpsTimestamp,
                     },
                   );
+                  if (!exitPersisted) {
+                    console.warn("[Tracker] La salida estimada no pudo persistirse en Firestore");
+                  }
 
                   const community = await getCommunityWithCache(
                     activeSvc.communityId,
@@ -752,7 +758,7 @@ export default function GeolocationTracker() {
                         confirmedExitTime.toISOString(),
                       );
                       localStorage.removeItem(pendingKey);
-                      persistExitDetection(
+                      const exitPersisted = await persistExitDetection(
                         companyId,
                         userProfile.uid,
                         activeSvc.id,
@@ -767,6 +773,9 @@ export default function GeolocationTracker() {
                           originalReadingTimestamp: gpsTimestamp,
                         },
                       );
+                      if (!exitPersisted) {
+                        console.warn("[Tracker] La salida no pudo persistirse en Firestore");
+                      }
 
                       const community = await getCommunityWithCache(
                         activeSvc.communityId,
@@ -1013,7 +1022,7 @@ export default function GeolocationTracker() {
                   detectedAt: detectedEntryTime.toISOString(),
                 }),
               );
-              persistEntryDetection(
+              const entryPersisted = await persistEntryDetection(
                 companyId,
                 userProfile.uid,
                 closest.id,
@@ -1029,6 +1038,9 @@ export default function GeolocationTracker() {
                   originalReadingTimestamp: gpsTimestamp,
                 },
               );
+              if (!entryPersisted) {
+                console.warn("[Tracker] La llegada no pudo persistirse en Firestore");
+              }
 
               const title = isRepeat
                 ? `🔔 Recuerdo: Estás en ${closest.communityName}`
@@ -1051,7 +1063,7 @@ export default function GeolocationTracker() {
           }
 
           // Resetear estados lejanos
-          servicesWithDistance.forEach((s) => {
+          for (const s of servicesWithDistance) {
             if (s.distance > s.exitRadius * 2) {
               if (lastStateRef.current[s.id] === "INSIDE") {
                 console.log(`[Tracker] Salida sin fichaje: ${s.communityName}`);
@@ -1060,7 +1072,7 @@ export default function GeolocationTracker() {
                   `detected_exit_${s.id}`,
                   exitTime.toISOString(),
                 );
-                persistExitDetection(
+                const exitPersisted = await persistExitDetection(
                   companyId,
                   userProfile.uid,
                   s.id,
@@ -1075,13 +1087,16 @@ export default function GeolocationTracker() {
                     originalReadingTimestamp: gpsTimestamp,
                   },
                 );
+                if (!exitPersisted) {
+                  console.warn("[Tracker] La salida sin fichaje no pudo persistirse en Firestore");
+                }
               }
               lastStateRef.current[s.id] = "OUTSIDE";
               delete lastNotifyTimeRef.current[s.id];
               delete firstSeenInsideRef.current[s.id];
               consecutiveOutsideRef.current[s.id] = 0;
             }
-          });
+          }
 
           // Marcar completados
           servicesWithDistance.forEach((s) => {
@@ -1154,6 +1169,7 @@ export default function GeolocationTracker() {
   }, [
     userProfile,
     isOperario,
+    companyId,
     getCommunityWithCache,
     requestWakeLock,
     releaseWakeLock,
