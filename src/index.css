@@ -1085,7 +1085,7 @@ textarea {
     var(--color-primary-dark)
   );
   color: white;
-  padding: var(--space-3) var(--space-5);
+  padding: var(--space-3) var(--space-4);
   padding-top: calc(var(--space-3) + env(safe-area-inset-top, 0px));
   display: flex;
   align-items: center;
@@ -1097,6 +1097,171 @@ textarea {
 .operario-header-title {
   font-size: var(--font-lg);
   font-weight: 700;
+  line-height: 1.08;
+  overflow-wrap: anywhere;
+}
+
+.operario-header-main,
+.operario-session-bar {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  gap: var(--space-3);
+}
+
+.operario-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.operario-brand-logo {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  object-fit: contain;
+  border-radius: 10px;
+  background: white;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.16);
+}
+
+.operario-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.operario-header-icon {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  background: rgba(255, 255, 255, 0.1);
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.operario-header-icon:active {
+  background: rgba(255, 255, 255, 0.2);
+  transform: translateY(1px);
+}
+
+.operario-notification-count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #dc2626;
+  color: white;
+  font-size: 0.62rem;
+  font-weight: 800;
+  border: 2px solid var(--color-primary-dark);
+}
+
+.operario-session-bar {
+  padding-top: var(--space-2);
+  border-top: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.operario-session-user {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.operario-session-avatar {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  font-size: 0.9rem;
+}
+
+.operario-session-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.operario-session-copy strong {
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+}
+
+.operario-session-label {
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.operario-admin-link {
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.12);
+  color: white;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.operario-admin-link:active {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+@media (max-width: 360px) {
+  .operario-header {
+    padding-left: var(--space-3);
+    padding-right: var(--space-3);
+  }
+
+  .operario-brand-logo {
+    width: 40px;
+    height: 40px;
+    flex-basis: 40px;
+  }
+
+  .operario-header-title {
+    font-size: var(--font-base);
+  }
+
+  .operario-session-copy strong {
+    max-width: 130px;
+  }
+
+  .operario-admin-link span:last-child {
+    display: none;
+  }
 }
 
 .operario-content {

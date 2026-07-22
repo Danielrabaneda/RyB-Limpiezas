@@ -689,95 +689,73 @@ function OperarioLayout() {
         <GeolocationTracker />
       </Suspense>
       <header className="operario-header">
-        <div
-          className="flex items-center gap-2"
-          style={{ minWidth: 0, flex: 1 }}
-        >
-          {globalSettings?.logoUrl && (
-            <img
-              src={globalSettings.logoUrl}
-              alt="Logo"
-              style={{
-                width: "28px",
-                height: "28px",
-                objectFit: "contain",
-                borderRadius: "4px",
-                background: "#fff",
-              }}
-            />
-          )}
-          <div className="operario-header-title truncate">
-            {globalSettings?.companyName || "RyB Limpiezas"}
+        <div className="operario-header-main">
+          <div className="operario-brand">
+            {globalSettings?.logoUrl && (
+              <img
+                src={globalSettings.logoUrl}
+                alt="Logo de la empresa"
+                className="operario-brand-logo"
+              />
+            )}
+            <div className="operario-header-title">
+              {globalSettings?.companyName || "RyB Limpiezas"}
+            </div>
+          </div>
+          <div className="operario-header-actions">
+            {unreadCount > 0 && (
+              <button
+                onClick={() => {
+                  dismissAll();
+                  alert("Todos los avisos marcados como leídos.");
+                }}
+                className="operario-header-icon operario-notification-button"
+                title={`${unreadCount} avisos pendientes`}
+                aria-label={`${unreadCount} avisos pendientes`}
+              >
+                <span>🔔</span>
+                <span className="operario-notification-count">{unreadCount}</span>
+              </button>
+            )}
+            <button
+              onClick={() =>
+                window.dispatchEvent(new CustomEvent("ryb-open-cookie-settings"))
+              }
+              className="operario-header-icon"
+              title="Privacidad y cookies"
+              aria-label="Privacidad y cookies"
+            >
+              🍪
+            </button>
+            <button
+              className="operario-header-icon"
+              onClick={handleLogout}
+              title="Cerrar sesión"
+              aria-label="Cerrar sesión"
+            >
+              🚪
+            </button>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <span style={{ fontSize: "var(--font-xs)", opacity: 0.8 }}>
-            {userProfile?.name}
-          </span>
-          {unreadCount > 0 && (
-            <button
-              onClick={() => {
-                dismissAll();
-                alert("Todos los avisos marcados como leídos.");
-              }}
-              className="relative p-2 text-white hover:bg-slate-700 rounded-full transition-colors flex items-center justify-center"
-              style={{
-                border: "none",
-                background: "transparent",
-                cursor: "pointer",
-                padding: "4px",
-              }}
-              title={`${unreadCount} avisos pendientes`}
-            >
-              <span style={{ fontSize: "1.1rem" }}>🔔</span>
-              <span className="absolute top-0 right-0 inline-flex items-center justify-center px-1.5 py-0.5 text-[8px] font-bold leading-none text-white transform translate-x-1/3 -translate-y-1/3 bg-red-600 rounded-full animate-pulse">
-                {unreadCount}
-              </span>
-            </button>
-          )}
-          <button
-            onClick={() =>
-              window.dispatchEvent(new CustomEvent("ryb-open-cookie-settings"))
-            }
-            className="btn btn-ghost btn-sm"
-            title="Configuración de privacidad y cookies"
-            style={{
-              color: "white",
-              padding: "4px 8px",
-              fontSize: "1rem",
-              cursor: "pointer",
-            }}
-          >
-            🍪
-          </button>
+
+        <div className="operario-session-bar">
+          <div className="operario-session-user">
+            <span className="operario-session-avatar" aria-hidden="true">👤</span>
+            <div className="operario-session-copy">
+              <span className="operario-session-label">Sesión iniciada como</span>
+              <strong>{userProfile?.name || "Usuario"}</strong>
+            </div>
+          </div>
           {userProfile?.role === "admin" && (
             <button
               onClick={() => navigate("/admin")}
-              className="btn btn-ghost btn-sm"
-              title="Volver al Panel de Administración"
-              style={{
-                color: "#93c5fd",
-                padding: "4px 8px",
-                fontSize: "0.85rem",
-                fontWeight: "bold",
-                border: "1px solid rgba(147, 197, 253, 0.3)",
-                borderRadius: "6px",
-                marginRight: "4px",
-                cursor: "pointer",
-                display: "inline-flex",
-                alignItems: "center"
-              }}
+              className="operario-admin-link"
+              title="Volver al panel de administración"
             >
-              📊 Admin
+              <span aria-hidden="true">📊</span>
+              <span>Panel admin</span>
             </button>
           )}
-          <button
-            className="btn btn-ghost btn-sm"
-            onClick={handleLogout}
-            style={{ color: "white", padding: "4px 8px" }}
-          >
-            🚪
-          </button>
         </div>
       </header>
 
