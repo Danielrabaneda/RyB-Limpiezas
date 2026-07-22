@@ -684,8 +684,9 @@ exports.cleanupStaleFcmTokens = onSchedule(
 
 // ============================================================================
 // FUNCIÓN 3: onGpsNotificationCreated
-// Trigger Firestore: envía FCM para avisos inmediatos y para notificaciones
-// GPS push_only. Los avisos programados de jornada se conservan hasta su evento.
+// Trigger Firestore: envía FCM únicamente para notificaciones GPS push_only.
+// Los avisos manuales se muestran como modal dentro de la app, sin duplicar
+// una notificación push del sistema.
 // ============================================================================
 
 exports.onGpsNotificationCreated = onDocumentCreated(
