@@ -112,15 +112,8 @@ export default function DashboardPage() {
         (s) => s.status === "pending",
       ).length;
 
-      // Calculate real-time active operators (must have active workday)
+      // Calculate real-time active operators (active workday OR active check-in/service in progress)
       const activeUserIds = new Set();
-
-      // Get set of UIDs of users with active workdays
-      const activeWdUserIds = new Set();
-      activeWorkdays.forEach((wd) => {
-        if (wd.userId) activeWdUserIds.add(wd.userId);
-        if (wd.currentCompanionId) activeWdUserIds.add(wd.currentCompanionId);
-      });
 
       // 1. Add all operators with active workdays (and their global companions)
       activeWorkdays.forEach((wd) => {
@@ -128,10 +121,10 @@ export default function DashboardPage() {
         if (wd.currentCompanionId) activeUserIds.add(wd.currentCompanionId);
       });
 
-      // 2. Add all operators with active check-ins (and service-specific companions) only if they have an active workday
+      // 2. Add all operators with active check-ins (and service-specific companions)
       const activeCheckInDocs = checkIns.filter((c) => !c.checkOutTime);
       activeCheckInDocs.forEach((c) => {
-        if (c.userId && activeWdUserIds.has(c.userId)) {
+        if (c.userId) {
           activeUserIds.add(c.userId);
         }
 
@@ -141,7 +134,7 @@ export default function DashboardPage() {
           );
           if (service && Array.isArray(service.companionIds)) {
             service.companionIds.forEach((companionId) => {
-              if (companionId && activeWdUserIds.has(companionId)) {
+              if (companionId) {
                 activeUserIds.add(companionId);
               }
             });

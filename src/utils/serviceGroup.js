@@ -1,7 +1,7 @@
 export function getCurrentServiceGroup(groupedServices, service) {
-  return Array.isArray(groupedServices) && groupedServices.length > 0
-    ? groupedServices
-    : service
-      ? [service]
-      : [];
+  if (Array.isArray(groupedServices) && groupedServices.length > 0) {
+    return groupedServices;
+  }
+
+  return service ? [service] : [];
 }
