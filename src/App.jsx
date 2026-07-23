@@ -587,9 +587,19 @@ function AdminLayout() {
             </button>
             {unreadCount > 0 && (
               <button
-                onClick={() => {
-                  dismissAll();
-                  navigate("/admin/inventory");
+                onClick={async () => {
+                  try {
+                    await dismissAll();
+                    navigate("/admin/inventory");
+                  } catch (error) {
+                    console.error(
+                      "[AdminLayout] No se pudieron marcar los avisos:",
+                      error,
+                    );
+                    alert(
+                      "No se pudieron marcar los avisos como leídos. Inténtalo de nuevo.",
+                    );
+                  }
                 }}
                 className="relative p-2 text-slate-600 hover:bg-slate-100 rounded-full transition-colors"
                 title={`${unreadCount} avisos pendientes`}
@@ -705,9 +715,19 @@ function OperarioLayout() {
           <div className="operario-header-actions">
             {unreadCount > 0 && (
               <button
-                onClick={() => {
-                  dismissAll();
-                  alert("Todos los avisos marcados como leídos.");
+                onClick={async () => {
+                  try {
+                    await dismissAll();
+                    alert("Todos los avisos marcados como leídos.");
+                  } catch (error) {
+                    console.error(
+                      "[OperarioLayout] No se pudieron marcar los avisos:",
+                      error,
+                    );
+                    alert(
+                      "No se pudieron marcar los avisos como leídos. Inténtalo de nuevo.",
+                    );
+                  }
                 }}
                 className="operario-header-icon operario-notification-button"
                 title={`${unreadCount} avisos pendientes`}

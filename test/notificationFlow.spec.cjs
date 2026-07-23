@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const { pathToFileURL } = require("node:url");
 const path = require("node:path");
 
@@ -43,6 +44,29 @@ describe("Operator notification regression", () => {
     assert.equal(helpers.shouldAlertImmediately("push_only"), false);
     assert.equal(helpers.shouldAlertImmediately("workday_start"), false);
     assert.equal(helpers.shouldAlertImmediately("workday_end"), false);
+  });
+
+  it("rebuilds dismissAll when the active tenant changes", () => {
+    const contextSource = fs.readFileSync(
+      path.resolve("src/contexts/NotificationContext.jsx"),
+      "utf8",
+    );
+
+    assert.match(
+      contextSource,
+      /\}, \[companyId, currentUser\?\.uid, cleanupTracker\]\);/,
+    );
+  });
+
+  it("waits for Firestore before reporting that notices were read", () => {
+    const appSource = fs.readFileSync(path.resolve("src/App.jsx"), "utf8");
+    const awaitedDismissals = appSource.match(/await dismissAll\(\);/g) || [];
+
+    assert.equal(
+      awaitedDismissals.length,
+      2,
+      "Las campanas de admin y operario deben esperar la escritura",
+    );
   });
 });
 

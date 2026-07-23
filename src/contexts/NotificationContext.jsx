@@ -222,13 +222,30 @@ export function NotificationProvider({ children }) {
   }, [notifications]);
 
   const dismissAll = useCallback(async () => {
-    if (!currentUser?.uid) return;
-    try {
-      await markAllNotificationsAsRead(companyId, currentUser.uid);
-    } catch (err) {
-      console.error("[NotificationContext] Error dismissing:", err);
+    if (!currentUser?.uid) {
+      throw new Error("No hay un usuario autenticado.");
     }
-  }, [currentUser]);
+    if (!companyId) {
+      throw new Error("No se ha podido resolver la empresa del usuario.");
+    }
+
+    const markedCount = await markAllNotificationsAsRead(
+      companyId,
+      currentUser.uid,
+    );
+
+    // El listener de Firestore confirmará después el mismo estado. La
+    // actualización local evita que el contador permanezca visible mientras
+    // llega ese snapshot.
+    setNotifications([]);
+    setUnreadCount(0);
+    updateIconBadge(0);
+    setActivePopupNotif(null);
+    shownPopupIdsRef.current.clear();
+    Object.keys(repeatTrackersRef.current).forEach(cleanupTracker);
+
+    return markedCount;
+  }, [companyId, currentUser?.uid, cleanupTracker]);
 
   const value = {
     notifications,

@@ -78,7 +78,12 @@ export const createSystemNotification = async (
  * Marca una única notificación específica como leída.
  */
 export const markNotificationAsRead = async (companyId, notificationId) => {
-  if (!notificationId) return;
+  if (!companyId) {
+    throw new Error("No se puede marcar una notificación sin companyId.");
+  }
+  if (!notificationId) {
+    throw new Error("No se puede marcar una notificación sin identificador.");
+  }
   try {
     const ref = tenantDoc(db, companyId, "systemNotifications", notificationId);
     await updateDoc(ref, { read: true });
@@ -88,6 +93,7 @@ export const markNotificationAsRead = async (companyId, notificationId) => {
       "[NotificationService] Error marcando notificación como leída:",
       error,
     );
+    throw error;
   }
 };
 
@@ -96,7 +102,12 @@ export const markNotificationAsRead = async (companyId, notificationId) => {
  * Soporta más de 500 notificaciones mediante chunking de batches.
  */
 export const markAllNotificationsAsRead = async (companyId, userId) => {
-  if (!userId) return;
+  if (!companyId) {
+    throw new Error("No se pueden marcar notificaciones sin companyId.");
+  }
+  if (!userId) {
+    throw new Error("No se pueden marcar notificaciones sin usuario.");
+  }
   try {
     const q = query(
       tenantCollection(db, companyId, "systemNotifications"),
@@ -104,7 +115,7 @@ export const markAllNotificationsAsRead = async (companyId, userId) => {
       where("read", "==", false),
     );
     const snapshot = await getDocs(q);
-    if (snapshot.empty) return;
+    if (snapshot.empty) return 0;
 
     await commitInChunks(
       snapshot.docs.map((d) => d.ref),
@@ -113,11 +124,13 @@ export const markAllNotificationsAsRead = async (companyId, userId) => {
     console.log(
       `[NotificationService] Marcadas como leídas: ${snapshot.size} para ${userId}`,
     );
+    return snapshot.size;
   } catch (error) {
     console.error(
       "[NotificationService] Error marcando notificaciones como leídas:",
       error,
     );
+    throw error;
   }
 };
 
