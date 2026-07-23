@@ -17,6 +17,7 @@ import {
 } from "../services/routeOptimizerService";
 import { format, isSameDay } from "date-fns";
 import { getCurrentLocation, getDistance } from "../utils/geolocation";
+import { groupServicesByTaskPresentation } from "../utils/taskPresentation";
 
 export function useTodayData(userProfile) {
   const [enrichedServices, setEnrichedServices] = useState([]);
@@ -236,6 +237,12 @@ export function useTodayData(userProfile) {
             tasks,
             isGarage,
             printColor,
+            displayMode: specificTask?.displayMode || svc.displayMode || "standalone",
+            hostTaskIds: specificTask?.hostTaskIds || svc.hostTaskIds || [],
+            carryUntilCompleted:
+              specificTask?.carryUntilCompleted ??
+              svc.carryUntilCompleted ??
+              true,
           });
         } catch (enrichErr) {
           console.warn(`Error enriching service ${svc.id}:`, enrichErr);
@@ -322,71 +329,11 @@ export function useTodayData(userProfile) {
         console.error("Error optimizing route:", optimizeErr);
       }
 
-      const grouped = [];
-      const seenGroupKeys = new Set();
-
-      for (const svc of optimized) {
-        if (!svc.communityId) {
-          grouped.push(svc);
-          continue;
-        }
-
-        const isOtras = svc.printColor === "#ef4444" && !svc.isGarage;
-        const hasMainService = optimized.some(
-          (s) =>
-            s.communityId === svc.communityId &&
-            !(s.printColor === "#ef4444" && !s.isGarage),
-        );
-        if (isOtras && hasMainService) continue;
-        const groupKey = `${svc.communityId}_${svc.id}`;
-
-        if (seenGroupKeys.has(groupKey)) {
-          const existingGroup = grouped.find((g) => g.groupKey === groupKey);
-          if (existingGroup) {
-            existingGroup.groupedServices.push(svc);
-            if (svc.tasks && svc.tasks.length > 0) {
-              existingGroup.tasks.push(...svc.tasks);
-            }
-            if (svc.flexibleWeek) existingGroup.flexibleWeek = true;
-            if (svc.isCompanion) existingGroup.isCompanion = true;
-            if (svc.isTransferred) existingGroup.isTransferred = true;
-            if (svc.isRescheduled) existingGroup.isRescheduled = true;
-            if (svc.isGarage) existingGroup.isGarage = true;
-
-            const allSvcs = existingGroup.groupedServices;
-            if (allSvcs.every((s) => s.status === "completed")) {
-              existingGroup.status = "completed";
-            } else if (allSvcs.every((s) => s.status === "missed")) {
-              existingGroup.status = "missed";
-            } else if (
-              allSvcs.every(
-                (s) => s.status === "completed" || s.status === "missed",
-              )
-            ) {
-              existingGroup.status = "completed";
-            } else if (
-              allSvcs.some(
-                (s) =>
-                  s.status === "in_progress" ||
-                  s.status === "started" ||
-                  s.status === "completed" ||
-                  s.status === "missed",
-              )
-            ) {
-              existingGroup.status = "in_progress";
-            } else {
-              existingGroup.status = "pending";
-            }
-          }
-        } else {
-          seenGroupKeys.add(groupKey);
-          grouped.push({
-            ...svc,
-            groupKey,
-            groupedServices: [svc],
-          });
-        }
-      }
+      const allCommunityTasks = Object.values(taskCache).flat();
+      const grouped = groupServicesByTaskPresentation(
+        optimized,
+        allCommunityTasks,
+      );
 
       setRouteOptimized(isRouteOptimized);
       setEnrichedServices(grouped);

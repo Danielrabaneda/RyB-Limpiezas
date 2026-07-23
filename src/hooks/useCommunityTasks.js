@@ -51,6 +51,10 @@ export default function useCommunityTasks({
     isGarage: false, // Indica si es una tarea de garaje
     printColor: "#ef4444", // Color para impresión: verde, amarillo o rojo
     isUrgent: false,
+    displayMode: "standalone",
+    hostTaskIds: [],
+    carryUntilCompleted: true,
+    finalFallback: "standalone",
   });
 
   const openCreateTaskModal = () => {
@@ -72,6 +76,10 @@ export default function useCommunityTasks({
       isGarage: false,
       printColor: "#ef4444",
       isUrgent: false,
+      displayMode: "standalone",
+      hostTaskIds: [],
+      carryUntilCompleted: true,
+      finalFallback: "standalone",
     });
     setShowTaskModal(true);
   };
@@ -116,6 +124,10 @@ export default function useCommunityTasks({
       isGarage: task.isGarage || false,
       printColor: task.printColor || "#ef4444",
       isUrgent: task.isUrgent || false,
+      displayMode: task.displayMode === "embedded" ? "embedded" : "standalone",
+      hostTaskIds: Array.isArray(task.hostTaskIds) ? task.hostTaskIds : [],
+      carryUntilCompleted: task.carryUntilCompleted !== false,
+      finalFallback: task.finalFallback || "standalone",
     });
     setShowTaskModal(true);
   };
@@ -133,6 +145,13 @@ export default function useCommunityTasks({
     if (e) e.preventDefault();
     if (!selectedCommunity) return;
     if (actionLoading) return;
+    const hostTaskIds = [
+      ...new Set((taskForm.hostTaskIds || []).filter(Boolean)),
+    ];
+    if (taskForm.displayMode === "embedded" && hostTaskIds.length === 0) {
+      alert("Selecciona al menos una tarjeta principal para esta tarea.");
+      return;
+    }
     setActionLoading(true);
 
     const taskData = {
@@ -160,6 +179,15 @@ export default function useCommunityTasks({
       isGarage: taskForm.isGarage || false,
       printColor: taskForm.printColor || "#ef4444",
       isUrgent: taskForm.isUrgent || false,
+      displayMode:
+        taskForm.displayMode === "embedded" ? "embedded" : "standalone",
+      hostTaskIds:
+        taskForm.displayMode === "embedded" ? hostTaskIds : [],
+      carryUntilCompleted:
+        taskForm.displayMode === "embedded"
+          ? taskForm.carryUntilCompleted !== false
+          : false,
+      finalFallback: "standalone",
     };
 
     try {

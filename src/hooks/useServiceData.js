@@ -25,6 +25,7 @@ import {
 import { getOperarios } from "../services/authService";
 import { getCommunityGuides } from "../services/documentVaultService";
 import { getActiveWorkday } from "../services/workdayService";
+import { findPresentationGroup } from "../utils/taskPresentation";
 
 export function useServiceData(serviceId, userProfile) {
   const { companyId } = useTenant();
@@ -109,64 +110,17 @@ export function useServiceData(serviceId, userProfile) {
               svcDate,
             );
 
-            const currentSpecificTask = commTasks.find(
-              (t) => t.id === svcData.communityTaskId,
+            const sameCommunity = allSvcsToday.filter(
+              (candidate) => candidate.communityId === svcData.communityId,
             );
-            const currentLowerName = (svcData.taskName || "").toLowerCase();
-            const currentPrintColor =
-              currentSpecificTask?.printColor ||
-              (currentLowerName.includes("escalera")
-                ? "#22c55e"
-                : currentLowerName.includes("portal") ||
-                    currentLowerName.includes("repaso")
-                  ? "#eab308"
-                  : currentLowerName.includes("oficina")
-                    ? "#3b82f6"
-                    : "#ef4444");
-            const currentIsGarage =
-              !!currentSpecificTask?.isGarage ||
-              currentLowerName.includes("garaje") ||
-              !!svcData.isGarage;
-            const currentIsOtras =
-              currentPrintColor === "#ef4444" && !currentIsGarage;
-
-            let filtered = [];
-            if (currentIsOtras) {
-              for (const s of allSvcsToday) {
-                if (s.communityId === svcData.communityId) {
-                  const specTask = commTasks.find(
-                    (t) => t.id === s.communityTaskId,
-                  );
-                  const lowerName = (s.taskName || "").toLowerCase();
-                  const printColor =
-                    specTask?.printColor ||
-                    (lowerName.includes("escalera")
-                      ? "#22c55e"
-                      : lowerName.includes("portal") ||
-                          lowerName.includes("repaso")
-                        ? "#eab308"
-                        : lowerName.includes("oficina")
-                          ? "#3b82f6"
-                          : "#ef4444");
-                  const isGarage =
-                    !!specTask?.isGarage ||
-                    lowerName.includes("garaje") ||
-                    !!s.isGarage;
-                  const isOtras = printColor === "#ef4444" && !isGarage;
-
-                  if (isOtras) {
-                    filtered.push(s);
-                  }
-                }
-              }
-            } else {
-              filtered = [svcData];
-            }
-
-            if (!filtered.some((s) => s.id === svcData.id)) {
-              filtered.push(svcData);
-            }
-            setGroupedServices(filtered);
+            const withCurrent = sameCommunity.some(
+              (candidate) => candidate.id === svcData.id,
+            )
+              ? sameCommunity
+              : [...sameCommunity, svcData];
+            setGroupedServices(
+              findPresentationGroup(withCurrent, svcData, commTasks),
+            );
           } catch (err) {
             console.warn(
               "[useServiceData] Error loading community/tasks/docs/grouped:",

@@ -55,6 +55,10 @@ export async function createScheduledService(companyId, data) {
     scheduledDate,
     flexibleWeek: data.flexibleWeek || false,
     isUrgent: data.isUrgent || false,
+    displayMode: data.displayMode === "embedded" ? "embedded" : "standalone",
+    hostTaskIds: Array.isArray(data.hostTaskIds) ? data.hostTaskIds : [],
+    carryUntilCompleted: data.carryUntilCompleted !== false,
+    finalFallback: data.finalFallback || "standalone",
     status: "pending",
     createdAt: serverTimestamp(),
   });
@@ -1004,6 +1008,35 @@ export async function generateServicesForRange(companyId, startDate, endDate) {
         return `${data.communityTaskId}_${data.assignedUserId}_${format(date, "yyyy-MM-dd")}`;
       }),
     );
+    const openCarrySnap = await getDocs(
+      query(
+        tenantCollection(db, companyId, "scheduledServices"),
+        where("status", "==", "pending"),
+      ),
+    );
+    const embeddedCarryTaskIds = new Set(
+      communityTasks
+        .filter(
+          (task) =>
+            task.displayMode === "embedded" &&
+            task.carryUntilCompleted !== false,
+        )
+        .map((task) => task.id),
+    );
+    const openCarryKeys = new Set(
+      openCarrySnap.docs
+        .map((document) => document.data())
+        .filter(
+          (service) =>
+            (service.displayMode === "embedded" ||
+              embeddedCarryTaskIds.has(service.communityTaskId)) &&
+            service.carryUntilCompleted !== false,
+        )
+        .map(
+          (service) =>
+            `${service.communityTaskId}_${service.assignedUserId}`,
+        ),
+    );
 
     // Also check for rescheduled services whose originalDate falls in this range.
     // These are services that were moved to a different day — we must NOT recreate them
@@ -1050,6 +1083,14 @@ export async function generateServicesForRange(companyId, startDate, endDate) {
         for (const target of targetUsers) {
           const key = `${task.id}_${target.userId}_${dayStr}`;
           if (existingKeys.has(key)) continue;
+          const carryKey = `${task.id}_${target.userId}`;
+          if (
+            task.displayMode === "embedded" &&
+            task.carryUntilCompleted !== false &&
+            openCarryKeys.has(carryKey)
+          ) {
+            continue;
+          }
 
           console.log(
             `[Schedule] Creando: ${task.taskName} (${dayStr}) -> ${target.userId}`,
@@ -1062,8 +1103,18 @@ export async function generateServicesForRange(companyId, startDate, endDate) {
             scheduledDate: startOfDay(day), // Use direct Date object instead of ISO string
             flexibleWeek: task.flexibleWeek || false,
             isUrgent: task.isUrgent || false,
+            displayMode: task.displayMode || "standalone",
+            hostTaskIds: task.hostTaskIds || [],
+            carryUntilCompleted: task.carryUntilCompleted !== false,
+            finalFallback: task.finalFallback || "standalone",
           });
           existingKeys.add(key);
+          if (
+            task.displayMode === "embedded" &&
+            task.carryUntilCompleted !== false
+          ) {
+            openCarryKeys.add(carryKey);
+          }
           created++;
         }
       }
@@ -1131,6 +1182,7 @@ export async function generateServicesForTask(
         return `${data.communityTaskId}_${data.assignedUserId}_${format(date, "yyyy-MM-dd")}`;
       }),
     );
+    const openCarryUsers = new Set();
 
     // Also check rescheduled services for this task whose originalDate falls in range.
     // Prevents recreating a service on the original date when it was moved.
@@ -1143,6 +1195,14 @@ export async function generateServicesForTask(
       );
       for (const d of rescheduledSnap.docs) {
         const data = d.data();
+        if (
+          data.status === "pending" &&
+          (task.displayMode === "embedded" ||
+            data.displayMode === "embedded") &&
+          (task.carryUntilCompleted ?? data.carryUntilCompleted ?? true)
+        ) {
+          openCarryUsers.add(data.assignedUserId);
+        }
         if (!data.originalDate) continue;
         const origDate = data.originalDate?.toDate
           ? data.originalDate.toDate()
@@ -1176,6 +1236,13 @@ export async function generateServicesForTask(
       for (const target of targetUsers) {
         const key = `${task.id}_${target.userId}_${dayStr}`;
         if (existingKeys.has(key)) continue;
+        if (
+          task.displayMode === "embedded" &&
+          task.carryUntilCompleted !== false &&
+          openCarryUsers.has(target.userId)
+        ) {
+          continue;
+        }
 
         await createScheduledService(companyId, {
           communityId: task.communityId,
@@ -1185,9 +1252,19 @@ export async function generateServicesForTask(
           scheduledDate: Timestamp.fromDate(startOfDay(day)),
           flexibleWeek: task.flexibleWeek || false,
           isUrgent: task.isUrgent || false,
+          displayMode: task.displayMode || "standalone",
+          hostTaskIds: task.hostTaskIds || [],
+          carryUntilCompleted: task.carryUntilCompleted !== false,
+          finalFallback: task.finalFallback || "standalone",
         });
         createdCount++;
         existingKeys.add(key); // key already includes task.id
+        if (
+          task.displayMode === "embedded" &&
+          task.carryUntilCompleted !== false
+        ) {
+          openCarryUsers.add(target.userId);
+        }
       }
     }
     return createdCount;

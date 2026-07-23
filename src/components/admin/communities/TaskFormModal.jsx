@@ -9,6 +9,7 @@ export default function TaskFormModal({
   setTaskForm,
   handleSaveTask,
   operarios,
+  communityTasks,
   WEEKDAYS,
   MONTHS,
   FREQ_LABELS,
@@ -124,6 +125,109 @@ export default function TaskFormModal({
                 </div>
               </label>
             </div>
+
+            <div className="form-group">
+              <label className="form-label">Cómo aparecerá en la app</label>
+              <div className="grid grid-2 gap-2">
+                <button
+                  type="button"
+                  className={`btn ${taskForm.displayMode !== "embedded" ? "btn-primary" : "btn-ghost"}`}
+                  onClick={() =>
+                    setTaskForm((f) => ({
+                      ...f,
+                      displayMode: "standalone",
+                      hostTaskIds: [],
+                    }))
+                  }
+                >
+                  Tarjeta propia
+                </button>
+                <button
+                  type="button"
+                  className={`btn ${taskForm.displayMode === "embedded" ? "btn-primary" : "btn-ghost"}`}
+                  onClick={() =>
+                    setTaskForm((f) => ({ ...f, displayMode: "embedded" }))
+                  }
+                >
+                  Dentro de otra tarjeta
+                </button>
+              </div>
+              <p className="text-xs text-muted mt-1">
+                Una tarea integrada se mostrará dentro de la primera tarjeta
+                disponible de la lista que definas.
+              </p>
+            </div>
+
+            {taskForm.displayMode === "embedded" && (
+              <div className="form-group p-4 bg-slate-50 rounded-xl border border-slate-200">
+                <label className="form-label">Orden de tarjetas anfitrionas</label>
+                {[0, 1, 2].map((position) => {
+                  const availableHosts = (communityTasks || []).filter(
+                    (task) =>
+                      task.id !== editingTask?.id &&
+                      task.displayMode !== "embedded",
+                  );
+                  return (
+                    <div key={position} className="mb-2">
+                      <label className="text-xs text-slate-500">
+                        {position === 0
+                          ? "Principal (obligatoria)"
+                          : position === 1
+                            ? "Secundaria (opcional)"
+                            : "Tercera (opcional)"}
+                      </label>
+                      <select
+                        className="form-select"
+                        value={taskForm.hostTaskIds?.[position] || ""}
+                        onChange={(e) =>
+                          setTaskForm((form) => {
+                            const hostTaskIds = [...(form.hostTaskIds || [])];
+                            hostTaskIds[position] = e.target.value;
+                            return {
+                              ...form,
+                              hostTaskIds: hostTaskIds.filter(Boolean),
+                            };
+                          })
+                        }
+                      >
+                        <option value="">— Sin seleccionar —</option>
+                        {availableHosts.map((task) => (
+                          <option
+                            key={task.id}
+                            value={task.id}
+                            disabled={(taskForm.hostTaskIds || []).some(
+                              (id, index) => id === task.id && index !== position,
+                            )}
+                          >
+                            {task.taskName}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })}
+                <label className="flex items-center gap-3 mt-3">
+                  <input
+                    type="checkbox"
+                    checked={taskForm.carryUntilCompleted !== false}
+                    onChange={(e) =>
+                      setTaskForm((f) => ({
+                        ...f,
+                        carryUntilCompleted: e.target.checked,
+                      }))
+                    }
+                  />
+                  <span className="text-sm">
+                    Si queda pendiente, pasarla a la siguiente tarjeta
+                  </span>
+                </label>
+                <p className="text-xs text-muted mt-2">
+                  No se crean copias. La misma tarea pasa de la principal a la
+                  secundaria y después a la tercera. Si no queda ninguna
+                  disponible, aparecerá como tarjeta propia hasta completarse.
+                </p>
+              </div>
+            )}
 
             <div className="form-group">
               <label

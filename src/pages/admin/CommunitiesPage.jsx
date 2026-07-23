@@ -423,6 +423,7 @@ function CommunitiesContent() {
         setTaskForm={setTaskForm}
         handleSaveTask={handleSaveTask}
         operarios={operarios}
+        communityTasks={communityTasks}
         WEEKDAYS={WEEKDAYS}
         MONTHS={MONTHS}
         FREQ_LABELS={FREQ_LABELS}

@@ -709,9 +709,11 @@ export function useCheckInFlow(
           sName.includes("portal") ||
           sName.includes("garaje") ||
           sName.includes("oficina");
+        const isEmbedded =
+          (specificTask?.displayMode || s.displayMode) === "embedded";
         const isDone = exec && exec.status === "completed";
 
-        if (!isDone && !isException) {
+        if (!isDone && (!isException || isEmbedded)) {
           pendingTasks.push(s.taskName || specificTask?.taskName || "Tarea");
         }
       }
@@ -921,8 +923,23 @@ export function useCheckInFlow(
             sName.includes("oficina");
           const isGarage = sName.includes("garaje");
 
-          if ((exec && exec.status === "completed") || isException) {
+          const presentation =
+            specificTask?.displayMode || s.displayMode || "standalone";
+          const shouldCarryInCards =
+            presentation === "embedded" &&
+            (specificTask?.carryUntilCompleted ??
+              s.carryUntilCompleted ??
+              true);
+
+          if (
+            (exec && exec.status === "completed") ||
+            (isException && presentation !== "embedded")
+          ) {
             await updateScheduledServiceStatus(companyId, s.id, "completed");
+          } else if (shouldCarryInCards) {
+            // Se conserva la misma instancia pendiente. Al recargar, la
+            // agrupación la sitúa en la siguiente tarjeta configurada.
+            await updateScheduledServiceStatus(companyId, s.id, "pending");
           } else {
             await passTaskToNextService(companyId, s, isGarage);
           }
