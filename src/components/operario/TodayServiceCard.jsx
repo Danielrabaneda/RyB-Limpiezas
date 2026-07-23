@@ -4,7 +4,6 @@ import { getDistance } from "../../utils/geolocation";
 
 export default function TodayServiceCard({
   svc,
-  index,
   routeOptimized,
   activeWorkday,
   userLocation,
@@ -39,6 +38,7 @@ export default function TodayServiceCard({
       case "completed":
         return <span className="badge badge-success">✅ Completado</span>;
       case "in_progress":
+      case "started":
         return <span className="badge badge-info">🔄 En curso</span>;
       case "missed":
         return <span className="badge badge-danger">❌ No realizado</span>;
@@ -74,7 +74,7 @@ export default function TodayServiceCard({
               flexWrap: "wrap",
             }}
           >
-            {routeOptimized && (
+            {routeOptimized && Number.isInteger(svc.routePosition) && (
               <span
                 style={{
                   fontSize: "10px",
@@ -85,10 +85,25 @@ export default function TodayServiceCard({
                   fontWeight: "bold",
                 }}
               >
-                #{index + 1}
+                #{svc.routePosition}
               </span>
             )}
             {svc.community?.name || "Comunidad"}
+            {svc.routeWarning && (
+              <span
+                style={{
+                  fontSize: "10px",
+                  background: "#fff7ed",
+                  color: "#c2410c",
+                  padding: "2px 6px",
+                  borderRadius: "12px",
+                  border: "1px solid currentColor",
+                  fontWeight: "bold",
+                }}
+              >
+                ⚠️ {svc.routeWarning}
+              </span>
+            )}
             {svc.community?.preferredTime && (
               <span
                 style={{

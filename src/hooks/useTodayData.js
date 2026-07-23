@@ -11,7 +11,10 @@ import {
   getWorkdaysSummaryForDate,
   findLastActivityForUser,
 } from "../services/workdayService";
-import { optimizeRoute } from "../services/routeOptimizerService";
+import {
+  getValidCoordinates,
+  optimizeRoutePlan,
+} from "../services/routeOptimizerService";
 import { format, isSameDay } from "date-fns";
 import { getCurrentLocation, getDistance } from "../utils/geolocation";
 
@@ -251,9 +254,10 @@ export function useTodayData(userProfile) {
 
       if (checkIn && checkIn.communityId) {
         const comm = communityCache[checkIn.communityId];
-        if (comm && comm.location) {
-          startLat = comm.location._lat || comm.location.latitude || null;
-          startLng = comm.location._long || comm.location.longitude || null;
+        const coordinates = getValidCoordinates(comm?.location);
+        if (coordinates) {
+          startLat = coordinates.lat;
+          startLng = coordinates.lng;
         }
       }
 
@@ -261,42 +265,25 @@ export function useTodayData(userProfile) {
         const activeSvc = enriched.find(
           (s) => s.status === "in_progress" || s.status === "started",
         );
-        if (activeSvc && activeSvc.community?.location) {
-          const loc = activeSvc.community.location;
-          startLat = loc._lat || loc.latitude || null;
-          startLng = loc._long || loc.longitude || null;
-        }
-      }
-
-      if (!startLat || !startLng) {
-        const completedSvcs = enriched.filter((s) => s.status === "completed");
-        if (completedSvcs.length > 0) {
-          completedSvcs.sort((a, b) => {
-            const tA = a.updatedAt?.toDate
-              ? a.updatedAt.toDate().getTime()
-              : a.updatedAt
-                ? new Date(a.updatedAt).getTime()
-                : 0;
-            const tB = b.updatedAt?.toDate
-              ? b.updatedAt.toDate().getTime()
-              : b.updatedAt
-                ? new Date(b.updatedAt).getTime()
-                : 0;
-            return tA - tB;
-          });
-          const lastCompleted = completedSvcs[completedSvcs.length - 1];
-          if (lastCompleted.community?.location) {
-            const loc = lastCompleted.community.location;
-            startLat = loc._lat || loc.latitude || null;
-            startLng = loc._long || loc.longitude || null;
-          }
+        const coordinates = getValidCoordinates(
+          activeSvc?.community?.location,
+        );
+        if (coordinates) {
+          startLat = coordinates.lat;
+          startLng = coordinates.lng;
         }
       }
 
       if (!startLat || !startLng) {
         try {
           const currentPos = await getCurrentLocation();
-          if (currentPos) {
+          if (
+            currentPos &&
+            getValidCoordinates({
+              latitude: currentPos.lat,
+              longitude: currentPos.lng,
+            })
+          ) {
             startLat = currentPos.lat;
             startLng = currentPos.lng;
           }
@@ -306,21 +293,33 @@ export function useTodayData(userProfile) {
       }
 
       if (!startLat || !startLng) {
-        const firstWithLocation = enriched.find((s) => s.community?.location);
-        if (firstWithLocation) {
-          const loc = firstWithLocation.community.location;
-          startLat = loc._lat || loc.latitude || null;
-          startLng = loc._long || loc.longitude || null;
+        const completedSvcs = enriched
+          .filter((s) => s.status === "completed")
+          .sort((a, b) => {
+            const toMillis = (value) =>
+              value?.toDate
+                ? value.toDate().getTime()
+                : value
+                  ? new Date(value).getTime()
+                  : 0;
+            return toMillis(a.updatedAt) - toMillis(b.updatedAt);
+          });
+        const lastCompleted = completedSvcs[completedSvcs.length - 1];
+        const coordinates = getValidCoordinates(
+          lastCompleted?.community?.location,
+        );
+        if (coordinates) {
+          startLat = coordinates.lat;
+          startLng = coordinates.lng;
         }
       }
 
-      if (startLat && startLng) {
-        try {
-          optimized = optimizeRoute(enriched, startLat, startLng);
-          isRouteOptimized = true;
-        } catch (optimizeErr) {
-          console.error("Error optimizing route:", optimizeErr);
-        }
+      try {
+        const routePlan = optimizeRoutePlan(enriched, startLat, startLng);
+        optimized = routePlan.services;
+        isRouteOptimized = routePlan.optimized;
+      } catch (optimizeErr) {
+        console.error("Error optimizing route:", optimizeErr);
       }
 
       const grouped = [];
