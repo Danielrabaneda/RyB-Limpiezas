@@ -10,38 +10,107 @@ const features = [
   {
     icon: "⏱️",
     title: "Control Horario & GPS",
-    desc: "Fichaje geolocalizado en tiempo real. Registro automático de inicio y fin de jornada con cálculo de kilometraje.",
+    desc: "Fichaje geolocalizado en tiempo real. Registro automático de inicio y fin de jornada con ubicación exacta y cálculo de horas trabajadas.",
     color: "#2563eb",
   },
   {
     icon: "📸",
     title: "Evidencias Fotográficas",
-    desc: "Certifica cada servicio con fotos del antes y después. Marca de agua con GPS y hora para garantizar la veracidad.",
+    desc: "Certifica cada servicio con fotos del antes y después. Marca de agua con GPS, fecha y hora para garantizar la veracidad al 100%.",
     color: "#7c3aed",
   },
   {
     icon: "📋",
     title: "Tareas Inteligentes",
-    desc: "Crea plantillas de tareas por comunidad o portal. Automatiza asignaciones diarias y ahorra horas de planificación.",
+    desc: "Crea plantillas de tareas por comunidad o portal. Automatiza asignaciones diarias, semanales o mensuales y ahorra horas de planificación.",
     color: "#0891b2",
   },
   {
     icon: "🚗",
     title: "Registro de Kilometraje",
-    desc: "Control exacto de desplazamientos. Reportes mensuales validados listos para compensación de gastos.",
+    desc: "Control exacto de todos los desplazamientos. Reportes mensuales validados listos para compensación de gastos y deducción fiscal.",
     color: "#059669",
   },
   {
     icon: "📦",
-    title: "Gestión de Materiales",
-    desc: "Solicitudes de consumibles desde el móvil del operario. Inventario centralizado con alertas de stock mínimo.",
+    title: "Inventario & Materiales",
+    desc: "Solicitudes de consumibles desde el móvil del operario. Inventario centralizado con alertas de stock mínimo y trazabilidad completa.",
     color: "#d97706",
   },
   {
     icon: "🔄",
     title: "Traspasos al Instante",
-    desc: "Reasigna servicios en segundos cuando un operario no puede acudir. Sin llamadas, sin caos.",
+    desc: "Reasigna servicios en segundos cuando un operario no puede acudir. Histórico completo de todos los cambios realizados.",
     color: "#dc2626",
+  },
+  {
+    icon: "📊",
+    title: "Dashboard en Tiempo Real",
+    desc: "Panel de control con visión global de la actividad diaria: operarios activos, servicios completados, incidencias y rendimiento.",
+    color: "#6366f1",
+  },
+  {
+    icon: "🗓️",
+    title: "Calendario de Planificación",
+    desc: "Planifica rutas y asignaciones de servicios con vista semanal y mensual. Drag & drop para reorganizar al instante.",
+    color: "#14b8a6",
+  },
+  {
+    icon: "🧾",
+    title: "Facturación Integrada",
+    desc: "Genera facturas profesionales directamente desde los servicios realizados. Compatible con requisitos Verifactu y exportación PDF.",
+    color: "#f43f5e",
+  },
+  {
+    icon: "📱",
+    title: "App Móvil PWA",
+    desc: "Tus operarios acceden desde cualquier móvil sin descargar nada de la tienda. Funciona offline y envía notificaciones push.",
+    color: "#8b5cf6",
+  },
+  {
+    icon: "🏘️",
+    title: "Gestión de Comunidades",
+    desc: "Organiza clientes por comunidades con portales de acceso exclusivo. Cada cliente puede ver las evidencias de su servicio.",
+    color: "#0ea5e9",
+  },
+  {
+    icon: "📅",
+    title: "Gestión de Ausencias",
+    desc: "Control completo de vacaciones, bajas y permisos. Los operarios solicitan desde la app y el admin aprueba con un clic.",
+    color: "#f59e0b",
+  },
+];
+
+const advancedFeatures = [
+  {
+    icon: "🔔",
+    title: "Notificaciones Push",
+    desc: "Alertas instantáneas para asignaciones, cambios de ruta o incidencias. Sin depender de mensajes de WhatsApp.",
+  },
+  {
+    icon: "📄",
+    title: "Informes y Reportes",
+    desc: "Exportación a PDF y Excel de control horario, kilometraje, evidencias y facturación con un solo clic.",
+  },
+  {
+    icon: "🗺️",
+    title: "Optimización de Rutas",
+    desc: "Algoritmo inteligente que ordena los servicios del día por proximidad para reducir desplazamientos innecesarios.",
+  },
+  {
+    icon: "🔐",
+    title: "Multi-Tenant Seguro",
+    desc: "Cada empresa opera en su espacio aislado con datos 100% privados. Reglas de seguridad a nivel de base de datos.",
+  },
+  {
+    icon: "👥",
+    title: "Portal del Cliente",
+    desc: "Tus clientes acceden a un portal exclusivo para ver evidencias fotográficas, informes y el estado de cada servicio.",
+  },
+  {
+    icon: "📑",
+    title: "Bóveda de Documentos",
+    desc: "Almacenamiento seguro de certificados, contratos y documentación legal asociada a cada comunidad.",
   },
 ];
 
@@ -50,6 +119,8 @@ const stats = [
   { value: "98%", label: "Servicios certificados" },
   { value: "4h", label: "Ahorro semanal por admin" },
   { value: "0€", label: "Coste de setup" },
+  { value: "24/7", label: "Disponibilidad del sistema" },
+  { value: "100%", label: "Datos en la nube" },
 ];
 
 const testimonials = [
@@ -74,6 +145,13 @@ const testimonials = [
     role: "Gerente",
     company: "Multiservicio Martínez",
   },
+  {
+    quote:
+      "El control de kilometraje y la facturación integrada nos han ahorrado un día entero cada mes en administración.",
+    author: "Laura S.",
+    role: "Administradora",
+    company: "Limpiezas del Sur",
+  },
 ];
 
 const pricingPlans = [
@@ -86,7 +164,8 @@ const pricingPlans = [
       "Hasta 5 operarios",
       "Hasta 50 comunidades",
       "Control horario con GPS",
-      "Administradores sin límite",
+      "Evidencias fotográficas",
+      "App móvil PWA",
       "Soporte por email",
     ],
     featured: false,
@@ -100,9 +179,10 @@ const pricingPlans = [
     features: [
       "Hasta 10 operarios",
       "Hasta 100 comunidades",
-      "Administradores sin límite",
-      "Evidencias fotográficas",
+      "Todo lo de Autónomo",
       "Control de kilometraje",
+      "Gestión de ausencias",
+      "Notificaciones push",
     ],
     featured: true,
     cta: "Empezar Ahora",
@@ -115,9 +195,10 @@ const pricingPlans = [
     features: [
       "Hasta 30 operarios",
       "Hasta 300 comunidades",
-      "Administradores sin límite",
+      "Todo lo de Starter",
       "Traspasos en tiempo real",
-      "Gestión de materiales",
+      "Gestión de materiales e inventario",
+      "Calendario de planificación",
     ],
     featured: false,
     cta: "Solicitar Acceso",
@@ -130,9 +211,10 @@ const pricingPlans = [
     features: [
       "Hasta 100 operarios",
       "Hasta 1.000 comunidades",
-      "Administradores sin límite",
-      "Todas las funcionalidades",
-      "Soporte prioritario",
+      "Todo lo de Profesional",
+      "Facturación con Verifactu",
+      "Portal del cliente",
+      "Informes avanzados",
     ],
     featured: false,
     cta: "Solicitar Acceso",
@@ -144,6 +226,7 @@ const pricingPlans = [
     desc: "Para grandes corporaciones.",
     features: [
       "Operarios ilimitados",
+      "Comunidades ilimitadas",
       "API personalizada",
       "White-label con tu logo",
       "Servidor cloud dedicado",
@@ -252,14 +335,19 @@ function RequestModal({ isOpen, onClose, defaultPlan = "" }) {
             <p
               style={{
                 color: "#94a3b8",
-                marginBottom: "24px",
+                fontSize: "0.95rem",
                 lineHeight: 1.6,
+                marginBottom: "24px",
               }}
             >
-              Nos pondremos en contacto contigo en menos de 24 horas para
+              Nos pondremos en contacto contigo en las próximas 24 horas para
               configurar tu cuenta.
             </p>
-            <button onClick={onClose} className="btn btn-primary btn-lg w-full">
+            <button
+              onClick={onClose}
+              className="btn-hero-primary"
+              style={{ padding: "12px 28px", fontSize: "0.95rem" }}
+            >
               Cerrar
             </button>
           </div>
@@ -269,164 +357,123 @@ function RequestModal({ isOpen, onClose, defaultPlan = "" }) {
               style={{
                 display: "flex",
                 justifyContent: "space-between",
-                alignItems: "flex-start",
+                alignItems: "center",
                 marginBottom: "24px",
               }}
             >
-              <div>
-                <h2
-                  style={{
-                    color: "white",
-                    fontSize: "1.4rem",
-                    fontWeight: 800,
-                    marginBottom: "4px",
-                  }}
-                >
-                  Solicitar Acceso a LimpiaGest
-                </h2>
-                <p style={{ color: "#94a3b8", fontSize: "0.85rem" }}>
-                  Te contactamos en menos de 24 horas para configurar tu
-                  empresa.
-                </p>
-              </div>
+              <h2
+                style={{
+                  color: "white",
+                  fontSize: "1.3rem",
+                  fontWeight: 800,
+                }}
+              >
+                Solicitar Acceso a LimpiaGest
+              </h2>
               <button
                 onClick={onClose}
                 style={{
-                  background: "rgba(255,255,255,0.05)",
-                  border: "none",
+                  background: "rgba(255,255,255,0.06)",
+                  border: "1px solid rgba(255,255,255,0.1)",
                   color: "#94a3b8",
+                  width: "36px",
+                  height: "36px",
+                  borderRadius: "10px",
                   cursor: "pointer",
-                  borderRadius: "8px",
-                  padding: "6px 10px",
-                  fontSize: "1rem",
+                  fontSize: "1.1rem",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                 }}
               >
                 ✕
               </button>
             </div>
 
-            {status === "error" && (
-              <div
-                style={{
-                  background: "rgba(220,38,38,0.1)",
-                  border: "1px solid rgba(220,38,38,0.3)",
-                  borderRadius: "10px",
-                  padding: "12px",
-                  marginBottom: "16px",
-                  color: "#fca5a5",
-                  fontSize: "0.85rem",
-                }}
-              >
-                {errorMsg}
-              </div>
-            )}
-
             <form
               onSubmit={handleSubmit}
               style={{ display: "flex", flexDirection: "column", gap: "14px" }}
             >
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: "14px",
-                }}
-              >
-                <div className="form-group" style={{ margin: 0 }}>
+              <div className="form-row" style={{ display: "flex", gap: "12px" }}>
+                <div className="form-group" style={{ flex: 1, margin: 0 }}>
                   <label className="form-label">Empresa *</label>
                   <input
-                    name="companyName"
                     className="form-input"
-                    placeholder="Limpiezas García SL"
+                    name="companyName"
                     value={form.companyName}
                     onChange={handleChange}
                     required
+                    placeholder="Tu empresa"
                   />
                 </div>
-                <div className="form-group" style={{ margin: 0 }}>
-                  <label className="form-label">Contacto *</label>
+                <div className="form-group" style={{ flex: 1, margin: 0 }}>
+                  <label className="form-label">Nombre de contacto *</label>
                   <input
-                    name="contactName"
                     className="form-input"
-                    placeholder="Manuel García"
+                    name="contactName"
                     value={form.contactName}
                     onChange={handleChange}
                     required
+                    placeholder="Tu nombre"
                   />
                 </div>
               </div>
 
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: "14px",
-                }}
-              >
-                <div className="form-group" style={{ margin: 0 }}>
+              <div className="form-row" style={{ display: "flex", gap: "12px" }}>
+                <div className="form-group" style={{ flex: 1, margin: 0 }}>
                   <label className="form-label">Email *</label>
                   <input
-                    name="email"
-                    type="email"
                     className="form-input"
-                    placeholder="tu@empresa.com"
+                    type="email"
+                    name="email"
                     value={form.email}
                     onChange={handleChange}
                     required
+                    placeholder="email@empresa.com"
                   />
                 </div>
-                <div className="form-group" style={{ margin: 0 }}>
+                <div className="form-group" style={{ flex: 1, margin: 0 }}>
                   <label className="form-label">Teléfono</label>
                   <input
-                    name="phone"
-                    type="tel"
                     className="form-input"
-                    placeholder="666 123 456"
+                    type="tel"
+                    name="phone"
                     value={form.phone}
                     onChange={handleChange}
+                    placeholder="600 000 000"
                   />
                 </div>
               </div>
 
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: "14px",
-                }}
-              >
-                <div className="form-group" style={{ margin: 0 }}>
+              <div className="form-row" style={{ display: "flex", gap: "12px" }}>
+                <div className="form-group" style={{ flex: 1, margin: 0 }}>
                   <label className="form-label">Nº de operarios</label>
-                  <select
-                    name="operariosCount"
+                  <input
                     className="form-input"
+                    type="number"
+                    name="operariosCount"
                     value={form.operariosCount}
                     onChange={handleChange}
-                  >
-                    <option value="">Seleccionar...</option>
-                    <option value="1-5">1 – 5</option>
-                    <option value="6-10">6 – 10</option>
-                    <option value="11-25">11 – 25</option>
-                    <option value="26-50">26 – 50</option>
-                    <option value="50+">Más de 50</option>
-                  </select>
+                    placeholder="10"
+                    min="1"
+                  />
                 </div>
-                <div className="form-group" style={{ margin: 0 }}>
+                <div className="form-group" style={{ flex: 1, margin: 0 }}>
                   <label className="form-label">Plan de interés</label>
                   <select
-                    name="plan"
                     className="form-input"
+                    name="plan"
                     value={form.plan}
                     onChange={handleChange}
                   >
                     <option value="">Seleccionar...</option>
-                    <option value="autonomo">Autónomo — 19€/mes</option>
-                    <option value="starter">Starter — 39€/mes</option>
-                    <option value="professional">Profesional — 79€/mes</option>
-                    <option value="business">Empresa — 149€/mes</option>
-                    <option value="enterprise">
-                      Enterprise — Personalizado
+                    <option value="autonomo">Autónomo (19€/mes)</option>
+                    <option value="starter">Starter (39€/mes)</option>
+                    <option value="professional">
+                      Profesional (79€/mes)
                     </option>
+                    <option value="business">Empresa (149€/mes)</option>
+                    <option value="enterprise">Enterprise (a medida)</option>
                   </select>
                 </div>
               </div>
@@ -434,66 +481,66 @@ function RequestModal({ isOpen, onClose, defaultPlan = "" }) {
               <div className="form-group" style={{ margin: 0 }}>
                 <label className="form-label">Mensaje (opcional)</label>
                 <textarea
-                  name="message"
                   className="form-input"
-                  placeholder="Cuéntanos brevemente tu situación actual..."
+                  name="message"
                   value={form.message}
                   onChange={handleChange}
-                  rows={3}
-                  style={{ resize: "vertical", minHeight: "80px" }}
+                  rows="3"
+                  placeholder="Cuéntanos sobre tu empresa y necesidades..."
                 />
               </div>
 
-              {/* GDPR Compliance Layer 1 */}
+              {errorMsg && (
+                <p style={{ color: "#f87171", fontSize: "0.85rem" }}>
+                  {errorMsg}
+                </p>
+              )}
+
+              {/* GDPR Layer 1 */}
               <div className="gdpr-info-table-container">
                 <table className="gdpr-info-table">
                   <tbody>
                     <tr>
-                      <td className="gdpr-info-label">Responsable:</td>
+                      <td className="gdpr-info-label">Responsable</td>
                       <td className="gdpr-info-value">
-                        Daniel Rabaneda / RyB Limpiezas
+                        Limpiezas Rayba S.L.
                       </td>
                     </tr>
                     <tr>
-                      <td className="gdpr-info-label">Finalidad:</td>
+                      <td className="gdpr-info-label">Finalidad</td>
                       <td className="gdpr-info-value">
-                        Gestionar su solicitud de demostración del software y
-                        contacto comercial.
+                        Atender tu solicitud de demo y ofrecerte acceso a
+                        LimpiaGest.
                       </td>
                     </tr>
                     <tr>
-                      <td className="gdpr-info-label">Legitimación:</td>
+                      <td className="gdpr-info-label">Legitimación</td>
                       <td className="gdpr-info-value">
-                        Consentimiento del interesado al enviar el formulario.
+                        Consentimiento del interesado.
                       </td>
                     </tr>
                     <tr>
-                      <td className="gdpr-info-label">Destinatarios:</td>
+                      <td className="gdpr-info-label">Destinatarios</td>
                       <td className="gdpr-info-value">
-                        No se cederán datos a terceros salvo obligación legal o
-                        proveedores tecnológicos autorizados.
+                        No se cederán datos a terceros.
                       </td>
                     </tr>
                     <tr>
-                      <td className="gdpr-info-label">Derechos:</td>
+                      <td className="gdpr-info-label">Derechos</td>
                       <td className="gdpr-info-value">
-                        Acceso, rectificación, supresión y otros detallados en
-                        la Info Adicional.
+                        Acceso, rectificación, supresión y portabilidad.
                       </td>
                     </tr>
                   </tbody>
                 </table>
                 <div className="gdpr-info-link-container">
-                  Información Adicional: Puedes consultar la información
-                  detallada en nuestra{" "}
                   <Link
                     to="/politica-de-privacidad"
                     target="_blank"
                     rel="noopener noreferrer"
                   >
-                    Política de Privacidad
+                    Ver Política de Privacidad completa →
                   </Link>
-                  .
                 </div>
               </div>
 
@@ -590,6 +637,7 @@ export default function LandingPage() {
         .orb-1 { width: 600px; height: 600px; background: #2563eb; top: -200px; left: -200px; animation-delay: 0s; }
         .orb-2 { width: 400px; height: 400px; background: #7c3aed; top: 30%; right: -100px; animation-delay: -3s; }
         .orb-3 { width: 350px; height: 350px; background: #0891b2; bottom: 10%; left: 20%; animation-delay: -5s; }
+        .orb-4 { width: 300px; height: 300px; background: #059669; bottom: -100px; right: 30%; animation-delay: -7s; }
         @keyframes orbFloat {
           0%, 100% { transform: translate(0, 0) scale(1); }
           50% { transform: translate(30px, -30px) scale(1.05); }
@@ -617,6 +665,13 @@ export default function LandingPage() {
           font-size: 1.2rem; box-shadow: 0 0 20px rgba(37,99,235,0.4);
         }
         .lp-logo-name { font-size: 1.15rem; font-weight: 800; color: white; }
+        .lp-nav-links { display: flex; gap: 24px; align-items: center; }
+        .lp-nav-links a {
+          color: #94a3b8; font-size: 0.875rem; font-weight: 500;
+          text-decoration: none; transition: color 0.2s;
+        }
+        .lp-nav-links a:hover { color: white; }
+        @media (max-width: 768px) { .lp-nav-links { display: none; } }
         .lp-nav-actions { display: flex; gap: 10px; align-items: center; }
 
         /* ── HERO ── */
@@ -692,19 +747,20 @@ export default function LandingPage() {
 
         /* ── STATS ── */
         .lp-stats {
-          display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px;
+          display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px;
           background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06);
           border-radius: 16px; overflow: hidden; margin: 0 0 80px;
         }
-        @media (max-width: 640px) { .lp-stats { grid-template-columns: repeat(2,1fr); } }
+        @media (max-width: 900px) { .lp-stats { grid-template-columns: repeat(3,1fr); } }
+        @media (max-width: 580px) { .lp-stats { grid-template-columns: repeat(2,1fr); } }
         .stat-item {
-          padding: 28px 24px; text-align: center;
+          padding: 28px 16px; text-align: center;
           background: rgba(6,11,24,0.6);
           transition: background 0.2s;
         }
         .stat-item:hover { background: rgba(37,99,235,0.08); }
-        .stat-value { font-size: 2.2rem; font-weight: 900; color: white; letter-spacing: -0.03em; }
-        .stat-label { font-size: 0.8rem; color: #64748b; margin-top: 4px; font-weight: 500; }
+        .stat-value { font-size: 2rem; font-weight: 900; color: white; letter-spacing: -0.03em; }
+        .stat-label { font-size: 0.75rem; color: #64748b; margin-top: 4px; font-weight: 500; }
 
         /* ── SECTION ── */
         .lp-section { margin-bottom: 90px; }
@@ -743,38 +799,82 @@ export default function LandingPage() {
         .feature-card h3 { font-size: 1rem; font-weight: 700; color: white; margin-bottom: 8px; }
         .feature-card p { font-size: 0.875rem; color: #64748b; line-height: 1.65; }
 
+        /* ── ADVANCED FEATURES ── */
+        .adv-grid {
+          display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+        }
+        @media (max-width: 900px) { .adv-grid { grid-template-columns: repeat(2,1fr); } }
+        @media (max-width: 580px) { .adv-grid { grid-template-columns: 1fr; } }
+        .adv-item {
+          display: flex; gap: 14px; align-items: flex-start;
+          padding: 20px; border-radius: 14px;
+          background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06);
+          transition: all 0.25s;
+        }
+        .adv-item:hover {
+          background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.1);
+        }
+        .adv-icon {
+          font-size: 1.5rem; flex-shrink: 0; width: 40px; height: 40px;
+          display: flex; align-items: center; justify-content: center;
+          background: rgba(37,99,235,0.1); border-radius: 10px;
+        }
+        .adv-item h4 { font-size: 0.9rem; font-weight: 700; color: white; margin-bottom: 4px; }
+        .adv-item p { font-size: 0.8rem; color: #64748b; line-height: 1.55; }
+
+        /* ── SOLUTION COMPARISON ── */
+        .comparison-grid {
+          display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
+          margin-top: 40px;
+        }
+        @media (max-width: 640px) { .comparison-grid { grid-template-columns: 1fr; } }
+        .comparison-card {
+          padding: 28px; border-radius: 16px;
+        }
+        .comparison-card.before {
+          background: rgba(239,68,68,0.06); border: 1px solid rgba(239,68,68,0.15);
+        }
+        .comparison-card.after {
+          background: rgba(16,185,129,0.06); border: 1px solid rgba(16,185,129,0.2);
+        }
+        .comparison-card h3 {
+          font-size: 1.05rem; font-weight: 800; margin-bottom: 16px;
+        }
+        .comparison-card.before h3 { color: #f87171; }
+        .comparison-card.after h3 { color: #34d399; }
+        .comparison-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; }
+        .comparison-list li {
+          display: flex; align-items: flex-start; gap: 10px;
+          font-size: 0.875rem; color: #cbd5e1; line-height: 1.5;
+        }
+        .comparison-list .icon { flex-shrink: 0; font-size: 1rem; }
+
         /* ── HOW IT WORKS ── */
         .steps-grid {
-          display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px;
+          display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px;
           position: relative;
         }
-        @media (max-width: 720px) { .steps-grid { grid-template-columns: 1fr; } }
-        .steps-grid::before {
-          content: ''; position: absolute; top: 28px; left: calc(16.6% + 20px); right: calc(16.6% + 20px);
-          height: 2px; background: linear-gradient(90deg, #2563eb, #06b6d4);
-          opacity: 0.3;
-        }
-        @media (max-width: 720px) { .steps-grid::before { display: none; } }
+        @media (max-width: 800px) { .steps-grid { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 480px) { .steps-grid { grid-template-columns: 1fr; } }
         .step-card {
           background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06);
-          border-radius: 16px; padding: 28px 24px; text-align: center;
+          border-radius: 16px; padding: 28px 20px; text-align: center;
         }
         .step-number {
-          width: 56px; height: 56px; border-radius: 50%;
+          width: 52px; height: 52px; border-radius: 50%;
           background: linear-gradient(135deg, #2563eb, #06b6d4);
           display: flex; align-items: center; justify-content: center;
-          font-size: 1.3rem; font-weight: 900; color: white;
-          margin: 0 auto 20px; box-shadow: 0 0 20px rgba(37,99,235,0.4);
+          font-size: 1.2rem; font-weight: 900; color: white;
+          margin: 0 auto 18px; box-shadow: 0 0 20px rgba(37,99,235,0.4);
         }
-        .step-card h3 { font-size: 1rem; font-weight: 700; color: white; margin-bottom: 8px; }
-        .step-card p { font-size: 0.875rem; color: #64748b; line-height: 1.6; }
+        .step-card h3 { font-size: 0.95rem; font-weight: 700; color: white; margin-bottom: 8px; }
+        .step-card p { font-size: 0.8rem; color: #64748b; line-height: 1.6; }
 
         /* ── TESTIMONIALS ── */
         .testimonials-grid {
-          display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+          display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px;
         }
-        @media (max-width: 900px) { .testimonials-grid { grid-template-columns: repeat(2,1fr); } }
-        @media (max-width: 580px) { .testimonials-grid { grid-template-columns: 1fr; } }
+        @media (max-width: 640px) { .testimonials-grid { grid-template-columns: 1fr; } }
         .testimonial-card {
           background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06);
           border-radius: 16px; padding: 24px;
@@ -868,15 +968,15 @@ export default function LandingPage() {
           border-bottom: 1px solid rgba(255,255,255,0.05);
         }
         .cta-bottom-title { font-size: clamp(1.8rem, 4vw, 2.8rem); font-weight: 900; color: white; margin-bottom: 14px; letter-spacing: -0.03em; }
-        .cta-bottom-sub { font-size: 1rem; color: #64748b; margin-bottom: 36px; }
+        .cta-bottom-sub { font-size: 1rem; color: #64748b; margin-bottom: 36px; max-width: 600px; margin-left: auto; margin-right: auto; }
 
         /* ── FOOTER ── */
         .lp-footer {
-          padding: 32px 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: gap;
+          padding: 32px 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
           gap: 16px;
         }
         .lp-footer-copy { font-size: 0.8rem; color: #475569; }
-        .lp-footer-links { display: flex; gap: 20px; }
+        .lp-footer-links { display: flex; gap: 20px; flex-wrap: wrap; }
         .lp-footer-links a { font-size: 0.8rem; color: #475569; text-decoration: none; transition: color 0.2s; }
         .lp-footer-links a:hover { color: #94a3b8; }
 
@@ -890,6 +990,7 @@ export default function LandingPage() {
           <div className="orb orb-1" />
           <div className="orb orb-2" />
           <div className="orb orb-3" />
+          <div className="orb orb-4" />
         </div>
 
         {/* ── NAV ── */}
@@ -899,6 +1000,12 @@ export default function LandingPage() {
               <div className="lp-logo-icon">🧹</div>
               <span className="lp-logo-name">LimpiaGest</span>
             </a>
+            <div className="lp-nav-links">
+              <a href="#funcionalidades">Funcionalidades</a>
+              <a href="#como-funciona">Cómo funciona</a>
+              <a href="#pricing">Precios</a>
+              <a href="#testimonios">Clientes</a>
+            </div>
             <div className="lp-nav-actions">
               <button
                 onClick={() => openModal()}
@@ -945,20 +1052,19 @@ export default function LandingPage() {
             <div>
               <div className="hero-badge">
                 <span className="hero-badge-dot" />
-                Nuevo: Fichajes PWA con GPS en tiempo real
+                Software de gestión integral para empresas de limpieza
               </div>
               <h1 className="hero-title">
-                El software para{" "}
+                Gestiona tu empresa de limpieza{" "}
                 <span className="hero-title-gradient">
-                  empresas de limpieza
-                </span>{" "}
-                definitivo.
+                  de forma inteligente.
+                </span>
               </h1>
               <p className="hero-subtitle">
-                LimpiaGest es el software SaaS todo en uno diseñado para
-                empresas de limpieza. Controla operarios, automatiza tareas,
-                certifica trabajos con evidencias fotográficas y optimiza tus
-                costes.
+                LimpiaGest es la plataforma SaaS todo en uno diseñada para
+                empresas de limpieza. Control horario con GPS, evidencias
+                fotográficas, facturación, gestión de comunidades, inventario,
+                planificación de rutas y mucho más — todo desde una sola app.
               </p>
               <div className="hero-ctas">
                 <button
@@ -977,7 +1083,7 @@ export default function LandingPage() {
             <div className="hero-mockups">
               <img
                 src="/images/og-image.png"
-                alt="LimpiaGest - Panel de gestión de RyB Limpiezas y aplicación móvil para operarios"
+                alt="LimpiaGest - Software de gestión para empresas de limpieza con panel de administración y app móvil para operarios"
                 className="hero-mockup-img"
               />
             </div>
@@ -994,16 +1100,17 @@ export default function LandingPage() {
           </div>
 
           {/* ── FEATURES ── */}
-          <section className="lp-section">
-            <div className="lp-section-label">Funcionalidades</div>
+          <section className="lp-section" id="funcionalidades">
+            <div className="lp-section-label">Funcionalidades Principales</div>
             <h2 className="lp-section-title">
-              Todo lo que necesita tu empresa,
+              Todo lo que necesita tu empresa de limpieza,
               <br />
-              en una sola app.
+              en una sola plataforma.
             </h2>
             <p className="lp-section-sub">
-              Diseñado específicamente para el sector de la limpieza. Sin
-              funciones innecesarias, sin curva de aprendizaje.
+              Diseñado específicamente para el sector de la limpieza profesional.
+              12 módulos integrados que cubren desde el fichaje GPS hasta la
+              facturación, sin curva de aprendizaje.
             </p>
             <div className="features-grid">
               {features.map((feat, i) => (
@@ -1024,52 +1131,108 @@ export default function LandingPage() {
             </div>
           </section>
 
-          {/* ── HOW IT WORKS ── */}
+          {/* ── ADVANCED FEATURES ── */}
           <section className="lp-section">
+            <div className="lp-section-label">Y mucho más</div>
+            <h2 className="lp-section-title">
+              Funcionalidades avanzadas incluidas.
+            </h2>
+            <p className="lp-section-sub">
+              Herramientas profesionales para empresas que quieren ir un paso
+              más allá en eficiencia y control.
+            </p>
+            <div className="adv-grid">
+              {advancedFeatures.map((feat, i) => (
+                <div key={i} className="adv-item">
+                  <div className="adv-icon">{feat.icon}</div>
+                  <div>
+                    <h4>{feat.title}</h4>
+                    <p>{feat.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* ── BEFORE / AFTER ── */}
+          <section className="lp-section">
+            <div className="lp-section-label">El cambio</div>
+            <h2 className="lp-section-title">
+              Antes vs. Después de LimpiaGest.
+            </h2>
+            <p className="lp-section-sub">
+              Descubre cómo la digitalización transforma la gestión diaria
+              de tu empresa de limpieza.
+            </p>
+            <div className="comparison-grid">
+              <div className="comparison-card before">
+                <h3>❌ Sin LimpiaGest</h3>
+                <ul className="comparison-list">
+                  <li><span className="icon">📝</span> Partes en papel que se pierden o se rellenan mal</li>
+                  <li><span className="icon">📞</span> Llamadas y WhatsApps para cada cambio de ruta</li>
+                  <li><span className="icon">⏰</span> Sin control real de horas ni kilometraje</li>
+                  <li><span className="icon">📸</span> Sin evidencias de los servicios realizados</li>
+                  <li><span className="icon">💰</span> Facturación manual con errores y retrasos</li>
+                  <li><span className="icon">😤</span> Reclamaciones de clientes sin pruebas para defenderte</li>
+                </ul>
+              </div>
+              <div className="comparison-card after">
+                <h3>✅ Con LimpiaGest</h3>
+                <ul className="comparison-list">
+                  <li><span className="icon">📱</span> Todo digital desde el móvil del operario</li>
+                  <li><span className="icon">🔄</span> Reasignaciones y traspasos con un clic</li>
+                  <li><span className="icon">📍</span> GPS en tiempo real con fichajes automáticos</li>
+                  <li><span className="icon">📸</span> Fotos con marca de agua, GPS y hora exacta</li>
+                  <li><span className="icon">🧾</span> Facturación integrada con requisitos Verifactu</li>
+                  <li><span className="icon">🛡️</span> Portal del cliente con evidencias verificables</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          {/* ── HOW IT WORKS ── */}
+          <section className="lp-section" id="como-funciona">
             <div className="lp-section-label">Implementación</div>
             <h2 className="lp-section-title">
               En marcha en menos de 24 horas.
             </h2>
             <p className="lp-section-sub">
               Sin migraciones complejas. Sin formación técnica. Tus operarios
-              instalan la app en el móvil en segundos.
+              estarán usándolo desde el primer día.
             </p>
             <div className="steps-grid">
-              {[
-                {
-                  n: "1",
-                  title: "Solicita el acceso",
-                  desc: "Rellena el formulario. En menos de 24h te configuramos la cuenta con tus datos de empresa.",
-                },
-                {
-                  n: "2",
-                  title: "Configura tus comunidades",
-                  desc: "Importa portales, comunidades y plantillas de tareas recurrentes desde tu panel web.",
-                },
-                {
-                  n: "3",
-                  title: "Controla en tiempo real",
-                  desc: "Tus operarios entran con su móvil, tú ves todo desde el dashboard. Así de sencillo.",
-                },
-              ].map((s, i) => (
-                <div key={i} className="step-card">
-                  <div className="step-number">{s.n}</div>
-                  <h3>{s.title}</h3>
-                  <p>{s.desc}</p>
-                </div>
-              ))}
+              <div className="step-card">
+                <div className="step-number">1</div>
+                <h3>Alta de cuenta</h3>
+                <p>Configuramos tu espacio en la nube con tus datos y logo de empresa.</p>
+              </div>
+              <div className="step-card">
+                <div className="step-number">2</div>
+                <h3>Importación</h3>
+                <p>Subimos tu lista de operarios, clientes y comunidades de una sola vez.</p>
+              </div>
+              <div className="step-card">
+                <div className="step-number">3</div>
+                <h3>Planificación</h3>
+                <p>Asignas las rutas, horarios y tareas a realizar en cada servicio.</p>
+              </div>
+              <div className="step-card">
+                <div className="step-number">4</div>
+                <h3>¡A trabajar!</h3>
+                <p>Tus operarios fichan y reportan desde su móvil, tú lo ves en tiempo real.</p>
+              </div>
             </div>
           </section>
 
           {/* ── TESTIMONIALS ── */}
-          <section className="lp-section">
-            <div className="lp-section-label">Testimonios</div>
+          <section className="lp-section" id="testimonios">
+            <div className="lp-section-label">Casos de éxito</div>
             <h2 className="lp-section-title">
-              Lo que dicen nuestros clientes.
+              Empresas que ya han dado el salto.
             </h2>
             <p className="lp-section-sub">
-              Empresas como la tuya ya optimizan su gestión diaria con
-              LimpiaGest.
+              Únete a las cientos de empresas de limpieza que han digitalizado
+              su gestión diaria y ahorrado miles de euros.
             </p>
             <div className="testimonials-grid">
               {testimonials.map((t, i) => (
@@ -1082,9 +1245,7 @@ export default function LandingPage() {
                     </div>
                     <div>
                       <div className="testimonial-name">{t.author}</div>
-                      <div className="testimonial-role">
-                        {t.role} · {t.company}
-                      </div>
+                      <div className="testimonial-role">{t.role}, {t.company}</div>
                     </div>
                   </div>
                 </div>
@@ -1094,86 +1255,85 @@ export default function LandingPage() {
 
           {/* ── PRICING ── */}
           <section className="lp-section" id="pricing">
-            <div className="lp-section-label">Precios</div>
-            <h2 className="lp-section-title">Sin contratos. Sin sorpresas.</h2>
+            <div className="lp-section-label">Planes y Precios</div>
+            <h2 className="lp-section-title">
+              Planes adaptados a tu crecimiento.
+            </h2>
             <p className="lp-section-sub">
-              Elige el plan que mejor se adapta a tu plantilla. Cancela cuando
-              quieras.
+              Empieza con lo básico o desbloquea todo el potencial. Sin
+              permanencia ni letra pequeña.
             </p>
-
-            {/* Billing toggle */}
-            <div
-              className="billing-toggle"
-              onClick={() => setBillingAnnual((prev) => !prev)}
-              role="button"
-              aria-label="Cambiar facturación anual/mensual"
-            >
-              <span className={!billingAnnual ? "active-label" : ""}>
-                Mensual
-              </span>
-              <button
-                className={`toggle-switch ${billingAnnual ? "on" : ""}`}
-                aria-hidden="true"
+            <div style={{ textAlign: "center" }}>
+              <div
+                className="billing-toggle"
+                onClick={() => setBillingAnnual(!billingAnnual)}
               >
-                <span className="toggle-knob" />
-              </button>
-              <span className={billingAnnual ? "active-label" : ""}>Anual</span>
-              {billingAnnual && <span className="annual-badge">−20%</span>}
+                <span className={!billingAnnual ? "active-label" : ""}>
+                  Mensual
+                </span>
+                <button
+                  type="button"
+                  className={`toggle-switch ${billingAnnual ? "on" : ""}`}
+                >
+                  <div className="toggle-knob" />
+                </button>
+                <span className={billingAnnual ? "active-label" : ""}>
+                  Anual
+                </span>
+                <span className="annual-badge">-20%</span>
+              </div>
             </div>
-
             <div className="pricing-grid">
-              {pricingPlans.map((plan, i) => {
-                const price = plan.monthlyPrice
-                  ? billingAnnual
+              {pricingPlans.map((plan) => {
+                const price =
+                  plan.monthlyPrice === null
+                    ? "A medida"
+                    : billingAnnual
                     ? Math.round(plan.monthlyPrice * 0.8)
-                    : plan.monthlyPrice
-                  : null;
+                    : plan.monthlyPrice;
                 return (
                   <div
-                    key={i}
-                    className={`pricing-card ${plan.featured ? "featured" : ""}`}
+                    key={plan.id}
+                    className={`pricing-card ${
+                      plan.featured ? "featured" : ""
+                    }`}
                   >
                     {plan.featured && (
-                      <div className="pricing-badge-pill">⭐ Más Popular</div>
+                      <div className="pricing-badge-pill">MÁS POPULAR</div>
                     )}
-                    <div className="pricing-name">{plan.name}</div>
-                    <div className="pricing-desc">{plan.desc}</div>
+                    <h3 className="pricing-name">{plan.name}</h3>
+                    <p className="pricing-desc">{plan.desc}</p>
                     <div className="pricing-price">
-                      {price !== null ? (
+                      {plan.monthlyPrice === null ? (
+                        <div className="pricing-amount">A medida</div>
+                      ) : (
                         <>
                           <span className="pricing-amount">{price}€</span>
-                          <span className="pricing-period"> /mes</span>
+                          <span className="pricing-period">/mes</span>
                           {billingAnnual && (
                             <div className="pricing-save">
-                              Ahorras {plan.monthlyPrice * 12 - price * 12}€ al
-                              año
+                              Pago anual de {price * 12}€ (ahorras{" "}
+                              {plan.monthlyPrice * 12 - price * 12}€)
                             </div>
                           )}
                         </>
-                      ) : (
-                        <span
-                          className="pricing-amount"
-                          style={{ fontSize: "1.8rem" }}
-                        >
-                          Personalizado
-                        </span>
                       )}
                     </div>
                     <ul className="pricing-features-list">
-                      {plan.features.map((f, j) => (
-                        <li key={j}>
+                      {plan.features.map((f, i) => (
+                        <li key={i}>
                           <span className="pricing-check">✓</span>
-                          {f}
+                          <span>{f}</span>
                         </li>
                       ))}
                     </ul>
                     <button
-                      onClick={() => openModal(plan.id)}
                       className={
                         plan.featured
                           ? "btn-pricing-primary"
                           : "btn-pricing-secondary"
                       }
+                      onClick={() => openModal(plan.id)}
                     >
                       {plan.cta}
                     </button>
@@ -1186,54 +1346,36 @@ export default function LandingPage() {
           {/* ── CTA BOTTOM ── */}
           <section className="lp-cta-bottom">
             <h2 className="cta-bottom-title">
-              ¿Listo para digitalizar tu negocio?
+              ¿Listo para modernizar tu empresa?
             </h2>
             <p className="cta-bottom-sub">
-              Únete a las empresas que ya han optimizado su tiempo y certificado
-              el 100% de sus servicios.
+              Pide tu demo sin compromiso y descubre cómo LimpiaGest puede
+              ayudarte a crecer.
             </p>
             <button
               className="btn-hero-primary"
               onClick={() => openModal()}
-              style={{ fontSize: "1.05rem", padding: "15px 34px" }}
+              style={{ fontSize: "1.1rem", padding: "16px 36px" }}
             >
-              🚀 Solicitar Demo Gratuita
+              🚀 Solicitar Acceso Gratuito
             </button>
-            <p
-              style={{
-                marginTop: "16px",
-                fontSize: "0.8rem",
-                color: "#475569",
-              }}
-            >
-              O escríbenos directamente a{" "}
-              <strong style={{ color: "#94a3b8" }}>
-                limpiezasrayba@gmail.com
-              </strong>
-            </p>
           </section>
 
           {/* ── FOOTER ── */}
           <footer className="lp-footer">
             <div className="lp-footer-copy">
-              © {new Date().getFullYear()} LimpiaGest · RyB Limpiezas · Todos
-              los derechos reservados
+              © {new Date().getFullYear()} LimpiaGest. Todos los derechos reservados.
             </div>
-            <div
-              className="lp-footer-links"
-              style={{ flexWrap: "wrap", justifyContent: "center" }}
-            >
-              <a href="mailto:limpiezasrayba@gmail.com">Contacto</a>
-              <Link to="/login">Acceso clientes</Link>
+            <div className="lp-footer-links">
               <Link to="/aviso-legal">Aviso Legal</Link>
-              <Link to="/politica-de-privacidad">Política de Privacidad</Link>
-              <Link to="/politica-de-cookies">Política de Cookies</Link>
+              <Link to="/politica-de-privacidad">Privacidad</Link>
+              <Link to="/terminos-condiciones">Términos</Link>
+              <a href="mailto:limpiezasrayba@gmail.com">Contacto</a>
             </div>
           </footer>
         </div>
       </div>
 
-      {/* ── MODAL ── */}
       <RequestModal
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
