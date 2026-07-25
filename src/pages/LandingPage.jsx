@@ -78,35 +78,67 @@ const testimonials = [
 
 const pricingPlans = [
   {
-    name: "Pyme",
-    monthlyPrice: 49,
-    desc: "Para pequeñas empresas locales.",
+    id: "autonomo",
+    name: "Autónomo",
+    monthlyPrice: 19,
+    desc: "Para profesionales y microempresas.",
     features: [
-      "Hasta 10 operarios",
+      "Hasta 5 operarios",
+      "Hasta 50 comunidades",
       "Control horario con GPS",
-      "Gestión de comunidades",
-      "Evidencias fotográficas",
+      "Administradores sin límite",
       "Soporte por email",
     ],
     featured: false,
     cta: "Solicitar Acceso",
   },
   {
-    name: "Empresa",
-    monthlyPrice: 99,
-    desc: "La solución más completa para crecer.",
+    id: "starter",
+    name: "Starter",
+    monthlyPrice: 39,
+    desc: "Para pequeñas empresas en crecimiento.",
     features: [
-      "Hasta 50 operarios",
-      "Evidencias ilimitadas con GPS",
+      "Hasta 10 operarios",
+      "Hasta 100 comunidades",
+      "Administradores sin límite",
+      "Evidencias fotográficas",
       "Control de kilometraje",
-      "Traspasos en tiempo real",
-      "Gestión de materiales",
-      "Soporte prioritario 24/7",
     ],
     featured: true,
     cta: "Empezar Ahora",
   },
   {
+    id: "professional",
+    name: "Profesional",
+    monthlyPrice: 79,
+    desc: "Para equipos con varias rutas y zonas.",
+    features: [
+      "Hasta 30 operarios",
+      "Hasta 300 comunidades",
+      "Administradores sin límite",
+      "Traspasos en tiempo real",
+      "Gestión de materiales",
+    ],
+    featured: false,
+    cta: "Solicitar Acceso",
+  },
+  {
+    id: "business",
+    name: "Empresa",
+    monthlyPrice: 149,
+    desc: "Para empresas con operaciones amplias.",
+    features: [
+      "Hasta 100 operarios",
+      "Hasta 1.000 comunidades",
+      "Administradores sin límite",
+      "Todas las funcionalidades",
+      "Soporte prioritario",
+    ],
+    featured: false,
+    cta: "Solicitar Acceso",
+  },
+  {
+    id: "enterprise",
     name: "Enterprise",
     monthlyPrice: null,
     desc: "Para grandes corporaciones.",
@@ -142,8 +174,9 @@ function RequestModal({ isOpen, onClose, defaultPlan = "" }) {
   React.useEffect(() => {
     if (isOpen) {
       setPrivacyAccepted(false);
+      setForm((current) => ({ ...current, plan: defaultPlan }));
     }
-  }, [isOpen]);
+  }, [isOpen, defaultPlan]);
 
   if (!isOpen) return null;
 
@@ -387,9 +420,11 @@ function RequestModal({ isOpen, onClose, defaultPlan = "" }) {
                     onChange={handleChange}
                   >
                     <option value="">Seleccionar...</option>
-                    <option value="Pyme">Pyme — 49€/mes</option>
-                    <option value="Empresa">Empresa — 99€/mes</option>
-                    <option value="Enterprise">
+                    <option value="autonomo">Autónomo — 19€/mes</option>
+                    <option value="starter">Starter — 39€/mes</option>
+                    <option value="professional">Profesional — 79€/mes</option>
+                    <option value="business">Empresa — 149€/mes</option>
+                    <option value="enterprise">
                       Enterprise — Personalizado
                     </option>
                   </select>
@@ -783,7 +818,7 @@ export default function LandingPage() {
         }
 
         .pricing-grid {
-          display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; align-items: start;
+          display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px; align-items: start;
         }
         @media (max-width: 900px) { .pricing-grid { grid-template-columns: 1fr; max-width: 420px; margin: 0 auto; } }
         .pricing-card {
@@ -1133,7 +1168,7 @@ export default function LandingPage() {
                       ))}
                     </ul>
                     <button
-                      onClick={() => openModal(plan.name)}
+                      onClick={() => openModal(plan.id)}
                       className={
                         plan.featured
                           ? "btn-pricing-primary"

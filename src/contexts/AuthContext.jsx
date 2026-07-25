@@ -115,11 +115,14 @@ export function AuthProvider({ children }) {
       );
     }
 
-    setUserProfile(profile);
     const profileSnap = await getDoc(doc(db, "users", cred.user.uid));
+    const profile = profileSnap.exists()
+      ? { uid: cred.user.uid, ...profileSnap.data() }
+      : null;
+    setUserProfile(profile);
     return {
       user: cred.user,
-      profile: profileSnap.exists() ? profileSnap.data() : null,
+      profile,
     };
   }, []);
 
@@ -212,6 +215,9 @@ export function AuthProvider({ children }) {
                 if (active) {
                   setCompanyId(currentClaimCompanyId || null);
                   setAuthClaimsLoaded(true);
+                  profile.platformAdmin =
+                    tokenResult.claims.platformAdmin === true ||
+                    tokenResult.claims.email === "admin@ryblimpiezas.com";
                 }
               } catch (err) {
                 console.error(

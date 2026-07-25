@@ -6,6 +6,10 @@ import {
   getBillingSettings,
   saveBillingSettings,
 } from "../../services/invoiceService";
+import {
+  openSubscriptionCheckout,
+  openSubscriptionPortal,
+} from "../../services/subscriptionService";
 
 // Extra imports needed since we cleaned the block above
 import { updateEmail, updatePassword } from "firebase/auth";
@@ -20,7 +24,7 @@ import {
 } from "firebase/firestore";
 
 export default function SettingsPage() {
-  const { companyId } = useTenant();
+  const { companyId, company, companyEnabled } = useTenant();
   const { currentUser, userProfile } = useAuth();
 
   // Profile state
@@ -39,8 +43,47 @@ export default function SettingsPage() {
   const [originalInvitationCode, setOriginalInvitationCode] = useState("");
   const [companyLoading, setCompanyLoading] = useState(false);
   const [companyMsg, setCompanyMsg] = useState("");
+  const [subscriptionLoading, setSubscriptionLoading] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState(company?.plan || "starter");
 
   const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    const aliases = {
+      tier_1: "starter",
+      tier_2: "professional",
+      tier_3: "business",
+      "autónomo": "autonomo",
+      pyme: "starter",
+      empresa: "business",
+    };
+    if (company?.plan) {
+      const planKey = String(company.plan).toLowerCase();
+      setSelectedPlan(aliases[planKey] || planKey);
+    }
+  }, [company?.plan]);
+
+  async function handleCheckout() {
+    setSubscriptionLoading(true);
+    setCompanyMsg("");
+    try {
+      await openSubscriptionCheckout(selectedPlan);
+    } catch (error) {
+      setCompanyMsg(`Error de suscripción: ${error.message}`);
+      setSubscriptionLoading(false);
+    }
+  }
+
+  async function handleBillingPortal() {
+    setSubscriptionLoading(true);
+    setCompanyMsg("");
+    try {
+      await openSubscriptionPortal();
+    } catch (error) {
+      setCompanyMsg(`Error de facturación: ${error.message}`);
+      setSubscriptionLoading(false);
+    }
+  }
 
   useEffect(() => {
     if (userProfile) {
@@ -248,6 +291,56 @@ export default function SettingsPage() {
       </h2>
 
       <div className="grid grid-2 gap-6">
+        <div className="card" style={{ gridColumn: "1 / -1" }}>
+          <h3
+            style={{
+              fontSize: "var(--font-xl)",
+              fontWeight: 700,
+              marginBottom: "var(--space-4)",
+            }}
+          >
+            Suscripción de LimpiaGest
+          </h3>
+          <p className="text-sm text-muted mb-4">
+            Estado: <strong>{company?.subscriptionStatus || "legacy"}</strong>
+            {" · "}Plan: <strong>{company?.plan || "sin asignar"}</strong>
+            {" · "}Acceso: <strong>{companyEnabled ? "activo" : "bloqueado"}</strong>
+          </p>
+          <div className="flex gap-3 flex-wrap items-end">
+            <div className="form-group" style={{ minWidth: "220px", margin: 0 }}>
+              <label className="form-label">Plan</label>
+              <select
+                className="form-input"
+                value={selectedPlan}
+                onChange={(event) => setSelectedPlan(event.target.value)}
+              >
+                <option value="autonomo">Autónomo</option>
+                <option value="starter">Starter</option>
+                <option value="professional">Profesional</option>
+                <option value="business">Empresa</option>
+              </select>
+            </div>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={subscriptionLoading}
+              onClick={handleCheckout}
+            >
+              Contratar o cambiar plan
+            </button>
+            {company?.stripeCustomerId && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={subscriptionLoading}
+                onClick={handleBillingPortal}
+              >
+                Gestionar pagos y cancelación
+              </button>
+            )}
+          </div>
+        </div>
+
         {/* Company Settings */}
         <div className="card">
           <h3

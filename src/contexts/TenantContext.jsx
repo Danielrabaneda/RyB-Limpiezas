@@ -1,7 +1,9 @@
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "./AuthContext";
 import { getAuth } from "firebase/auth";
+import { doc, onSnapshot } from "firebase/firestore";
+import { db } from "../config/firebase";
 
 const TenantContext = createContext();
 
@@ -14,9 +16,39 @@ export function useTenant() {
 }
 
 export function RequireTenant({ children }) {
-  const { currentUser, companyId, authClaimsLoaded, loading, logout } = useAuth();
+  const {
+    currentUser,
+    userProfile,
+    companyId,
+    authClaimsLoaded,
+    loading,
+    logout,
+  } = useAuth();
   const location = useLocation();
   const [retrying, setRetrying] = useState(false);
+  const [company, setCompany] = useState(null);
+  const [companyLoading, setCompanyLoading] = useState(true);
+
+  useEffect(() => {
+    if (!companyId) {
+      setCompany(null);
+      setCompanyLoading(false);
+      return undefined;
+    }
+    setCompanyLoading(true);
+    return onSnapshot(
+      doc(db, "companies", companyId),
+      (snapshot) => {
+        setCompany(snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null);
+        setCompanyLoading(false);
+      },
+      (error) => {
+        console.error("No se pudo comprobar el estado de la empresa:", error);
+        setCompany(null);
+        setCompanyLoading(false);
+      },
+    );
+  }, [companyId]);
 
   if (loading) {
     return (
@@ -121,8 +153,64 @@ export function RequireTenant({ children }) {
     );
   }
 
+  if (companyLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600 font-medium">Comprobando suscripción...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const trialEndsAt = company?.trialEndsAt?.toMillis?.() || null;
+  const subscriptionStatus = company?.subscriptionStatus || "legacy";
+  const companyEnabled =
+    company?.status === "active" &&
+    (subscriptionStatus === "legacy" ||
+      subscriptionStatus === "active" ||
+      (subscriptionStatus === "trialing" &&
+        trialEndsAt !== null &&
+        trialEndsAt > Date.now()));
+
+  const canManageSuspendedSubscription =
+    userProfile?.role === "admin" &&
+    location.pathname === "/admin/ajustes";
+
+  if (!companyEnabled && !canManageSuspendedSubscription) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-50 p-4">
+        <div className="text-center p-8 bg-white rounded-xl shadow-md max-w-lg w-full border border-amber-200">
+          <div className="text-5xl mb-4">🔒</div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">
+            Suscripción no activa
+          </h2>
+          <p className="text-gray-600 mb-6">
+            La empresa está suspendida, la prueba ha finalizado o existe un
+            pago pendiente. Un administrador puede reactivar el servicio desde
+            la gestión de facturación.
+          </p>
+          {userProfile?.role === "admin" && (
+            <a href="/admin/ajustes" className="btn btn-primary mb-3">
+              Gestionar suscripción
+            </a>
+          )}
+          <button
+            onClick={logout}
+            className="btn btn-secondary"
+          >
+            Cerrar sesión
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <TenantContext.Provider value={{ companyId }}>
+    <TenantContext.Provider
+      value={{ companyId, company, companyEnabled }}
+    >
       {children}
     </TenantContext.Provider>
   );

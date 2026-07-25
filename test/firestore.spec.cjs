@@ -38,6 +38,17 @@ describe('Firestore Security Rules - Multi-Tenant', function () {
       await db.collection("users").doc("rayba_admin").set({ role: "admin", active: true, companyId: "rayba" });
       await db.collection("users").doc("rayba_employee").set({ role: "operario", active: true, companyId: "rayba" });
       await db.collection("users").doc("tenantB_admin").set({ role: "admin", active: true, companyId: "tenantB" });
+
+      await db.collection("companies").doc("rayba").set({
+        name: "Rayba",
+        status: "active",
+        subscriptionStatus: "active"
+      });
+      await db.collection("companies").doc("tenantB").set({
+        name: "Tenant B",
+        status: "active",
+        subscriptionStatus: "active"
+      });
       
       // Setup communities
       await db.collection("companies").doc("rayba").collection("communities").doc("comm1").set({ name: "Comm 1" });
@@ -61,6 +72,13 @@ describe('Firestore Security Rules - Multi-Tenant', function () {
     it('Admin (Rayba) can write invoice in Rayba', async () => {
       const db = getAuthContext('rayba_admin', 'admin', 'rayba').firestore();
       await assertSucceeds(db.collection('companies').doc('rayba').collection('invoices').doc('inv1').set({ status: 'draft' }));
+    });
+
+    it('Admin (Rayba) must create communities through the quota backend', async () => {
+      const db = getAuthContext('rayba_admin', 'admin', 'rayba').firestore();
+      await assertFails(
+        db.collection('companies').doc('rayba').collection('communities').doc('comm2').set({ name: 'Nueva comunidad' })
+      );
     });
   });
 
@@ -92,6 +110,31 @@ describe('Firestore Security Rules - Multi-Tenant', function () {
     it('Unauthenticated user CANNOT read tenant data', async () => {
       const db = testEnv.unauthenticatedContext().firestore();
       await assertFails(db.collection('companies').doc('rayba').collection('communities').doc('comm1').get());
+    });
+  });
+
+  describe('Subscription enforcement', () => {
+    it('Suspended tenant CANNOT read or write operational data', async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().collection("companies").doc("rayba").update({
+          status: "suspended",
+          subscriptionStatus: "past_due"
+        });
+      });
+      const db = getAuthContext('rayba_admin', 'admin', 'rayba').firestore();
+      await assertFails(
+        db.collection('companies').doc('rayba').collection('communities').doc('comm1').get()
+      );
+      await assertFails(
+        db.collection('companies').doc('rayba').collection('communities').doc('comm2').set({ name: 'Blocked' })
+      );
+    });
+
+    it('Tenant admin CANNOT edit protected company subscription metadata', async () => {
+      const db = getAuthContext('rayba_admin', 'admin', 'rayba').firestore();
+      await assertFails(
+        db.collection('companies').doc('rayba').update({ plan: 'business' })
+      );
     });
   });
 

@@ -29,13 +29,17 @@ const {
 const { getMessaging } = require("firebase-admin/messaging");
 const { getStorage } = require("firebase-admin/storage");
 const { getAuth } = require("firebase-admin/auth");
+const { defineSecret } = require("firebase-functions/params");
 const nodemailer = require("nodemailer");
+const Stripe = require("stripe");
 
 // Inicializar Firebase Admin
 initializeApp();
 const db = getFirestore();
 const messaging = getMessaging();
 const auth = getAuth();
+const stripeSecretKey = defineSecret("STRIPE_SECRET_KEY");
+const stripeWebhookSecret = defineSecret("STRIPE_WEBHOOK_SECRET");
 
 // ============================================================================
 // CONSTANTES
@@ -55,6 +59,195 @@ const REMINDER_COOLDOWN_MIN = 30;
 
 /** Días máximos sin actualizar un token FCM antes de borrarlo */
 const FCM_TOKEN_MAX_AGE_DAYS = 60;
+
+const PLATFORM_ADMIN_EMAIL =
+  process.env.PLATFORM_ADMIN_EMAIL || "admin@ryblimpiezas.com";
+const PLATFORM_TENANT_ID =
+  process.env.PLATFORM_TENANT_ID || "rayba";
+const ACTIVE_SUBSCRIPTION_STATUSES = new Set(["active", "trialing"]);
+const PLAN_LIMITS = {
+  autonomo: {
+    operarios: 5,
+    communities: 50,
+    admins: null,
+    storageGb: 2,
+    monthlyPrice: 19,
+  },
+  starter: {
+    operarios: 10,
+    communities: 100,
+    admins: null,
+    storageGb: 5,
+    monthlyPrice: 39,
+  },
+  professional: {
+    operarios: 30,
+    communities: 300,
+    admins: null,
+    storageGb: 25,
+    monthlyPrice: 79,
+  },
+  business: {
+    operarios: 100,
+    communities: 1000,
+    admins: null,
+    storageGb: 100,
+    monthlyPrice: 149,
+  },
+  enterprise: {
+    operarios: null,
+    communities: null,
+    admins: null,
+    storageGb: null,
+    monthlyPrice: 0,
+  },
+};
+
+function normalizePlan(plan) {
+  const key = String(plan || "starter").trim().toLowerCase();
+  const aliases = {
+    tier_1: "starter",
+    tier_2: "professional",
+    tier_3: "business",
+    "autónomo": "autonomo",
+    profesional: "professional",
+    pyme: "starter",
+    empresa: "business",
+  };
+  const normalized = aliases[key] || key;
+  return PLAN_LIMITS[normalized] ? normalized : "starter";
+}
+
+function getPlanLimits(plan) {
+  const normalizedPlan = normalizePlan(plan);
+  return { plan: normalizedPlan, ...PLAN_LIMITS[normalizedPlan] };
+}
+
+async function assertPlanCapacity(companyId, resource) {
+  const company = await assertTenantEnabled(companyId);
+  const limits = getPlanLimits(company.plan);
+  const maximum = limits[resource];
+  if (maximum === null) return limits;
+
+  let countQuery;
+  if (resource === "operarios") {
+    countQuery = db
+      .collection("users")
+      .where("companyId", "==", companyId)
+      .where("role", "==", "operario")
+      .where("active", "==", true);
+  } else {
+    countQuery = db.collection(`companies/${companyId}/communities`);
+  }
+  const count = (await countQuery.count().get()).data().count;
+  if (count >= maximum) {
+    throw new HttpsError(
+      "resource-exhausted",
+      `El plan ${limits.plan} permite un máximo de ${maximum} ${resource}.`,
+      { resource, current: count, maximum, plan: limits.plan },
+    );
+  }
+  return limits;
+}
+
+function isPlatformAdmin(authContext) {
+  const email = String(authContext?.token?.email || "").trim().toLowerCase();
+  const companyId = String(authContext?.token?.companyId || "").trim();
+  return Boolean(
+    companyId === PLATFORM_TENANT_ID &&
+      (authContext?.token?.platformAdmin === true ||
+        email === PLATFORM_ADMIN_EMAIL.toLowerCase()),
+  );
+}
+
+function requirePlatformAdmin(request) {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+  }
+  if (!isPlatformAdmin(request.auth)) {
+    throw new HttpsError(
+      "permission-denied",
+      "Esta operación requiere permisos de administración de plataforma.",
+    );
+  }
+}
+
+async function assertTenantEnabled(companyId) {
+  if (!companyId) {
+    throw new HttpsError(
+      "failed-precondition",
+      "La cuenta no tiene una empresa asociada.",
+    );
+  }
+  const companySnap = await db.collection("companies").doc(companyId).get();
+  if (!companySnap.exists) {
+    throw new HttpsError("not-found", "La empresa no existe.");
+  }
+  const company = companySnap.data();
+  const subscriptionStatus = company.subscriptionStatus || "legacy";
+  const trialEndsAt = company.trialEndsAt?.toMillis
+    ? company.trialEndsAt.toMillis()
+    : null;
+  const trialExpired =
+    subscriptionStatus === "trialing" &&
+    trialEndsAt !== null &&
+    trialEndsAt <= Date.now();
+  if (
+    company.status !== "active" ||
+    trialExpired ||
+    (subscriptionStatus !== "legacy" &&
+      !ACTIVE_SUBSCRIPTION_STATUSES.has(subscriptionStatus))
+  ) {
+    throw new HttpsError(
+      "permission-denied",
+      "La empresa está suspendida o no tiene una suscripción activa.",
+    );
+  }
+  return company;
+}
+
+function normalizeCompanyId(value) {
+  const normalized = String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  if (normalized.length < 3) {
+    throw new HttpsError(
+      "invalid-argument",
+      "El identificador de empresa debe tener al menos 3 caracteres.",
+    );
+  }
+  return normalized;
+}
+
+function normalizeAccessCode(value) {
+  const code = String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]/g, "")
+    .slice(0, 32);
+  if (code.length < 6) {
+    throw new HttpsError(
+      "invalid-argument",
+      "El código de invitación debe tener al menos 6 caracteres.",
+    );
+  }
+  return code;
+}
+
+function getStripeClient() {
+  const key = stripeSecretKey.value();
+  if (!key) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Stripe todavía no está configurado.",
+    );
+  }
+  return new Stripe(key);
+}
 
 // ============================================================================
 // UTILIDADES
@@ -948,6 +1141,7 @@ exports.sendInvoiceEmails = onCall(
         "El usuario debe pertenecer a una organización (companyId faltante).",
       );
     }
+    await assertTenantEnabled(companyId);
 
     // Verify user role is admin
     const userDoc = await db.collection("users").doc(request.auth.uid).get();
@@ -1207,6 +1401,7 @@ exports.sendGroupedInvoiceEmails = onCall(
         "El usuario debe pertenecer a una organización (companyId faltante).",
       );
     }
+    await assertTenantEnabled(companyId);
 
     // Verify user role is admin
     const userDoc = await db.collection("users").doc(request.auth.uid).get();
@@ -1574,6 +1769,7 @@ exports.getClientPortalData = onCall(
     }
 
     const { companyId, communityId } = portalData;
+    await assertTenantEnabled(companyId);
 
     // 2. Obtener datos de la comunidad
     const communitySnap = await db
@@ -1710,13 +1906,24 @@ exports.onUserDocumentWritten = onDocumentWritten(
       const role = afterData.role || "";
       const active = afterData.active !== false; // por defecto true si no se especifica
       const companyId = afterData.companyId || null;
+      const platformAdmin =
+        companyId === PLATFORM_TENANT_ID &&
+        (afterData.platformAdmin === true ||
+          String(afterData.email || "").trim().toLowerCase() ===
+            PLATFORM_ADMIN_EMAIL.toLowerCase());
+      const previousPlatformAdmin =
+        beforeData?.companyId === PLATFORM_TENANT_ID &&
+        (beforeData?.platformAdmin === true ||
+          String(beforeData?.email || "").trim().toLowerCase() ===
+            PLATFORM_ADMIN_EMAIL.toLowerCase());
 
       // Evitamos llamadas innecesarias si los claims ya son los mismos que antes
       if (
         beforeData &&
         beforeData.role === role &&
         beforeData.active === active &&
-        beforeData.companyId === companyId
+        beforeData.companyId === companyId &&
+        previousPlatformAdmin === platformAdmin
       ) {
         logger.log(
           `No hay cambios en los claims relevantes (role: ${role}, active: ${active}, companyId: ${companyId}) para uid: ${uid}. Omitiendo actualización.`,
@@ -1724,7 +1931,7 @@ exports.onUserDocumentWritten = onDocumentWritten(
         return null;
       }
 
-      const claims = { role, active };
+      const claims = { role, active, platformAdmin };
       if (companyId) {
         claims.companyId = companyId;
       }
@@ -1753,6 +1960,7 @@ exports.createOperarioUser = onCall(
     if (!caller || caller.token.role !== "admin" || caller.token.active !== true || !companyId) {
       throw new HttpsError("permission-denied", "Solo un administrador activo con tenant puede crear operarios.");
     }
+    await assertPlanCapacity(companyId, "operarios");
 
     const { email, password, name, phone = "", allowDirectTransfers = false } = request.data || {};
     if (!email || !password || !name) {
@@ -1805,6 +2013,7 @@ exports.completeTenantRegistration = onCall(
       throw new HttpsError("permission-denied", "Código de invitación no válido.");
     }
     const companyId = indexSnap.data().companyId;
+    await assertTenantEnabled(companyId);
     const codeSnap = await db.collection(`companies/${companyId}/accessCodes`).doc(accessCode).get();
     if (!codeSnap.exists || codeSnap.data().active === false) {
       throw new HttpsError("permission-denied", "Código de invitación inactivo o caducado.");
@@ -1815,6 +2024,7 @@ exports.completeTenantRegistration = onCall(
     if (existingProfile.exists) {
       throw new HttpsError("failed-precondition", "El usuario ya tiene un perfil asociado y no puede cambiar de tenant mediante registro.");
     }
+    await assertPlanCapacity(companyId, "operarios");
     const userRecord = await auth.getUser(uid);
     const profile = {
       uid,
@@ -1861,6 +2071,508 @@ exports.onTenantAccessCodeWritten = onDocumentWritten(
 /**
  * Calcula la distancia entre dos coordenadas usando la fórmula de Haversine.
  */
+exports.createTenantCommunity = onCall(
+  { region: "europe-west1" },
+  async (request) => {
+    const caller = request.auth;
+    const companyId = caller?.token?.companyId;
+    if (
+      !caller ||
+      caller.token.role !== "admin" ||
+      caller.token.active !== true ||
+      !companyId
+    ) {
+      throw new HttpsError(
+        "permission-denied",
+        "Solo un administrador puede crear comunidades.",
+      );
+    }
+    await assertPlanCapacity(companyId, "communities");
+    const data = request.data?.community;
+    if (!data || typeof data !== "object") {
+      throw new HttpsError("invalid-argument", "Los datos de la comunidad son obligatorios.");
+    }
+    const name = String(data.name || "").trim();
+    if (!name || name.length > 200) {
+      throw new HttpsError("invalid-argument", "El nombre de la comunidad no es válido.");
+    }
+    const allowedFields = [
+      "name", "address", "type", "contactPerson", "contactPhone",
+      "preferredTime", "individualTimeTracking", "billingCif",
+      "billingAddress", "basePrice", "paymentMethod", "billingEmail",
+      "billingIban", "billingMandateRef", "billingMandateDate",
+      "administratorId", "active",
+    ];
+    const cleanData = {};
+    for (const field of allowedFields) {
+      if (data[field] !== undefined) cleanData[field] = data[field];
+    }
+    cleanData.name = name;
+    cleanData.active = data.active !== false;
+    cleanData.location = new GeoPoint(
+      Number(data.lat) || 0,
+      Number(data.lng) || 0,
+    );
+    cleanData.createdAt = FieldValue.serverTimestamp();
+    cleanData.createdBy = caller.uid;
+    const ref = await db.collection(`companies/${companyId}/communities`).add(cleanData);
+    return { id: ref.id };
+  },
+);
+
+exports.getPlatformDashboard = onCall(
+  { region: "europe-west1", timeoutSeconds: 60 },
+  async (request) => {
+    requirePlatformAdmin(request);
+    const companiesSnap = await db.collection("companies")
+      .limit(250).get();
+    const companies = (await Promise.all(
+      companiesSnap.docs.map(async (companyDoc) => {
+        const company = companyDoc.data();
+        const [operariosSnap, adminsSnap, communitiesSnap, ownerSnap] =
+          await Promise.all([
+            db.collection("users")
+              .where("companyId", "==", companyDoc.id)
+              .where("role", "==", "operario")
+              .where("active", "==", true).count().get(),
+            db.collection("users")
+              .where("companyId", "==", companyDoc.id)
+              .where("role", "==", "admin")
+              .where("active", "==", true).count().get(),
+            db.collection(`companies/${companyDoc.id}/communities`).count().get(),
+            company.ownerUid
+              ? db.collection("users").doc(company.ownerUid).get()
+              : Promise.resolve(null),
+          ]);
+        const limits = getPlanLimits(company.plan);
+        return {
+          id: companyDoc.id,
+          name: company.name || companyDoc.id,
+          status: company.status || "unknown",
+          subscriptionStatus: company.subscriptionStatus || "legacy",
+          plan: limits.plan,
+          limits,
+          usage: {
+            operarios: operariosSnap.data().count,
+            admins: adminsSnap.data().count,
+            communities: communitiesSnap.data().count,
+          },
+          owner: ownerSnap?.exists
+            ? {
+                uid: ownerSnap.id,
+                name: ownerSnap.data().name || "",
+                email: ownerSnap.data().email || "",
+              }
+            : null,
+          trialEndsAt: company.trialEndsAt?.toDate?.().toISOString() || null,
+          currentPeriodEndsAt:
+            company.currentPeriodEndsAt?.toDate?.().toISOString() || null,
+          stripeCustomerId: company.stripeCustomerId || null,
+          createdAt: company.createdAt?.toDate?.().toISOString() || null,
+        };
+      }),
+    )).sort((left, right) =>
+      String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
+    );
+    const planCounts = {};
+    for (const company of companies) {
+      planCounts[company.plan] = (planCounts[company.plan] || 0) + 1;
+    }
+    return {
+      companies,
+      summary: {
+        total: companies.length,
+        active: companies.filter((item) => item.status === "active").length,
+        trials: companies.filter((item) => item.subscriptionStatus === "trialing").length,
+        attention: companies.filter((item) =>
+          ["past_due", "unpaid", "canceled"].includes(item.subscriptionStatus) ||
+          item.status === "suspended"
+        ).length,
+        estimatedMrr: companies.reduce(
+          (sum, item) =>
+            item.subscriptionStatus === "active"
+              ? sum + (item.limits.monthlyPrice || 0)
+              : sum,
+          0,
+        ),
+        planCounts,
+      },
+      planCatalog: PLAN_LIMITS,
+    };
+  },
+);
+
+exports.updateCompanyCommercialState = onCall(
+  { region: "europe-west1" },
+  async (request) => {
+    requirePlatformAdmin(request);
+    const companyId = String(request.data?.companyId || "").trim();
+    const patch = request.data?.patch || {};
+    if (!companyId) {
+      throw new HttpsError("invalid-argument", "La empresa es obligatoria.");
+    }
+    const update = { updatedAt: FieldValue.serverTimestamp() };
+    if (patch.plan !== undefined) update.plan = normalizePlan(patch.plan);
+    if (patch.status !== undefined) {
+      if (!["active", "suspended"].includes(patch.status)) {
+        throw new HttpsError("invalid-argument", "Estado de empresa no válido.");
+      }
+      update.status = patch.status;
+    }
+    if (patch.subscriptionStatus !== undefined) {
+      if (!["active", "trialing", "past_due", "unpaid", "canceled", "legacy"].includes(patch.subscriptionStatus)) {
+        throw new HttpsError("invalid-argument", "Estado de suscripción no válido.");
+      }
+      update.subscriptionStatus = patch.subscriptionStatus;
+    }
+    await db.collection("companies").doc(companyId).update(update);
+    return { ok: true };
+  },
+);
+
+exports.listCompanyRequests = onCall(
+  { region: "europe-west1" },
+  async (request) => {
+    requirePlatformAdmin(request);
+    const snapshot = await db.collection("companyRequests")
+      .orderBy("createdAt", "desc").limit(250).get();
+    return {
+      requests: snapshot.docs.map((item) => ({
+        id: item.id,
+        ...item.data(),
+        createdAt: item.data().createdAt?.toDate?.().toISOString() || null,
+        updatedAt: item.data().updatedAt?.toDate?.().toISOString() || null,
+      })),
+    };
+  },
+);
+
+exports.updateCompanyRequest = onCall(
+  { region: "europe-west1" },
+  async (request) => {
+    requirePlatformAdmin(request);
+    const id = String(request.data?.id || "").trim();
+    const status = String(request.data?.status || "").trim();
+    if (!id || !["pending", "contacted", "active", "discarded"].includes(status)) {
+      throw new HttpsError("invalid-argument", "Solicitud o estado no válido.");
+    }
+    await db.collection("companyRequests").doc(id).update({
+      status,
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: request.auth.uid,
+    });
+    return { ok: true };
+  },
+);
+
+exports.deleteCompanyRequest = onCall(
+  { region: "europe-west1" },
+  async (request) => {
+    requirePlatformAdmin(request);
+    const id = String(request.data?.id || "").trim();
+    if (!id) throw new HttpsError("invalid-argument", "La solicitud es obligatoria.");
+    await db.collection("companyRequests").doc(id).delete();
+    return { ok: true };
+  },
+);
+
+exports.provisionCompanyFromRequest = onCall(
+  { region: "europe-west1", timeoutSeconds: 60 },
+  async (request) => {
+    requirePlatformAdmin(request);
+    const requestId = String(request.data?.requestId || "").trim();
+    const temporaryPassword = String(request.data?.temporaryPassword || "");
+    if (!requestId || temporaryPassword.length < 10) {
+      throw new HttpsError(
+        "invalid-argument",
+        "La solicitud y una contraseña temporal de al menos 10 caracteres son obligatorias.",
+      );
+    }
+    const requestRef = db.collection("companyRequests").doc(requestId);
+    const requestSnap = await requestRef.get();
+    if (!requestSnap.exists) throw new HttpsError("not-found", "La solicitud no existe.");
+    const lead = requestSnap.data();
+    if (lead.provisionedCompanyId) {
+      throw new HttpsError("already-exists", "Esta solicitud ya tiene una empresa creada.");
+    }
+
+    const companyId = normalizeCompanyId(request.data?.companyId || lead.companyName);
+    const invitationCode = normalizeAccessCode(
+      request.data?.invitationCode ||
+        `${companyId.replace(/-/g, "").slice(0, 12)}2026`,
+    );
+    const email = String(lead.email || "").trim().toLowerCase();
+    const contactName = String(lead.contactName || "").trim();
+    const plan = String(request.data?.plan || lead.plan || "starter").trim();
+    if (!email || !contactName || !lead.companyName) {
+      throw new HttpsError("failed-precondition", "La solicitud está incompleta.");
+    }
+    const [companySnap, codeSnap] = await Promise.all([
+      db.collection("companies").doc(companyId).get(),
+      db.collection("accessCodeIndex").doc(invitationCode).get(),
+    ]);
+    if (companySnap.exists || codeSnap.exists) {
+      throw new HttpsError(
+        "already-exists",
+        "El identificador de empresa o el código de invitación ya existe.",
+      );
+    }
+
+    let createdUser;
+    let provisioningCommitted = false;
+    try {
+      createdUser = await auth.createUser({
+        email,
+        password: temporaryPassword,
+        displayName: contactName,
+      });
+      const trialEndsAt = Timestamp.fromMillis(Date.now() + 14 * 86400000);
+      await db.runTransaction(async (transaction) => {
+        const companyRef = db.collection("companies").doc(companyId);
+        const codeIndexRef = db.collection("accessCodeIndex").doc(invitationCode);
+        const [freshCompany, freshCode] = await Promise.all([
+          transaction.get(companyRef),
+          transaction.get(codeIndexRef),
+        ]);
+        if (freshCompany.exists || freshCode.exists) {
+          throw new HttpsError("already-exists", "El identificador o código ya está ocupado.");
+        }
+        transaction.create(companyRef, {
+          name: String(lead.companyName).trim(),
+          status: "active",
+          subscriptionStatus: "trialing",
+          plan,
+          trialEndsAt,
+          stripeCustomerId: null,
+          ownerUid: createdUser.uid,
+          createdAt: FieldValue.serverTimestamp(),
+          createdBy: request.auth.uid,
+        });
+        transaction.create(db.collection("users").doc(createdUser.uid), {
+          uid: createdUser.uid,
+          name: contactName,
+          email,
+          phone: String(lead.phone || "").trim(),
+          role: "admin",
+          active: true,
+          companyId,
+          isOwner: true,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+        transaction.create(db.doc(`companies/${companyId}/settings/global`), {
+          companyName: String(lead.companyName).trim(),
+          invitationCode,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+        transaction.create(db.doc(`companies/${companyId}/accessCodes/${invitationCode}`), {
+          active: true,
+          createdAt: FieldValue.serverTimestamp(),
+          createdBy: request.auth.uid,
+        });
+        transaction.create(codeIndexRef, { companyId, active: true });
+        transaction.update(requestRef, {
+          status: "active",
+          provisionedCompanyId: companyId,
+          provisionedAdminUid: createdUser.uid,
+          updatedAt: FieldValue.serverTimestamp(),
+          updatedBy: request.auth.uid,
+        });
+      });
+      provisioningCommitted = true;
+      await auth
+        .setCustomUserClaims(createdUser.uid, {
+          role: "admin",
+          active: true,
+          companyId,
+          platformAdmin: false,
+        })
+        .catch((claimsError) =>
+          logger.error("Los claims se sincronizarán mediante el trigger", claimsError),
+        );
+      return {
+        companyId,
+        adminUid: createdUser.uid,
+        email,
+        invitationCode,
+        trialEndsAt: new Date(Date.now() + 14 * 86400000).toISOString(),
+      };
+    } catch (error) {
+      if (createdUser && !provisioningCommitted) {
+        await auth.deleteUser(createdUser.uid).catch(() => {});
+      }
+      if (error instanceof HttpsError) throw error;
+      logger.error("provisionCompanyFromRequest failed", error);
+      throw new HttpsError("internal", error.message || "No se pudo crear la empresa.");
+    }
+  },
+);
+
+exports.createSubscriptionCheckout = onCall(
+  { region: "europe-west1", secrets: [stripeSecretKey] },
+  async (request) => {
+    const caller = request.auth;
+    const companyId = caller?.token?.companyId;
+    if (!caller || caller.token.role !== "admin" || caller.token.active !== true || !companyId) {
+      throw new HttpsError("permission-denied", "Solo un administrador puede gestionar la suscripción.");
+    }
+    const companySnap = await db.collection("companies").doc(companyId).get();
+    if (!companySnap.exists) {
+      throw new HttpsError("not-found", "La empresa no existe.");
+    }
+    const company = companySnap.data();
+    const plan = normalizePlan(request.data?.plan || company.plan);
+    const price = {
+      autonomo: process.env.STRIPE_PRICE_AUTONOMO,
+      starter: process.env.STRIPE_PRICE_STARTER,
+      professional: process.env.STRIPE_PRICE_PROFESSIONAL,
+      business: process.env.STRIPE_PRICE_BUSINESS,
+    }[plan];
+    if (!price) {
+      throw new HttpsError("failed-precondition", `No hay precio Stripe para el plan ${plan}.`);
+    }
+    const returnUrl = String(request.data?.returnUrl || "");
+    if (!/^https?:\/\/[^ ]+$/.test(returnUrl)) {
+      throw new HttpsError("invalid-argument", "La URL de retorno no es válida.");
+    }
+    const stripe = getStripeClient();
+    let customerId = company.stripeCustomerId;
+    if (!customerId) {
+      const user = await auth.getUser(caller.uid);
+      const customer = await stripe.customers.create({
+        email: user.email,
+        name: company.name,
+        metadata: { companyId },
+      });
+      customerId = customer.id;
+      await db.collection("companies").doc(companyId).update({
+        stripeCustomerId: customerId,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      customer: customerId,
+      line_items: [{ price, quantity: 1 }],
+      success_url: `${returnUrl}?subscription=success`,
+      cancel_url: `${returnUrl}?subscription=cancelled`,
+      client_reference_id: companyId,
+      subscription_data: { metadata: { companyId, plan } },
+      metadata: { companyId, plan },
+    });
+    return { url: session.url };
+  },
+);
+
+exports.createSubscriptionPortal = onCall(
+  { region: "europe-west1", secrets: [stripeSecretKey] },
+  async (request) => {
+    const caller = request.auth;
+    const companyId = caller?.token?.companyId;
+    if (!caller || caller.token.role !== "admin" || caller.token.active !== true || !companyId) {
+      throw new HttpsError("permission-denied", "Solo un administrador puede gestionar la suscripción.");
+    }
+    const companySnap = await db.collection("companies").doc(companyId).get();
+    const customerId = companySnap.data()?.stripeCustomerId;
+    if (!customerId) {
+      throw new HttpsError("failed-precondition", "No hay un cliente de facturación configurado.");
+    }
+    const returnUrl = String(request.data?.returnUrl || "");
+    if (!/^https?:\/\/[^ ]+$/.test(returnUrl)) {
+      throw new HttpsError("invalid-argument", "La URL de retorno no es válida.");
+    }
+    const session = await getStripeClient().billingPortal.sessions.create({
+      customer: customerId,
+      return_url: returnUrl,
+    });
+    return { url: session.url };
+  },
+);
+
+exports.stripeWebhook = onRequest(
+  { region: "europe-west1", secrets: [stripeSecretKey, stripeWebhookSecret] },
+  async (request, response) => {
+    if (request.method !== "POST") {
+      response.status(405).send("Method not allowed");
+      return;
+    }
+    let event;
+    try {
+      event = getStripeClient().webhooks.constructEvent(
+        request.rawBody,
+        request.headers["stripe-signature"],
+        stripeWebhookSecret.value(),
+      );
+    } catch (error) {
+      logger.warn("Firma de webhook Stripe no válida", error.message);
+      response.status(400).send("Invalid signature");
+      return;
+    }
+    const supported = new Set([
+      "checkout.session.completed",
+      "customer.subscription.created",
+      "customer.subscription.updated",
+      "customer.subscription.deleted",
+      "invoice.payment_failed",
+      "invoice.paid",
+    ]);
+    if (!supported.has(event.type)) {
+      response.status(200).json({ received: true });
+      return;
+    }
+    const object = event.data.object;
+    let companyId =
+      object.metadata?.companyId ||
+      object.client_reference_id ||
+      object.subscription_details?.metadata?.companyId;
+    if (!companyId && object.customer) {
+      const querySnap = await db.collection("companies")
+        .where("stripeCustomerId", "==", object.customer).limit(1).get();
+      companyId = querySnap.docs[0]?.id;
+    }
+    if (!companyId) {
+      logger.error("Webhook Stripe sin companyId", event.id);
+      response.status(200).json({ received: true });
+      return;
+    }
+    let subscription = object;
+    if (object.subscription && (event.type === "checkout.session.completed" || event.type.startsWith("invoice."))) {
+      subscription = await getStripeClient().subscriptions.retrieve(object.subscription);
+    }
+    const subscriptionStatus =
+      event.type === "invoice.payment_failed"
+        ? "past_due"
+        : subscription.status || (event.type === "invoice.paid" ? "active" : null);
+    const update = {
+      stripeCustomerId: object.customer || subscription.customer || null,
+      stripeSubscriptionId: subscription.id?.startsWith("sub_") ? subscription.id : null,
+      subscriptionStatus,
+      status: ACTIVE_SUBSCRIPTION_STATUSES.has(subscriptionStatus) ? "active" : "suspended",
+      updatedAt: FieldValue.serverTimestamp(),
+      lastStripeEventId: event.id,
+    };
+    if (subscription.metadata?.plan) update.plan = subscription.metadata.plan;
+    if (subscription.current_period_end) {
+      update.currentPeriodEndsAt = Timestamp.fromMillis(subscription.current_period_end * 1000);
+    }
+    const eventRef = db.collection("stripeEvents").doc(event.id);
+    await db.runTransaction(async (transaction) => {
+      const processed = await transaction.get(eventRef);
+      if (processed.exists) return;
+      transaction.set(
+        db.collection("companies").doc(companyId),
+        update,
+        { merge: true },
+      );
+      transaction.create(eventRef, {
+        type: event.type,
+        companyId,
+        processedAt: FieldValue.serverTimestamp(),
+      });
+    });
+    response.status(200).json({ received: true });
+  },
+);
+
 function calculateHaversineDistance(lat1, lon1, lat2, lon2) {
   const R = 6371e3; // Radio de la Tierra en metros
   const phi1 = (lat1 * Math.PI) / 180;
@@ -1904,6 +2616,7 @@ exports.secureCheckIn = onCall(
         "El usuario debe pertenecer a una organización (companyId faltante).",
       );
     }
+    await assertTenantEnabled(companyId);
 
     const {
       userId,
@@ -2327,6 +3040,7 @@ exports.secureCheckOut = onCall(
         "El usuario debe pertenecer a una organización (companyId faltante).",
       );
     }
+    await assertTenantEnabled(companyId);
 
     const {
       checkInId,
@@ -2609,6 +3323,7 @@ exports.secureDeleteCheckIn = onCall(
         "El usuario debe pertenecer a una organización (companyId faltante).",
       );
     }
+    await assertTenantEnabled(companyId);
 
     await db.runTransaction(async (transaction) => {
       const checkInRef = db.collection(`companies/${companyId}/checkIns`).doc(checkInId);

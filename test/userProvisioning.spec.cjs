@@ -65,6 +65,21 @@ describe("Tenant user provisioning Cloud Functions", function () {
   this.timeout(60000);
   const db = getFirestore();
 
+  before(async () => {
+    await Promise.all([
+      db.collection("companies").doc("rayba").set({
+        name: "Rayba",
+        status: "active",
+        subscriptionStatus: "active",
+      }),
+      db.collection("companies").doc("tenantB").set({
+        name: "Tenant B",
+        status: "active",
+        subscriptionStatus: "active",
+      }),
+    ]);
+  });
+
   it("crea un operario en Auth y /users usando el companyId del admin", async () => {
     const headers = await getAuthHeaders("provisioningAdmin", {
       companyId: "rayba",
@@ -87,6 +102,53 @@ describe("Tenant user provisioning Cloud Functions", function () {
     assert.strictEqual(authUser.customClaims.companyId, "rayba");
   });
 
+  it("aprovisiona una empresa, su administrador y el trial desde una solicitud", async () => {
+    const headers = await getAuthHeaders("platformAdmin", {
+      companyId: "rayba",
+      role: "admin",
+      active: true,
+      platformAdmin: true,
+    });
+    const suffix = Date.now();
+    const requestId = `lead-${suffix}`;
+    const companyId = `tenant-${suffix}`;
+    const invitationCode = `TENANT${suffix}`;
+    await db.collection("companyRequests").doc(requestId).set({
+      companyName: `Empresa ${suffix}`,
+      contactName: "Propietario Prueba",
+      email: `owner-${suffix}@example.test`,
+      phone: "600000001",
+      plan: "starter",
+      status: "pending",
+      createdAt: new Date(),
+    });
+    const { response, body } = await callFunction(
+      "provisionCompanyFromRequest",
+      headers,
+      {
+        requestId,
+        companyId,
+        invitationCode,
+        temporaryPassword: "Temporary123!",
+        plan: "starter",
+      },
+    );
+    assert.strictEqual(response.status, 200, JSON.stringify(body));
+    const company = (await db.collection("companies").doc(companyId).get()).data();
+    const owner = (
+      await db.collection("users").doc(body.result.adminUid).get()
+    ).data();
+    assert.strictEqual(company.subscriptionStatus, "trialing");
+    assert.strictEqual(company.status, "active");
+    assert.strictEqual(owner.role, "admin");
+    assert.strictEqual(owner.companyId, companyId);
+    assert.strictEqual(
+      (await db.collection("accessCodeIndex").doc(invitationCode).get()).data()
+        .companyId,
+      companyId,
+    );
+  });
+
   it("rechaza la creación de operarios por otro operario", async () => {
     const headers = await getAuthHeaders("nonAdminProvisioner", {
       companyId: "rayba",
@@ -99,6 +161,88 @@ describe("Tenant user provisioning Cloud Functions", function () {
       name: "No permitido",
     });
     assert.notStrictEqual(response.status, 200);
+  });
+
+  it("impide superar el límite de 5 operarios del plan Autónomo", async () => {
+    const companyId = `limited-${Date.now()}`;
+    await db.collection("companies").doc(companyId).set({
+      name: "Empresa limitada",
+      status: "active",
+      subscriptionStatus: "active",
+      plan: "autonomo",
+    });
+    const batch = db.batch();
+    for (let index = 0; index < 5; index += 1) {
+      batch.set(db.collection("users").doc(`${companyId}-op-${index}`), {
+        companyId,
+        role: "operario",
+        active: true,
+      });
+    }
+    await batch.commit();
+    const headers = await getAuthHeaders(`${companyId}-admin`, {
+      companyId,
+      role: "admin",
+      active: true,
+    });
+    const { response } = await callFunction("createOperarioUser", headers, {
+      email: `${companyId}@example.test`,
+      password: "TestPassword123!",
+      name: "Operario 6",
+    });
+    assert.notStrictEqual(response.status, 200);
+  });
+
+  it("impide superar el límite de comunidades del plan Starter", async () => {
+    const companyId = `community-limited-${Date.now()}`;
+    await db.collection("companies").doc(companyId).set({
+      name: "Empresa con comunidades limitadas",
+      status: "active",
+      subscriptionStatus: "active",
+      plan: "starter",
+    });
+    const batch = db.batch();
+    for (let index = 0; index < 100; index += 1) {
+      batch.set(
+        db.collection(`companies/${companyId}/communities`).doc(`comm-${index}`),
+        { name: `Comunidad ${index}` },
+      );
+    }
+    await batch.commit();
+    const headers = await getAuthHeaders(`${companyId}-admin`, {
+      companyId,
+      role: "admin",
+      active: true,
+    });
+    const { response } = await callFunction("createTenantCommunity", headers, {
+      name: "Comunidad 101",
+      address: "Dirección de prueba",
+    });
+    assert.notStrictEqual(response.status, 200);
+  });
+
+  it("permite abrir la consola global solo desde el tenant Rayba", async () => {
+    const raybaHeaders = await getAuthHeaders(`rayba-platform-${Date.now()}`, {
+      companyId: "rayba",
+      role: "admin",
+      active: true,
+      platformAdmin: true,
+    });
+    const allowed = await callFunction("getPlatformDashboard", raybaHeaders, {});
+    assert.strictEqual(allowed.response.status, 200, JSON.stringify(allowed.body));
+    assert.ok(Array.isArray(allowed.body.result.companies));
+    assert.strictEqual(allowed.body.result.planCatalog.autonomo.operarios, 5);
+    assert.strictEqual(allowed.body.result.planCatalog.starter.communities, 100);
+    assert.strictEqual(allowed.body.result.planCatalog.starter.admins, null);
+
+    const otherTenantHeaders = await getAuthHeaders(`other-platform-${Date.now()}`, {
+      companyId: "tenantB",
+      role: "admin",
+      active: true,
+      platformAdmin: true,
+    });
+    const denied = await callFunction("getPlatformDashboard", otherTenantHeaders, {});
+    assert.notStrictEqual(denied.response.status, 200);
   });
 
   it("sincroniza accessCodeIndex y completa el autorregistro en Rayba", async () => {

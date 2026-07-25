@@ -1,15 +1,10 @@
 import React, { useEffect, useState } from "react";
 import {
-  collection,
-  query,
-  orderBy,
-  onSnapshot,
-  doc,
-  updateDoc,
-  deleteDoc,
-  serverTimestamp,
-} from "firebase/firestore";
-import { db } from "../../config/firebase";
+  deleteCompanyRequest,
+  listCompanyRequests,
+  provisionCompanyFromRequest,
+  updateCompanyRequest,
+} from "../../services/platformService";
 
 const STATUS_CONFIG = {
   pending: {
@@ -65,24 +60,30 @@ export default function CompanyRequestsPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
   const [expanded, setExpanded] = useState(null);
+  const [actionMessage, setActionMessage] = useState("");
 
   useEffect(() => {
-    const q = query(
-      collection(db, "companyRequests"),
-      orderBy("createdAt", "desc"),
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      setRequests(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setLoading(false);
-    });
-    return () => unsub();
+    refreshRequests();
   }, []);
 
+  async function refreshRequests() {
+    setLoading(true);
+    try {
+      setRequests(await listCompanyRequests());
+    } catch (error) {
+      setActionMessage(`Error al cargar solicitudes: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function changeStatus(id, newStatus) {
-    await updateDoc(doc(db, "companyRequests", id), {
-      status: newStatus,
-      updatedAt: serverTimestamp(),
-    });
+    await updateCompanyRequest(id, newStatus);
+    setRequests((current) =>
+      current.map((item) =>
+        item.id === id ? { ...item, status: newStatus } : item,
+      ),
+    );
   }
 
   async function handleDelete(id) {
@@ -92,7 +93,41 @@ export default function CompanyRequestsPage() {
       )
     )
       return;
-    await deleteDoc(doc(db, "companyRequests", id));
+    await deleteCompanyRequest(id);
+    setRequests((current) => current.filter((item) => item.id !== id));
+  }
+
+  async function handleProvision(item) {
+    const companyId = window.prompt(
+      "Identificador de empresa (minúsculas, sin espacios):",
+      (item.companyName || "").toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+    );
+    if (!companyId) return;
+    const invitationCode = window.prompt(
+      "Código de invitación para operarios:",
+      `${companyId.replace(/-/g, "").slice(0, 12).toUpperCase()}2026`,
+    );
+    if (!invitationCode) return;
+    const temporaryPassword = window.prompt(
+      "Contraseña temporal del administrador (mínimo 10 caracteres):",
+    );
+    if (!temporaryPassword) return;
+    setActionMessage("Creando empresa y administrador...");
+    try {
+      const result = await provisionCompanyFromRequest({
+        requestId: item.id,
+        companyId,
+        invitationCode,
+        temporaryPassword,
+        plan: item.plan || "starter",
+      });
+      setActionMessage(
+        `Empresa ${result.companyId} creada. Administrador: ${result.email}. Código: ${result.invitationCode}`,
+      );
+      await refreshRequests();
+    } catch (error) {
+      setActionMessage(`Error al crear empresa: ${error.message}`);
+    }
   }
 
   const filtered =
@@ -104,16 +139,15 @@ export default function CompanyRequestsPage() {
   }, {});
 
   function formatDate(ts) {
-    if (!ts?.toDate) return "—";
-    return ts
-      .toDate()
-      .toLocaleString("es-ES", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
+    const date = ts?.toDate ? ts.toDate() : ts ? new Date(ts) : null;
+    if (!date || Number.isNaN(date.getTime())) return "—";
+    return date.toLocaleString("es-ES", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   }
 
   if (loading) {
@@ -127,6 +161,11 @@ export default function CompanyRequestsPage() {
 
   return (
     <div style={{ padding: "var(--space-6)", maxWidth: "1000px" }}>
+      {actionMessage && (
+        <div className="card" style={{ marginBottom: "16px" }}>
+          {actionMessage}
+        </div>
+      )}
       <div style={{ marginBottom: "var(--space-6)" }}>
         <h2
           style={{
@@ -472,6 +511,15 @@ export default function CompanyRequestsPage() {
                         </button>
                       ))}
                       <div style={{ marginLeft: "auto" }}>
+                        {!req.provisionedCompanyId && (
+                          <button
+                            className="btn btn-primary btn-sm"
+                            onClick={() => handleProvision(req)}
+                            style={{ marginRight: "8px" }}
+                          >
+                            Crear empresa
+                          </button>
+                        )}
                         <a
                           href={`mailto:${req.email}?subject=Tu solicitud de acceso a LimpiaGest&body=Hola ${req.contactName},%0A%0AHemos recibido tu solicitud de acceso a LimpiaGest para ${req.companyName}.%0A%0AEn breve nos ponemos en contacto contigo.%0A%0AUn saludo,%0AEquipo LimpiaGest`}
                           className="btn btn-primary btn-sm"

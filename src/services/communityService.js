@@ -1,7 +1,6 @@
 import {
   collection,
   doc,
-  addDoc,
   updateDoc,
   deleteDoc,
   getDocs,
@@ -13,36 +12,24 @@ import {
   GeoPoint,
   writeBatch,
 } from "firebase/firestore";
-import { db } from "../config/firebase";
+import { httpsCallable } from "firebase/functions";
+import { db, functions } from "../config/firebase";
 import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
 import { deleteScheduledServicesByCommunity } from "./scheduleService";
 
 const COLLECTION = "communities";
 
 export async function createCommunity(companyId, data) {
-  const docData = {
-    name: data.name,
-    address: data.address,
-    location: new GeoPoint(data.lat || 0, data.lng || 0),
-    type: data.type || "comunidad",
-    contactPerson: data.contactPerson || "",
-    contactPhone: data.contactPhone || "",
-    preferredTime: data.preferredTime || null,
-    individualTimeTracking: !!data.individualTimeTracking,
-    billingCif: data.billingCif || "",
-    billingAddress: data.billingAddress || "",
-    basePrice: parseFloat(data.basePrice) || 0,
-    paymentMethod: data.paymentMethod || "transferencia",
-    billingEmail: data.billingEmail || "",
-    billingIban: data.billingIban || "",
-    billingMandateRef: data.billingMandateRef || "",
-    billingMandateDate: data.billingMandateDate || "",
-    administratorId: data.administratorId || "",
-    active: true,
-    createdAt: serverTimestamp(),
-  };
-  const ref = await addDoc(tenantCollection(db, companyId, COLLECTION), docData);
-  return { id: ref.id, ...docData };
+  if (!companyId) throw new Error("No hay una empresa activa.");
+  const result = await httpsCallable(functions, "createTenantCommunity")({
+    community: {
+      ...data,
+      basePrice: parseFloat(data.basePrice) || 0,
+      individualTimeTracking: !!data.individualTimeTracking,
+      active: true,
+    },
+  });
+  return { id: result.data.id, ...data, active: true };
 }
 
 export async function updateCommunity(companyId, id, data) {

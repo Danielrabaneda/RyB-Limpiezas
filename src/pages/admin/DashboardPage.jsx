@@ -283,7 +283,23 @@ export default function DashboardPage() {
             {format(new Date(), "EEEE, d 'de' MMMM yyyy", { locale: es })}
           </p>
         </div>
-        <div>
+        <div className="flex flex-wrap gap-2">
+          {companyId === "rayba" && userProfile?.platformAdmin === true && (
+            <button
+              onClick={() => navigate("/admin/plataforma")}
+              className="btn"
+              style={{
+                padding: "10px 20px",
+                borderRadius: "14px",
+                fontWeight: 800,
+                color: "white",
+                background: "linear-gradient(135deg,#0f172a,#1d4ed8)",
+                boxShadow: "0 6px 18px rgba(15,23,42,.2)",
+              }}
+            >
+              ◈ Consola global
+            </button>
+          )}
           <button
             onClick={() => {
               setNotifForm({

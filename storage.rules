@@ -12,9 +12,22 @@ service firebase.storage {
     }
 
     function isTenant(companyId) {
+      let company = firestore.get(
+        /databases/(default)/documents/companies/$(companyId)
+      ).data;
       return isAuthenticated() && 
         request.auth.token.companyId == companyId && 
-        request.auth.token.active == true;
+        request.auth.token.active == true &&
+        company.status == 'active' &&
+        (
+          !('subscriptionStatus' in company) ||
+          company.subscriptionStatus == 'active' ||
+          (
+            company.subscriptionStatus == 'trialing' &&
+            company.trialEndsAt != null &&
+            company.trialEndsAt > request.time
+          )
+        );
     }
 
     function isTenantAdmin(companyId) {

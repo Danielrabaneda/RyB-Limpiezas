@@ -24,6 +24,7 @@ import {
 import { db } from "./config/firebase";
 import { RequireTenant, useTenant } from "./contexts/TenantContext";
 import { tenantCollection, tenantDoc } from "./utils/tenantFirestore";
+import { listCompanyRequests } from "./services/platformService";
 import "./index.css";
 
 // ==================== ERROR BOUNDARY ====================
@@ -113,6 +114,9 @@ const AbsencesAdminPage = lazy(() => import("./pages/admin/AbsencesAdminPage"));
 const ClientPortalPage = lazy(() => import("./pages/cliente/ClientPortalPage"));
 const CompanyRequestsPage = lazy(
   () => import("./pages/admin/CompanyRequestsPage"),
+);
+const PlatformDashboardPage = lazy(
+  () => import("./pages/admin/PlatformDashboardPage"),
 );
 
 // Legal pages
@@ -227,14 +231,17 @@ function ProtectedRoute({ children, requiredRole }) {
   return children;
 }
 
-function SuperAdminRoute({ children }) {
-  const { userProfile, loading } = useAuth();
-  if (loading) return null;
-  if (userProfile?.email !== "admin@ryblimpiezas.com") {
-    return <Navigate to="/admin" />;
+  function SuperAdminRoute({ children }) {
+    const { userProfile, loading } = useAuth();
+    if (loading) return null;
+    if (
+      userProfile?.platformAdmin !== true ||
+      userProfile?.companyId !== "rayba"
+    ) {
+      return <Navigate to="/admin" />;
+    }
+    return children;
   }
-  return children;
-}
 
 // ==================== ADMIN LAYOUT ====================
 function AdminLayout() {
@@ -317,22 +324,22 @@ function AdminLayout() {
   }, [companyId]);
 
   useEffect(() => {
-    const q = query(
-      collection(db, "companyRequests"),
-      where("status", "==", "pending"),
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      setPendingLeads(snap.size);
-    });
-    return () => unsub();
-  }, []);
+    if (userProfile?.platformAdmin !== true) return;
+    listCompanyRequests()
+      .then((items) => {
+        setPendingLeads(items.filter((item) => item.status === "pending").length);
+      })
+      .catch((error) =>
+        console.error("No se pudieron cargar solicitudes pendientes:", error),
+      );
+  }, [userProfile?.platformAdmin]);
 
   async function handleLogout() {
     await logout();
     navigate("/login");
   }
 
-  const isMasterAdmin = userProfile?.email === "admin@ryblimpiezas.com";
+  const isMasterAdmin = userProfile?.platformAdmin === true;
 
   const navItems = [
     { path: "/admin", icon: "📊", label: "Dashboard", exact: true },
@@ -915,6 +922,14 @@ export default function App() {
                     element={
                       <SuperAdminRoute>
                         <CompanyRequestsPage />
+                      </SuperAdminRoute>
+                    }
+                  />
+                  <Route
+                    path="plataforma"
+                    element={
+                      <SuperAdminRoute>
+                        <PlatformDashboardPage />
                       </SuperAdminRoute>
                     }
                   />

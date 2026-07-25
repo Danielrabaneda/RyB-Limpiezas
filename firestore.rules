@@ -39,8 +39,23 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.token.companyId != null;
     }
 
-    function isTenant(companyId) {
+    function isTenantMember(companyId) {
       return hasTenant() && request.auth.token.companyId == companyId;
+    }
+
+    function isTenant(companyId) {
+      let company = get(/databases/$(database)/documents/companies/$(companyId)).data;
+      return isTenantMember(companyId)
+        && company.status == 'active'
+        && (
+          !('subscriptionStatus' in company)
+          || company.subscriptionStatus == 'active'
+          || (
+            company.subscriptionStatus == 'trialing'
+            && company.trialEndsAt != null
+            && company.trialEndsAt > request.time
+          )
+        );
     }
 
     // =========================================================================
@@ -98,8 +113,10 @@ service cloud.firestore {
     match /companies/{companyId} {
       
       // La regla global a nivel de documento company no permite operaciones en crudo a menos que sea un empleado
-      allow read: if isTenant(companyId) && isEmployeeActive();
-      allow write: if isTenant(companyId) && isAdminActive();
+      // El tenant puede leer su estado para mostrar suspensión o impago.
+      // Los metadatos comerciales solo los modifica el backend de plataforma.
+      allow read: if isTenantMember(companyId) && isEmployeeActive();
+      allow write: if false;
 
       // geoDetections
       match /geoDetections/{detectionId} {
@@ -125,7 +142,9 @@ service cloud.firestore {
       // communities
       match /communities/{id} {
         allow read: if isTenant(companyId) && isEmployeeActive();
-        allow write: if isTenant(companyId) && isAdminActive();
+        // Las altas pasan por Cloud Function para aplicar el límite del plan.
+        allow create: if false;
+        allow update, delete: if isTenant(companyId) && isAdminActive();
       }
 
       // taskTemplates
