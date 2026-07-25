@@ -54,6 +54,9 @@ const LONG_CHECKIN_THRESHOLD_HOURS = 5;
 /** Umbral en horas para avisar de una jornada muy larga */
 const LONG_WORKDAY_THRESHOLD_HOURS = 10;
 
+/** Umbral en horas para autocierre automático de jornada */
+const AUTO_CLOSE_WORKDAY_THRESHOLD_HOURS = 12;
+
 /** Tiempo mínimo entre recordatorios del mismo tipo (en minutos) */
 const REMINDER_COOLDOWN_MIN = 30;
 
@@ -598,6 +601,78 @@ async function getCommunityName(companyId, communityId) {
   return "la comunidad";
 }
 
+/**
+ * Formatea una fecha a HH:mm
+ * @param {Date} d
+ * @returns {string}
+ */
+function formatTimeHHMM(d) {
+  const hours = String(d.getHours()).padStart(2, "0");
+  const minutes = String(d.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
+/**
+ * Obtiene el promedio de minutos de jornadas completadas por un usuario en las 2 semanas anteriores para el mismo día de la semana.
+ * @param {string} companyId - ID del tenant
+ * @param {string} userId - ID del operario
+ * @param {Date} workdayDate - Fecha de la jornada actual
+ * @returns {Promise<{ avgMinutes: number, count: number }>}
+ */
+async function getAverageWorkdayMinutesSameWeekday(companyId, userId, workdayDate) {
+  try {
+    const oneWeekAgo = new Date(workdayDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const twoWeeksAgo = new Date(workdayDate.getTime() - 14 * 24 * 60 * 60 * 1000);
+
+    const targetDates = [
+      oneWeekAgo.toISOString().split("T")[0],
+      twoWeeksAgo.toISOString().split("T")[0],
+    ];
+
+    const snap = await db
+      .collection(`companies/${companyId}/workdays`)
+      .where("userId", "==", userId)
+      .where("status", "==", "completed")
+      .get();
+
+    if (snap.empty) {
+      return { avgMinutes: 480, count: 0 };
+    }
+
+    const matchingMinutes = [];
+    snap.docs.forEach((doc) => {
+      const data = doc.data();
+      if (!data.totalMinutes || Number(data.totalMinutes) <= 0) return;
+
+      let docDateStr = null;
+      if (data.date) {
+        const d = data.date.toDate ? data.date.toDate() : new Date(data.date);
+        docDateStr = d.toISOString().split("T")[0];
+      } else if (data.startTime) {
+        const d = data.startTime.toDate ? data.startTime.toDate() : new Date(data.startTime);
+        docDateStr = d.toISOString().split("T")[0];
+      }
+
+      if (docDateStr && targetDates.includes(docDateStr)) {
+        matchingMinutes.push(Number(data.totalMinutes));
+      }
+    });
+
+    if (matchingMinutes.length > 0) {
+      const sum = matchingMinutes.reduce((acc, val) => acc + val, 0);
+      const avg = Math.round(sum / matchingMinutes.length);
+      return { avgMinutes: avg, count: matchingMinutes.length };
+    }
+  } catch (e) {
+    logger.error(
+      `[getAverageWorkdayMinutesSameWeekday] Error en usuario ${userId}:`,
+      e,
+    );
+  }
+
+  return { avgMinutes: 480, count: 0 };
+}
+
 // ============================================================================
 // FUNCIÓN 1: checkWorkdayReminders
 // Ejecuta cada 10 minutos, revisa jornadas activas y envía recordatorios push.
@@ -657,6 +732,124 @@ exports.checkWorkdayReminders = onSchedule(
 
             const workdayMinutes = minutesElapsed(workdayStartTime);
             const workdayHours = hoursElapsed(workdayStartTime);
+
+            // -----------------------------------------------------------
+            // CHECK 0: Autocierre automático si la jornada supera las 12h
+            // -----------------------------------------------------------
+            if (workdayHours >= AUTO_CLOSE_WORKDAY_THRESHOLD_HOURS) {
+              logger.info(
+                `[Jornada ${workdayId}] Supera las ${AUTO_CLOSE_WORKDAY_THRESHOLD_HOURS}h activas. Ejecutando autocierre...`,
+              );
+
+              const startTimestamp = workdayStartTime.toDate
+                ? workdayStartTime.toDate()
+                : new Date(workdayStartTime);
+
+              // 1. Auto-cerrar fichajes abiertos si los hubiera
+              const openCheckInsSnap = await db
+                .collection(`companies/${companyId}/checkIns`)
+                .where("userId", "==", userId)
+                .where("checkOutTime", "==", null)
+                .get();
+
+              for (const ciDoc of openCheckInsSnap.docs) {
+                await ciDoc.ref.update({
+                  checkOutTime: FieldValue.serverTimestamp(),
+                  autoClosed: true,
+                  autoCloseReason: "Autocierre automático por fin de jornada (>12h)",
+                  updatedAt: FieldValue.serverTimestamp(),
+                });
+              }
+
+              // 2. Buscar el último checkIn completado para esta jornada/usuario
+              const completedCheckInsSnap = await db
+                .collection(`companies/${companyId}/checkIns`)
+                .where("userId", "==", userId)
+                .get();
+
+              let lastCheckOutTime = null;
+              completedCheckInsSnap.docs.forEach((ciDoc) => {
+                const ciData = ciDoc.data();
+                if (ciData.checkOutTime) {
+                  const checkOutDate = ciData.checkOutTime.toDate
+                    ? ciData.checkOutTime.toDate()
+                    : new Date(ciData.checkOutTime);
+                  if (checkOutDate >= startTimestamp) {
+                    if (!lastCheckOutTime || checkOutDate > lastCheckOutTime) {
+                      lastCheckOutTime = checkOutDate;
+                    }
+                  }
+                }
+              });
+
+              let finalEndTime = null;
+              let autoCloseReason = "";
+              let autoCloseNote = "";
+
+              if (lastCheckOutTime) {
+                finalEndTime = lastCheckOutTime;
+                autoCloseReason =
+                  "Autocierre (>12h). Hora de fin fijada a la salida del último servicio realizado.";
+                autoCloseNote = `Jornada cerrada automáticamente tras 12h. Hora de fin fijada según la última tarea realizada (${formatTimeHHMM(finalEndTime)}).`;
+              } else {
+                // Si NO hay tareas/fichajes completados hoy: calcular promedio de las 2 semanas anteriores
+                const { avgMinutes, count } =
+                  await getAverageWorkdayMinutesSameWeekday(
+                    companyId,
+                    userId,
+                    startTimestamp,
+                  );
+
+                finalEndTime = new Date(
+                  startTimestamp.getTime() + avgMinutes * 60 * 1000,
+                );
+                const hrs = Math.floor(avgMinutes / 60);
+                const mins = avgMinutes % 60;
+
+                if (count > 0) {
+                  autoCloseReason = `Autocierre (>12h). Sin tareas registradas hoy; horas calculadas por promedio de los mismos días de las últimas 2 semanas (${hrs}h ${mins}m).`;
+                  autoCloseNote = `Jornada no cerrada manualmente. Hora de fin calculada automáticamente según la media de las 2 semanas anteriores para este mismo día de la semana (${hrs}h ${mins}m).`;
+                } else {
+                  autoCloseReason =
+                    "Autocierre (>12h). Sin tareas registradas hoy ni histórico previo en este día (calculado por defecto 8h).";
+                  autoCloseNote =
+                    "Jornada no cerrada manualmente. Hora de fin estimada por defecto en 8 horas por falta de histórico.";
+                }
+              }
+
+              const durationMinutes = Math.max(
+                0,
+                Math.round(
+                  (finalEndTime.getTime() - startTimestamp.getTime()) /
+                    (60 * 1000),
+                ),
+              );
+
+              await workdayDoc.ref.update({
+                status: "completed",
+                endTime: Timestamp.fromDate(finalEndTime),
+                totalMinutes: durationMinutes,
+                autoClosed: true,
+                autoCloseReason: autoCloseReason,
+                autoCloseNote: autoCloseNote,
+                retroactiveClosed: true,
+                updatedAt: FieldValue.serverTimestamp(),
+              });
+
+              await sendPushNotification(
+                userId,
+                "Jornada auto-cerrada",
+                `Tu jornada se ha cerrado automáticamente. ${autoCloseNote}`,
+                "auto_close_12h",
+              );
+
+              logger.info(
+                `[Jornada ${workdayId}] Autocierre completado con éxito. Duración: ${durationMinutes}m. Nota: ${autoCloseNote}`,
+              );
+
+              // Finalizamos el procesamiento de esta jornada ya cerrada
+              return;
+            }
 
             // -----------------------------------------------------------
             // CHECK 1: Jornada > 10 horas activa

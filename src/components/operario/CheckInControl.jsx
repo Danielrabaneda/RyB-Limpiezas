@@ -233,49 +233,77 @@ export default function CheckInControl({
           </div>
         )}
 
-      {isCheckedIn && suggestedOut && (
-        <div
-          className="exit-suggestion-card animate-fadeIn"
-          style={{ position: "relative" }}
-        >
-          <button
-            type="button"
-            onClick={handleDismissSuggestion}
-            style={{
-              position: "absolute",
-              top: "10px",
-              right: "10px",
-              border: "none",
-              background: "transparent",
-              color: "#b45309",
-              fontWeight: "bold",
-              cursor: "pointer",
-              fontSize: "14px",
-            }}
-            title="Ignorar sugerencia"
-          >
-            ✕
-          </button>
-          <div className="exit-suggestion-icon">🏃</div>
+      {(() => {
+        if (!isCheckedIn || !suggestedOut) return null;
+
+        const now = Date.now();
+        let effectiveOut =
+          suggestedOut instanceof Date
+            ? suggestedOut
+            : new Date(suggestedOut);
+
+        if (isNaN(effectiveOut.getTime())) return null;
+
+        // No permitir horas en el futuro respecto al momento actual
+        if (effectiveOut.getTime() > now) {
+          effectiveOut = new Date(now);
+        }
+
+        // No permitir horas anteriores a la entrada de este servicio
+        if (activeCheckIn?.checkInTime) {
+          const checkInMs = activeCheckIn.checkInTime.toDate
+            ? activeCheckIn.checkInTime.toDate().getTime()
+            : new Date(activeCheckIn.checkInTime).getTime();
+
+          if (!isNaN(checkInMs) && checkInMs > 0 && effectiveOut.getTime() < checkInMs) {
+            return null;
+          }
+        }
+
+        return (
           <div
-            className="exit-suggestion-content"
-            style={{ paddingRight: "20px" }}
+            className="exit-suggestion-card animate-fadeIn"
+            style={{ position: "relative" }}
           >
-            <p className="exit-suggestion-title">¿Finalizar servicio?</p>
-            <p className="exit-suggestion-subtitle">
-              Se detectó tu salida de la comunidad a las{" "}
-              <strong>{format(suggestedOut, "HH:mm")}</strong>.
-            </p>
+            <button
+              type="button"
+              onClick={handleDismissSuggestion}
+              style={{
+                position: "absolute",
+                top: "10px",
+                right: "10px",
+                border: "none",
+                background: "transparent",
+                color: "#b45309",
+                fontWeight: "bold",
+                cursor: "pointer",
+                fontSize: "14px",
+              }}
+              title="Ignorar sugerencia"
+            >
+              ✕
+            </button>
+            <div className="exit-suggestion-icon">🏃</div>
+            <div
+              className="exit-suggestion-content"
+              style={{ paddingRight: "20px" }}
+            >
+              <p className="exit-suggestion-title">¿Finalizar servicio?</p>
+              <p className="exit-suggestion-subtitle">
+                Se detectó tu salida de la comunidad a las{" "}
+                <strong>{format(effectiveOut, "HH:mm")}</strong>.
+              </p>
+            </div>
+            <button
+              className="btn-pulse-glow"
+              onClick={() => handleCheckOut(effectiveOut)}
+              disabled={actionLoading}
+            >
+              ⏱️ Finalizar a las {format(effectiveOut, "HH:mm")}
+            </button>
           </div>
-          <button
-            className="btn-pulse-glow"
-            onClick={() => handleCheckOut(suggestedOut)}
-            disabled={actionLoading}
-          >
-            ⏱️ Finalizar a las {format(suggestedOut, "HH:mm")}
-          </button>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ================= FORMULARIO ENTRADA MANUAL ================= */}
       {showManualEntryForm && !isCheckedIn && (

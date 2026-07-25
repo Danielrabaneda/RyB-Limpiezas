@@ -147,12 +147,39 @@ export function useCheckInFlow(
           }
         }
 
+        const applySanitizedExit = (rawDate) => {
+          if (!rawDate) return;
+          const d = rawDate instanceof Date ? rawDate : new Date(rawDate);
+          if (isNaN(d.getTime())) return;
+          const now = Date.now();
+
+          // Topar a la hora actual si está en el futuro
+          if (d.getTime() > now) {
+            setSuggestedOut(new Date(now));
+            return;
+          }
+
+          // Descartar si es anterior al checkIn activo
+          if (activeCheckIn?.checkInTime) {
+            const checkInMs = activeCheckIn.checkInTime.toDate
+              ? activeCheckIn.checkInTime.toDate().getTime()
+              : new Date(activeCheckIn.checkInTime).getTime();
+
+            if (!isNaN(checkInMs) && checkInMs > 0 && d.getTime() < checkInMs) {
+              setSuggestedOut(null);
+              return;
+            }
+          }
+
+          setSuggestedOut(d);
+        };
+
         if (sOut) {
-          setSuggestedOut(new Date(sOut));
+          applySanitizedExit(sOut);
         } else {
           const dbExit = await getExitDetection(companyId, userProfile.uid, serviceId);
           if (dbExit && dbExit.detectedAt) {
-            setSuggestedOut(
+            applySanitizedExit(
               dbExit.detectedAt.toDate
                 ? dbExit.detectedAt.toDate()
                 : new Date(dbExit.detectedAt),
@@ -171,7 +198,7 @@ export function useCheckInFlow(
                     pending.exitTime,
                   );
                   localStorage.removeItem(`detected_exit_pending_${serviceId}`);
-                  setSuggestedOut(new Date(pending.exitTime));
+                  applySanitizedExit(pending.exitTime);
                 }
               } catch (e) {
                 /* ignore */
@@ -198,7 +225,14 @@ export function useCheckInFlow(
 
       const confirmedExit = localStorage.getItem(`detected_exit_${serviceId}`);
       if (confirmedExit && !suggestedOut) {
-        setSuggestedOut(new Date(confirmedExit));
+        const d = new Date(confirmedExit);
+        if (!isNaN(d.getTime())) {
+          if (d.getTime() > Date.now()) {
+            setSuggestedOut(new Date());
+          } else {
+            setSuggestedOut(d);
+          }
+        }
       } else if (!confirmedExit && !suggestedOut) {
         const pendingRaw = localStorage.getItem(
           `detected_exit_pending_${serviceId}`,
@@ -213,7 +247,10 @@ export function useCheckInFlow(
                 pending.exitTime,
               );
               localStorage.removeItem(`detected_exit_pending_${serviceId}`);
-              setSuggestedOut(new Date(pending.exitTime));
+              const d = new Date(pending.exitTime);
+              if (!isNaN(d.getTime())) {
+                setSuggestedOut(d.getTime() > Date.now() ? new Date() : d);
+              }
             }
           } catch (e) {
             /* ignore */
