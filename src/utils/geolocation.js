@@ -17,13 +17,19 @@ export function getDistance(lat1, lon1, lat2, lon2) {
 }
 
 /**
- * Solicita permiso de notificación
+ * Solicita permiso de notificación de manera segura
+ * @returns {Promise<'granted'|'denied'|'unsupported'>}
  */
 export async function requestNotificationPermission() {
-  if (!("Notification" in window)) return false;
-  if (Notification.permission === "granted") return true;
-  const permission = await Notification.requestPermission();
-  return permission === "granted";
+  if (!("Notification" in window)) return "unsupported";
+  if (Notification.permission === "granted") return "granted";
+  try {
+    const permission = await Notification.requestPermission();
+    return permission;
+  } catch (e) {
+    console.warn("[Notification] Error pidiendo permiso:", e);
+    return "denied";
+  }
 }
 
 /**

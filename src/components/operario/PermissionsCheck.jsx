@@ -10,6 +10,17 @@ export default function PermissionsCheck() {
   const [showModal, setShowModal] = useState(false);
   const [status, setStatus] = useState("pending"); // 'pending', 'loading', 'granted', 'error'
   const [errorMessage, setErrorMessage] = useState("");
+  const [infoMessage, setInfoMessage] = useState("");
+
+  // Detectar si es iOS en navegador (no instalado como PWA)
+  const isIOS =
+    typeof navigator !== "undefined" &&
+    /iPad|iPhone|iPod/.test(navigator.userAgent) &&
+    !window.MSStream;
+  const isStandalone =
+    typeof window !== "undefined" &&
+    (window.matchMedia("(display-mode: standalone)").matches ||
+      navigator.standalone);
 
   useEffect(() => {
     // Check session storage so we only show the popup if we haven't asked during this session
@@ -22,29 +33,15 @@ export default function PermissionsCheck() {
   const requestPermissions = async () => {
     setStatus("loading");
     setErrorMessage("");
+    setInfoMessage("");
+
+    let gpsSuccess = false;
+
+    // 1. Pedir Ubicación GPS (Obligatorio para la app)
     try {
-      // Pedir notificaciones
-      const notificationsGranted = await requestNotificationPermission();
-      if (!notificationsGranted) {
-        throw new Error(
-          "No se concedió el permiso de notificaciones. Actívalo en los ajustes del dispositivo.",
-        );
-      }
-
-      const fcmToken = await registerForPushNotifications(
-        companyId,
-        userProfile?.uid,
-      );
-      if (!fcmToken) {
-        throw new Error(
-          "No se pudo activar este dispositivo para recibir notificaciones.",
-        );
-      }
-
-      // Pedir ubicación con un getCurrentPosition
       await new Promise((resolve, reject) => {
         if (!navigator.geolocation) {
-          reject(new Error("La geolocalización no está soportada."));
+          reject(new Error("La geolocalización no está soportada en tu navegador."));
           return;
         }
         navigator.geolocation.getCurrentPosition(
@@ -53,26 +50,52 @@ export default function PermissionsCheck() {
           { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 },
         );
       });
-
-      setStatus("granted");
-      sessionStorage.setItem("permissions_checked", "true");
-      setTimeout(() => setShowModal(false), 1000);
+      gpsSuccess = true;
     } catch (err) {
-      console.error("Error al obtener permisos:", err);
-      setStatus("error");
-
-      let msg = "No se pudo obtener la ubicación o las notificaciones.";
+      console.error("Error al obtener ubicación GPS:", err);
+      let msg = "No se pudo obtener tu ubicación GPS.";
       if (err.code === 1) {
         msg =
-          "Has denegado el permiso de ubicación. Por favor, ve a los ajustes de tu navegador o dispositivo y permítelo para esta página.";
+          "Has denegado el permiso de ubicación. Por favor, ve a los ajustes de tu navegador/dispositivo y permítelo para este sitio.";
       } else if (err.code === 3) {
         msg =
           "Tiempo de espera agotado al buscar ubicación. Asegúrate de tener el GPS activado.";
       } else if (err.message) {
         msg = err.message;
       }
-
       setErrorMessage(msg);
+      setStatus("error");
+      return; // Si falla la ubicación, nos detenemos aquí
+    }
+
+    // 2. Pedir Notificaciones (Opcional - no bloqueante)
+    try {
+      const notifResult = await requestNotificationPermission();
+
+      if (notifResult === "granted") {
+        try {
+          await registerForPushNotifications(companyId, userProfile?.uid);
+        } catch (fcmErr) {
+          console.warn("[Permissions] No se pudo registrar FCM:", fcmErr);
+        }
+      } else if (notifResult === "unsupported" || (isIOS && !isStandalone)) {
+        setInfoMessage(
+          "💡 Nota: En iPhone/iOS, para recibir notificaciones pulsa Compartir (📤) ➔ 'Añadir a pantalla de inicio'.",
+        );
+      } else if (notifResult === "denied") {
+        setInfoMessage(
+          "Las notificaciones fueron deshabilitadas. Puedes activarlas en los ajustes de tu navegador si las deseas.",
+        );
+      }
+    } catch (notifErr) {
+      console.warn("[Permissions] Error al solicitar notificaciones:", notifErr);
+    }
+
+    // 3. Éxito (Ubicación concedida)
+    if (gpsSuccess) {
+      setStatus("granted");
+      sessionStorage.setItem("permissions_checked", "true");
+      setTimeout(() => setShowModal(false), infoMessage ? 2500 : 1000);
     }
   };
 
@@ -88,14 +111,29 @@ export default function PermissionsCheck() {
       <div className="bg-white rounded-xl p-6 max-w-sm w-full shadow-2xl text-center">
         <div className="text-5xl mb-4">📍 🔔</div>
         <h2 className="text-xl font-bold mb-3">Permisos Necesarios</h2>
-        <p className="text-muted text-sm mb-6">
-          Para registrar tu llegada, ver tu ruta y recibir alertas, necesitamos
-          acceso a tu <b>ubicación</b> y <b>notificaciones</b>.
+        <p className="text-muted text-sm mb-4">
+          Para registrar tu llegada, ver tu ruta y verificar tus servicios, necesitamos
+          acceso a tu <b>ubicación GPS</b>.
         </p>
+
+        {isIOS && !isStandalone && (
+          <div className="bg-blue-50 text-blue-800 text-xs p-3 rounded mb-4 text-left border border-blue-200">
+            📲 <b>Dispositivo iPhone / iOS:</b>
+            <br />
+            Para habilitar notificaciones push, añade la app a tu pantalla de inicio
+            pulsando <b>Compartir (📤) ➔ Añadir a pantalla de inicio</b>.
+          </div>
+        )}
 
         {errorMessage && (
           <div className="bg-red-50 text-red-700 text-xs p-3 rounded mb-4 text-left border border-red-200">
             <strong>Atención:</strong> {errorMessage}
+          </div>
+        )}
+
+        {infoMessage && !errorMessage && (
+          <div className="bg-amber-50 text-amber-800 text-xs p-3 rounded mb-4 text-left border border-amber-200">
+            {infoMessage}
           </div>
         )}
 
@@ -105,20 +143,20 @@ export default function PermissionsCheck() {
           disabled={status === "loading" || status === "granted"}
         >
           {status === "loading"
-            ? "⏳ Obteniendo permisos..."
+            ? "⏳ Solicitando ubicación..."
             : status === "granted"
-              ? "✅ Permisos concedidos"
+              ? "✅ Ubicación concedida"
               : status === "error"
-                ? "🔄 Reintentar"
+                ? "🔄 Reintentar ubicación"
                 : "Conceder Permisos"}
         </button>
 
-        {status === "error" && (
+        {(status === "error" || (isIOS && !isStandalone)) && (
           <button
             className="btn btn-ghost w-full py-2 text-sm text-muted"
             onClick={handleClose}
           >
-            Continuar sin ubicación
+            Continuar a la app
           </button>
         )}
       </div>
