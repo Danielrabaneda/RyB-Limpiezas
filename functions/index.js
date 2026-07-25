@@ -125,6 +125,10 @@ function getPlanLimits(plan) {
 
 async function assertPlanCapacity(companyId, resource) {
   const company = await assertTenantEnabled(companyId);
+  // Platform tenant (Rayba) has unlimited capacity — skip all plan limits
+  if (companyId === PLATFORM_TENANT_ID) {
+    return { plan: "enterprise", operarios: null, communities: null, admins: null, storageGb: null, monthlyPrice: 0 };
+  }
   const limits = getPlanLimits(company.plan);
   const maximum = limits[resource];
   if (maximum === null) return limits;
@@ -184,6 +188,12 @@ async function assertTenantEnabled(companyId) {
     throw new HttpsError("not-found", "La empresa no existe.");
   }
   const company = companySnap.data();
+
+  // Platform tenant (Rayba) always has full unrestricted access
+  if (companyId === PLATFORM_TENANT_ID) {
+    return company;
+  }
+
   const subscriptionStatus = company.subscriptionStatus || "legacy";
   const trialEndsAt = company.trialEndsAt?.toMillis
     ? company.trialEndsAt.toMillis()

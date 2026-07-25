@@ -164,15 +164,18 @@ export function RequireTenant({ children }) {
     );
   }
 
+  const PLATFORM_TENANT_ID = "rayba";
   const trialEndsAt = company?.trialEndsAt?.toMillis?.() || null;
   const subscriptionStatus = company?.subscriptionStatus || "legacy";
+  // Platform tenant (Rayba) always has full unrestricted access
   const companyEnabled =
-    company?.status === "active" &&
-    (subscriptionStatus === "legacy" ||
-      subscriptionStatus === "active" ||
-      (subscriptionStatus === "trialing" &&
-        trialEndsAt !== null &&
-        trialEndsAt > Date.now()));
+    companyId === PLATFORM_TENANT_ID ||
+    (company?.status === "active" &&
+      (subscriptionStatus === "legacy" ||
+        subscriptionStatus === "active" ||
+        (subscriptionStatus === "trialing" &&
+          trialEndsAt !== null &&
+          trialEndsAt > Date.now())));
 
   const canManageSuspendedSubscription =
     userProfile?.role === "admin" &&

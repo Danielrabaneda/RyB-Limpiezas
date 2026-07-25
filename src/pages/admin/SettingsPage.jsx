@@ -301,44 +301,69 @@ export default function SettingsPage() {
           >
             Suscripción de LimpiaGest
           </h3>
-          <p className="text-sm text-muted mb-4">
-            Estado: <strong>{company?.subscriptionStatus || "legacy"}</strong>
-            {" · "}Plan: <strong>{company?.plan || "sin asignar"}</strong>
-            {" · "}Acceso: <strong>{companyEnabled ? "activo" : "bloqueado"}</strong>
-          </p>
-          <div className="flex gap-3 flex-wrap items-end">
-            <div className="form-group" style={{ minWidth: "220px", margin: 0 }}>
-              <label className="form-label">Plan</label>
-              <select
-                className="form-input"
-                value={selectedPlan}
-                onChange={(event) => setSelectedPlan(event.target.value)}
+          {companyId === "rayba" ? (
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "8px 16px",
+                  background: "linear-gradient(135deg, #059669, #10b981)",
+                  color: "white",
+                  borderRadius: "8px",
+                  fontWeight: 700,
+                  fontSize: "var(--font-sm)",
+                }}
               >
-                <option value="autonomo">Autónomo</option>
-                <option value="starter">Starter</option>
-                <option value="professional">Profesional</option>
-                <option value="business">Empresa</option>
-              </select>
+                👑 Empresa propietaria de la plataforma
+              </span>
+              <span className="text-sm text-muted">
+                Acceso ilimitado · Sin restricciones de plan
+              </span>
             </div>
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={subscriptionLoading}
-              onClick={handleCheckout}
-            >
-              Contratar o cambiar plan
-            </button>
-            {company?.stripeCustomerId && (
-              <button
-                type="button"
-                className="btn btn-secondary"
-                disabled={subscriptionLoading}
-                onClick={handleBillingPortal}
-              >
-                Gestionar pagos y cancelación
-              </button>
-            )}
-          </div>
+          ) : (
+            <>
+              <p className="text-sm text-muted mb-4">
+                Estado: <strong>{company?.subscriptionStatus || "legacy"}</strong>
+                {" · "}Plan: <strong>{company?.plan || "sin asignar"}</strong>
+                {" · "}Acceso: <strong>{companyEnabled ? "activo" : "bloqueado"}</strong>
+              </p>
+              <div className="flex gap-3 flex-wrap items-end">
+                <div className="form-group" style={{ minWidth: "220px", margin: 0 }}>
+                  <label className="form-label">Plan</label>
+                  <select
+                    className="form-input"
+                    value={selectedPlan}
+                    onChange={(event) => setSelectedPlan(event.target.value)}
+                  >
+                    <option value="autonomo">Autónomo</option>
+                    <option value="starter">Starter</option>
+                    <option value="professional">Profesional</option>
+                    <option value="business">Empresa</option>
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={subscriptionLoading}
+                  onClick={handleCheckout}
+                >
+                  Contratar o cambiar plan
+                </button>
+                {company?.stripeCustomerId && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={subscriptionLoading}
+                    onClick={handleBillingPortal}
+                  >
+                    Gestionar pagos y cancelación
+                  </button>
+                )}
+              </div>
+            </>
+          )}
         </div>
 
         {/* Company Settings */}
