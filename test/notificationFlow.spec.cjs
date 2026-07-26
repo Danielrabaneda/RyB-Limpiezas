@@ -38,6 +38,20 @@ describe("Operator notification regression", () => {
     );
   });
 
+  it("does not report success when no operators were loaded", () => {
+    assert.throws(
+      () => helpers.getNotificationRecipientIds([]),
+      /No se ha cargado ningún operario/,
+    );
+    assert.deepEqual(
+      helpers.getNotificationRecipientIds([
+        { uid: "worker-1" },
+        { uid: "worker-2" },
+      ]),
+      ["worker-1", "worker-2"],
+    );
+  });
+
   it("alerts immediately only for immediate notifications", () => {
     assert.equal(helpers.shouldAlertImmediately("immediate"), true);
     assert.equal(helpers.shouldAlertImmediately(undefined), true);

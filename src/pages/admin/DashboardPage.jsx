@@ -27,7 +27,10 @@ import {
 import { db } from "../../config/firebase";
 import { tenantCollection } from "../../utils/tenantFirestore";
 import { createSystemNotification } from "../../services/notificationService";
-import { buildSystemNotificationArgs } from "../../utils/notificationRequest";
+import {
+  buildSystemNotificationArgs,
+  getNotificationRecipientIds,
+} from "../../utils/notificationRequest";
 
 export default function DashboardPage() {
   const { userProfile } = useAuth();
@@ -89,21 +92,33 @@ export default function DashboardPage() {
         ops,
         todayServices,
         checkIns,
-        activeWorkdaysSnap,
       ] = await Promise.all([
         getCommunities(companyId),
         getOperarios(companyId),
         getScheduledServicesRange(companyId, new Date(), new Date()),
         getCheckInsRange(companyId, new Date(), new Date()),
-        getDocs(
-          query(tenantCollection(db, companyId, "workdays"), where("status", "==", "active")),
-        ),
       ]);
 
-      const activeWorkdays = activeWorkdaysSnap.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-      }));
+      // Las estadísticas de jornada son complementarias. Un índice pendiente
+      // no debe impedir cargar los operarios ni bloquear las notificaciones.
+      let activeWorkdays = [];
+      try {
+        const activeWorkdaysSnap = await getDocs(
+          query(
+            tenantCollection(db, companyId, "workdays"),
+            where("status", "==", "active"),
+          ),
+        );
+        activeWorkdays = activeWorkdaysSnap.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        }));
+      } catch (workdayError) {
+        console.warn(
+          "No se pudieron cargar las jornadas activas del dashboard:",
+          workdayError,
+        );
+      }
 
       const completed = todayServices.filter(
         (s) => s.status === "completed",
@@ -203,9 +218,10 @@ export default function DashboardPage() {
     try {
       if (notifForm.recipient === "all") {
         // Enviar a todos los operarios
-        const promises = operarios.map((op) =>
+        const recipientIds = getNotificationRecipientIds(operarios);
+        const promises = recipientIds.map((userId) =>
           createSystemNotification(
-            ...buildSystemNotificationArgs(companyId, op.uid, notifForm),
+            ...buildSystemNotificationArgs(companyId, userId, notifForm),
           ),
         );
         await Promise.all(promises);

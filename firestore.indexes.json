@@ -44,6 +44,15 @@
       ]
     },
     {
+      "collectionGroup": "systemNotifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "read", "order": "ASCENDING" },
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "checkIns",
       "queryScope": "COLLECTION",
       "fields": [
@@ -179,6 +188,7 @@
       "collectionGroup": "workdays",
       "fieldPath": "status",
       "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
         { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
       ]
     },
