@@ -15,6 +15,7 @@ import {
   deleteOldNotifications,
   markNotificationAsRead,
 } from "../services/notificationService";
+import { registerForPushNotifications } from "../services/fcmService";
 import { shouldAlertImmediately } from "../utils/notificationRequest";
 
 const NotificationContext = createContext({
@@ -51,6 +52,10 @@ export function NotificationProvider({ children }) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [activePopupNotif, setActivePopupNotif] = useState(null);
   const shownPopupIdsRef = useRef(new Set());
+  const pushRegistrationRef = useRef({
+    key: null,
+    inFlight: false,
+  });
 
   // Re-alert tracking
   const repeatTrackersRef = useRef({});
@@ -64,6 +69,65 @@ export function NotificationProvider({ children }) {
       delete trackers[docId];
     }
   }, []);
+
+  // Registrar el dispositivo al abrir/recuperar la app. Este flujo pertenece
+  // al sistema de notificaciones y no debe depender del GPS ni de que exista
+  // una jornada activa.
+  useEffect(() => {
+    if (
+      !currentUser?.uid ||
+      !companyId ||
+      !isOperario ||
+      typeof Notification === "undefined" ||
+      Notification.permission !== "granted"
+    ) {
+      return;
+    }
+
+    const registrationKey = `${companyId}:${currentUser.uid}`;
+
+    const registerDevice = async () => {
+      if (
+        pushRegistrationRef.current.inFlight ||
+        pushRegistrationRef.current.key === registrationKey
+      ) {
+        return;
+      }
+
+      pushRegistrationRef.current.inFlight = true;
+      try {
+        const token = await registerForPushNotifications(
+          companyId,
+          currentUser.uid,
+        );
+        if (token) {
+          pushRegistrationRef.current.key = registrationKey;
+        }
+      } catch (error) {
+        console.warn(
+          "[Notifications] No se pudo registrar el dispositivo para push:",
+          error,
+        );
+      } finally {
+        pushRegistrationRef.current.inFlight = false;
+      }
+    };
+
+    const handleAppVisible = () => {
+      if (document.visibilityState === "visible") {
+        registerDevice();
+      }
+    };
+
+    registerDevice();
+    window.addEventListener("pageshow", registerDevice);
+    document.addEventListener("visibilitychange", handleAppVisible);
+
+    return () => {
+      window.removeEventListener("pageshow", registerDevice);
+      document.removeEventListener("visibilitychange", handleAppVisible);
+    };
+  }, [companyId, currentUser?.uid, isOperario]);
 
   // Listener consolidado
   useEffect(() => {

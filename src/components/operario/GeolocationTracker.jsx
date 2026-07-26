@@ -15,7 +15,6 @@ import {
   persistEntryDetection,
   persistExitDetection,
 } from "../../services/geoDetectionService";
-import { registerForPushNotifications } from "../../services/fcmService";
 import { format } from "date-fns";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "../../config/firebase";
@@ -100,8 +99,6 @@ export default function GeolocationTracker() {
   const servicesRef = useRef([]); // Caché de servicios del día
   const servicesCachedAtRef = useRef(0); // Timestamp de último fetch de servicios
   const wakeLockRef = useRef(null); // Wake Lock para mantener la pantalla activa
-  const fcmRegisteredRef = useRef(false); // Evitar re-registro de FCM
-
   // Refs para optimización y mejoras de geolocalización
   const activeWorkdayRef = useRef(null);
   const activeCheckInRef = useRef(null);
@@ -111,24 +108,6 @@ export default function GeolocationTracker() {
     lng: null,
     variance: 1.0,
   });
-
-  // ==================== REGISTRO FCM ====================
-  useEffect(() => {
-    if (
-      !companyId ||
-      !isOperario ||
-      !userProfile?.uid ||
-      fcmRegisteredRef.current
-    ) return;
-
-    registerForPushNotifications(companyId, userProfile.uid)
-      .then((token) => {
-        if (token) fcmRegisteredRef.current = true;
-      })
-      .catch((err) => {
-        console.warn("[Tracker] FCM registration failed (non-blocking):", err);
-      });
-  }, [companyId, isOperario, userProfile]);
 
   // ==================== OBTENER COMUNIDAD CON CACHÉ ====================
   const getCommunityWithCache = useCallback(async (communityId) => {
