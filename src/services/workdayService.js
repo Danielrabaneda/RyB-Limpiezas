@@ -149,17 +149,18 @@ export async function endWorkday(
 }
 
 export async function getActiveWorkday(companyId, userId) {
-  // Optimización: consulta directa por userId y status activo
+  // Consultar por usuario y filtrar en cliente evita que el inicio de jornada
+  // dependa de que un índice compuesto esté construido en Firestore.
   const q = query(
     tenantCollection(db, companyId, COLLECTION_NAME),
     where("userId", "==", userId),
-    where("status", "==", "active"),
   );
 
   const snap = await getDocs(q);
-  if (snap.empty) return null;
+  const activeDoc = snap.docs.find((docSnap) => docSnap.data().status === "active");
+  if (!activeDoc) return null;
 
-  return { id: snap.docs[0].id, ...snap.docs[0].data() };
+  return { id: activeDoc.id, ...activeDoc.data() };
 }
 
 export async function getWorkdaysForAdmin(companyId, startDate, endDate, userId = null) {
