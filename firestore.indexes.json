@@ -129,6 +129,14 @@
       "collectionGroup": "workdays",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "workdays",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "currentCompanionId", "order": "ASCENDING" },
         { "fieldPath": "status", "order": "ASCENDING" }
       ]
