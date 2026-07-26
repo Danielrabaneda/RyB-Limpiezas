@@ -444,11 +444,11 @@ async function getCompanyIdForUser(userId) {
  * @param {string} userId
  * @returns {Promise<string[]>} Array de tokens FCM
  */
-async function getUserFcmTokens(userId) {
-  const snap = await db
-    .collectionGroup("fcmTokens")
-    .where("userId", "==", userId)
-    .get();
+async function getUserFcmTokens(userId, companyId = null) {
+  const tokenCollection = companyId
+    ? db.collection(`companies/${companyId}/fcmTokens`)
+    : db.collectionGroup("fcmTokens");
+  const snap = await tokenCollection.where("userId", "==", userId).get();
 
   return snap.docs.map((doc) => doc.data().token).filter(Boolean);
 }
@@ -1132,16 +1132,15 @@ exports.cleanupStaleFcmTokens = onSchedule(
 
 // ============================================================================
 // FUNCIÓN 3: onGpsNotificationCreated
-// Trigger Firestore: envía FCM únicamente para notificaciones GPS push_only.
-// Los avisos manuales se muestran como modal dentro de la app, sin duplicar
-// una notificación push del sistema.
+// Trigger Firestore: envía FCM para avisos GPS y avisos administrativos
+// inmediatos. Los avisos de inicio/fin de jornada esperan su evento.
 // ============================================================================
 
 exports.onGpsNotificationCreated = onDocumentCreated(
   {
     document: "companies/{companyId}/systemNotifications/{notifId}",
     region: "europe-west1",
-    memory: "128MiB",
+    memory: "256MiB",
     timeoutSeconds: 30,
   },
   async (event) => {
@@ -1159,7 +1158,7 @@ exports.onGpsNotificationCreated = onDocumentCreated(
     );
 
     try {
-      const tokens = await getUserFcmTokens(userId);
+      const tokens = await getUserFcmTokens(userId, event.params.companyId);
 
       if (tokens.length === 0) {
         logger.warn(
@@ -1180,6 +1179,7 @@ exports.onGpsNotificationCreated = onDocumentCreated(
               userId,
               serviceId: serviceId || "",
               triggerEvent,
+              targetUrl: data.targetUrl || "",
             },
             android: {
               priority: "high",

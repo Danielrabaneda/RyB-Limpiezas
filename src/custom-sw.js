@@ -55,15 +55,17 @@ self.addEventListener("push", (event) => {
     }
   }
 
-  const title = data.title || "RyB Limpiezas";
+  const notification = data.notification || {};
+  const payloadData = data.data || {};
+  const title = data.title || notification.title || "RyB Limpiezas";
   const options = {
-    body: data.body || "",
+    body: data.body || notification.body || "",
     icon: "/icons/icon-192.png",
     badge: "/icons/icon-192.png",
     vibrate: [200, 100, 200, 100, 200],
     requireInteraction: true,
-    tag: data.tag || "ryb-notification",
-    data: data,
+    tag: data.tag || payloadData.tag || "ryb-notification",
+    data: { ...data, ...payloadData },
     // El sonido se maneja a través del sistema de notificaciones del OS
     silent: false,
   };

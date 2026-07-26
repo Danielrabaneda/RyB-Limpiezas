@@ -73,9 +73,9 @@ describe("Operator notification regression", () => {
 describe("Notification push policy", () => {
   const { shouldSendPushNotification } = require("../functions/notificationPolicy");
 
-  it("sends only GPS notifications through FCM", () => {
+  it("sends GPS and immediate administrative notifications through FCM", () => {
     assert.equal(shouldSendPushNotification("push_only"), true);
-    assert.equal(shouldSendPushNotification("immediate"), false);
+    assert.equal(shouldSendPushNotification("immediate"), true);
     assert.equal(shouldSendPushNotification(undefined), false);
   });
 

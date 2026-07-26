@@ -112,32 +112,23 @@ export function NotificationProvider({ children }) {
 
           const data = docSnap.data();
 
-          // Los avisos push_only los gestiona FCM. Los avisos programados se
-          // muestran únicamente cuando se inicia/finaliza la jornada.
+          // Los avisos inmediatos usan FCM cuando la app está en segundo plano.
+          // En primer plano Firestore mantiene el sonido y el popup interno.
+          // Los avisos programados esperan al inicio/final de jornada.
           if (!shouldAlertImmediately(data.triggerEvent)) {
             trackers[docSnap.id] = { count: 0, intervalId: null }; // Marcar como procesada
             continue;
           }
 
-          const { sendNotification, playNotificationSound } =
+          const { playNotificationSound } =
             await import("../utils/geolocation");
 
           const title = data.title || "RyB Limpiezas";
           const body = data.body || data.message || "";
 
-          // Notificación inicial con sonido (solo si la app está en segundo plano)
-          if (document.visibilityState !== "visible") {
-            sendNotification(title, {
-              body,
-              icon: "/icons/icon-192.png",
-              badge: "/icons/icon-192.png",
-              tag: docSnap.id,
-              urgent: data.type === "warning",
-              serviceId: data.serviceId || null,
-              targetUrl: data.targetUrl || null,
-            });
-          } else {
-            // Si está activa en primer plano, solo reproducir sonido
+          // En segundo plano el push FCM lo muestra el service worker. Evitar
+          // crear otra notificación local con el mismo contenido.
+          if (document.visibilityState === "visible") {
             playNotificationSound(true);
           }
 
