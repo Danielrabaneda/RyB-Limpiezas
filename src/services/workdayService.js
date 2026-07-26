@@ -114,6 +114,7 @@ export async function endWorkday(
     endTime: Timestamp.fromDate(endTime),
     totalMinutes: duration,
     status: "completed",
+    currentCompanionId: null,
     carActive: false,
     carSessions: updatedCarSessions,
     retroactiveClosed: !!customEndTime,

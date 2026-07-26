@@ -161,22 +161,48 @@ export async function getScheduledServicesForDate(companyId, userId, date = new 
       where("companionIds", "array-contains", userId),
     );
 
-    // 3. Fetch services from workdays where I am/was a companion today
+    // 3. Completed services remain in the history of everyone who
+    // participated, even after the active companion relationship ends.
+    const qHistoricalParticipant = query(
+      tenantCollection(db, companyId, "scheduledServices"),
+      where("participantIds", "array-contains", userId),
+    );
+
+    // 4. Fetch services from active workdays where I am a companion today.
     const qAllWorkdaysAsCompanion = query(
       tenantCollection(db, companyId, "workdays"),
       where("currentCompanionId", "==", userId),
+      where("status", "==", "active"),
     );
 
     let results1 = [];
     let results2 = [];
     let results3 = [];
+    let results4 = [];
 
     try {
-      const [snapOwn, snapExplicit, snapWorkdays] = await Promise.all([
+      const fetches = await Promise.allSettled([
         getDocs(qOwn),
         getDocs(qExplicitCompanion),
+        getDocs(qHistoricalParticipant),
         getDocs(qAllWorkdaysAsCompanion),
       ]);
+      fetches.forEach((result, index) => {
+        if (result.status === "rejected") {
+          console.warn(
+            `[Schedule] Partial date query ${index + 1} failed:`,
+            result.reason?.message || result.reason,
+          );
+        }
+      });
+      const snapOwn =
+        fetches[0].status === "fulfilled" ? fetches[0].value : { docs: [] };
+      const snapExplicit =
+        fetches[1].status === "fulfilled" ? fetches[1].value : { docs: [] };
+      const snapHistorical =
+        fetches[2].status === "fulfilled" ? fetches[2].value : { docs: [] };
+      const snapWorkdays =
+        fetches[3].status === "fulfilled" ? fetches[3].value : { docs: [] };
 
       results1 = snapOwn.docs.map((d) => ({ id: d.id, ...d.data() }));
       results2 = snapExplicit.docs.map((d) => ({
@@ -184,6 +210,9 @@ export async function getScheduledServicesForDate(companyId, userId, date = new 
         ...d.data(),
         isCompanion: true,
       }));
+      results4 = snapHistorical.docs
+        .map((d) => ({ id: d.id, ...d.data(), isCompanion: true }))
+        .filter((service) => service.status === "completed");
 
       // Filter workdays to only those of "today"
       const relevantTitularIds = [
@@ -232,7 +261,7 @@ export async function getScheduledServicesForDate(companyId, userId, date = new 
     }
 
     const uniqueMap = new Map();
-    const allFetched = [...results1, ...results2, ...results3];
+    const allFetched = [...results1, ...results2, ...results3, ...results4];
 
     for (const svc of allFetched) {
       const existing = uniqueMap.get(svc.id);
@@ -341,20 +370,50 @@ export async function getScheduledServicesForWeek(companyId, userId, date) {
       tenantCollection(db, companyId, "scheduledServices"),
       where("companionIds", "array-contains", userId),
     );
+    const qParticipant = query(
+      tenantCollection(db, companyId, "scheduledServices"),
+      where("participantIds", "array-contains", userId),
+    );
     const qWorkdays = query(
       tenantCollection(db, companyId, "workdays"),
       where("currentCompanionId", "==", userId),
       where("status", "==", "active"),
     );
 
-    const [snapOwn, snapCompanion, snapWorkdays] = await Promise.all([
+    const fetches = await Promise.allSettled([
       getDocs(qOwn),
       getDocs(qCompanion),
+      getDocs(qParticipant),
       getDocs(qWorkdays),
     ]);
+    fetches.forEach((result, index) => {
+      if (result.status === "rejected") {
+        console.warn(
+          `[Schedule] Partial week query ${index + 1} failed:`,
+          result.reason?.message || result.reason,
+        );
+      }
+    });
+    const snapOwn =
+      fetches[0].status === "fulfilled" ? fetches[0].value : { docs: [] };
+    const snapCompanion =
+      fetches[1].status === "fulfilled" ? fetches[1].value : { docs: [] };
+    const snapParticipant =
+      fetches[2].status === "fulfilled" ? fetches[2].value : { docs: [] };
+    const snapWorkdays =
+      fetches[3].status === "fulfilled"
+        ? fetches[3].value
+        : { docs: [], empty: true };
 
     const resultsMap = new Map();
-    const allFetched = [...snapOwn.docs, ...snapCompanion.docs];
+    const completedParticipantDocs = snapParticipant.docs.filter(
+      (docSnap) => docSnap.data().status === "completed",
+    );
+    const allFetched = [
+      ...snapOwn.docs,
+      ...snapCompanion.docs,
+      ...completedParticipantDocs,
+    ];
 
     // Add titulars from active workdays
     if (!snapWorkdays.empty) {
@@ -1751,10 +1810,14 @@ export async function addCompanionToService(companyId, serviceId, companionId) {
 
   const data = snap.data();
   const companionIds = data.companionIds || [];
+  const participantIds = data.participantIds || [];
   const companionLogs = data.companionLogs || [];
 
   if (!companionIds.includes(companionId)) {
     companionIds.push(companionId);
+  }
+  if (!participantIds.includes(companionId)) {
+    participantIds.push(companionId);
   }
 
   // Agregar al log si no hay un log abierto
@@ -1768,7 +1831,11 @@ export async function addCompanionToService(companyId, serviceId, companionId) {
     });
   }
 
-  await updateDoc(serviceRef, { companionIds, companionLogs });
+  await updateDoc(serviceRef, {
+    companionIds,
+    participantIds,
+    companionLogs,
+  });
 }
 
 export async function removeCompanionFromService(companyId, serviceId, companionId) {
@@ -1780,6 +1847,14 @@ export async function removeCompanionFromService(companyId, serviceId, companion
   const companionIds = (data.companionIds || []).filter(
     (id) => id !== companionId,
   );
+  const participantIds = data.participantIds || [];
+  // Backfill old completed services before removing their temporary access.
+  if (
+    data.status === "completed" &&
+    !participantIds.includes(companionId)
+  ) {
+    participantIds.push(companionId);
+  }
   const companionLogs = data.companionLogs || [];
 
   // Cerrar openLog
@@ -1790,5 +1865,9 @@ export async function removeCompanionFromService(companyId, serviceId, companion
     openLog.leftAt = new Date().toISOString();
   }
 
-  await updateDoc(serviceRef, { companionIds, companionLogs });
+  await updateDoc(serviceRef, {
+    companionIds,
+    participantIds,
+    companionLogs,
+  });
 }

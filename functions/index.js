@@ -10,6 +10,10 @@
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { shouldSendPushNotification } = require("./notificationPolicy");
 const {
+  clampAutoCloseEndTime,
+  getMadridDateKey,
+} = require("./lib/workdayAutoClose");
+const {
   onCall,
   HttpsError,
   onRequest,
@@ -607,9 +611,12 @@ async function getCommunityName(companyId, communityId) {
  * @returns {string}
  */
 function formatTimeHHMM(d) {
-  const hours = String(d.getHours()).padStart(2, "0");
-  const minutes = String(d.getMinutes()).padStart(2, "0");
-  return `${hours}:${minutes}`;
+  return new Intl.DateTimeFormat("es-ES", {
+    timeZone: "Europe/Madrid",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(d);
 }
 
 /**
@@ -625,14 +632,16 @@ async function getAverageWorkdayMinutesSameWeekday(companyId, userId, workdayDat
     const twoWeeksAgo = new Date(workdayDate.getTime() - 14 * 24 * 60 * 60 * 1000);
 
     const targetDates = [
-      oneWeekAgo.toISOString().split("T")[0],
-      twoWeeksAgo.toISOString().split("T")[0],
+      getMadridDateKey(oneWeekAgo),
+      getMadridDateKey(twoWeeksAgo),
     ];
 
     const snap = await db
       .collection(`companies/${companyId}/workdays`)
       .where("userId", "==", userId)
       .where("status", "==", "completed")
+      .where("startTime", ">=", Timestamp.fromDate(twoWeeksAgo))
+      .where("startTime", "<", Timestamp.fromDate(workdayDate))
       .get();
 
     if (snap.empty) {
@@ -647,10 +656,10 @@ async function getAverageWorkdayMinutesSameWeekday(companyId, userId, workdayDat
       let docDateStr = null;
       if (data.date) {
         const d = data.date.toDate ? data.date.toDate() : new Date(data.date);
-        docDateStr = d.toISOString().split("T")[0];
+        docDateStr = getMadridDateKey(d);
       } else if (data.startTime) {
         const d = data.startTime.toDate ? data.startTime.toDate() : new Date(data.startTime);
-        docDateStr = d.toISOString().split("T")[0];
+        docDateStr = getMadridDateKey(d);
       }
 
       if (docDateStr && targetDates.includes(docDateStr)) {
@@ -745,36 +754,46 @@ exports.checkWorkdayReminders = onSchedule(
                 ? workdayStartTime.toDate()
                 : new Date(workdayStartTime);
 
-              // 1. Auto-cerrar fichajes abiertos si los hubiera
-              const openCheckInsSnap = await db
+              const autoCloseCutoff = new Date(
+                Math.min(
+                  Date.now(),
+                  startTimestamp.getTime() +
+                    AUTO_CLOSE_WORKDAY_THRESHOLD_HOURS * 60 * 60 * 1000,
+                ),
+              );
+
+              // Limitar los fichajes a esta jornada evita cerrar servicios
+              // actuales cuando existe una jornada antigua atascada.
+              const workdayCheckInsSnap = await db
                 .collection(`companies/${companyId}/checkIns`)
                 .where("userId", "==", userId)
-                .where("checkOutTime", "==", null)
-                .get();
-
-              for (const ciDoc of openCheckInsSnap.docs) {
-                await ciDoc.ref.update({
-                  checkOutTime: FieldValue.serverTimestamp(),
-                  autoClosed: true,
-                  autoCloseReason: "Autocierre automático por fin de jornada (>12h)",
-                  updatedAt: FieldValue.serverTimestamp(),
-                });
-              }
-
-              // 2. Buscar el último checkIn completado para esta jornada/usuario
-              const completedCheckInsSnap = await db
-                .collection(`companies/${companyId}/checkIns`)
-                .where("userId", "==", userId)
+                .where("checkInTime", ">=", Timestamp.fromDate(startTimestamp))
+                .where("checkInTime", "<=", Timestamp.fromDate(autoCloseCutoff))
                 .get();
 
               let lastCheckOutTime = null;
-              completedCheckInsSnap.docs.forEach((ciDoc) => {
+              let lastCheckInTime = null;
+              workdayCheckInsSnap.docs.forEach((ciDoc) => {
                 const ciData = ciDoc.data();
+                if (ciData.checkInTime) {
+                  const checkInDate = ciData.checkInTime.toDate
+                    ? ciData.checkInTime.toDate()
+                    : new Date(ciData.checkInTime);
+                  if (
+                    checkInDate <= autoCloseCutoff &&
+                    (!lastCheckInTime || checkInDate > lastCheckInTime)
+                  ) {
+                    lastCheckInTime = checkInDate;
+                  }
+                }
                 if (ciData.checkOutTime) {
                   const checkOutDate = ciData.checkOutTime.toDate
                     ? ciData.checkOutTime.toDate()
                     : new Date(ciData.checkOutTime);
-                  if (checkOutDate >= startTimestamp) {
+                  if (
+                    checkOutDate >= startTimestamp &&
+                    checkOutDate <= autoCloseCutoff
+                  ) {
                     if (!lastCheckOutTime || checkOutDate > lastCheckOutTime) {
                       lastCheckOutTime = checkOutDate;
                     }
@@ -817,6 +836,14 @@ exports.checkWorkdayReminders = onSchedule(
                 }
               }
 
+              // No terminar antes del último servicio registrado ni después
+              // del umbral de seguridad.
+              finalEndTime = clampAutoCloseEndTime(
+                finalEndTime,
+                lastCheckInTime,
+                autoCloseCutoff,
+              );
+
               const durationMinutes = Math.max(
                 0,
                 Math.round(
@@ -825,7 +852,31 @@ exports.checkWorkdayReminders = onSchedule(
                 ),
               );
 
-              await workdayDoc.ref.update({
+              const batch = db.batch();
+              for (const ciDoc of workdayCheckInsSnap.docs) {
+                const ciData = ciDoc.data();
+                if (ciData.checkOutTime) continue;
+                const checkInDate = ciData.checkInTime?.toDate
+                  ? ciData.checkInTime.toDate()
+                  : new Date(ciData.checkInTime);
+                const checkOutDate =
+                  checkInDate > finalEndTime ? checkInDate : finalEndTime;
+                batch.update(ciDoc.ref, {
+                  checkOutTime: Timestamp.fromDate(checkOutDate),
+                  durationMinutes: Math.max(
+                    0,
+                    Math.round(
+                      (checkOutDate.getTime() - checkInDate.getTime()) / 60000,
+                    ),
+                  ),
+                  autoClosed: true,
+                  autoCloseReason:
+                    "Autocierre automático por fin de jornada (>12h)",
+                  updatedAt: FieldValue.serverTimestamp(),
+                });
+              }
+
+              batch.update(workdayDoc.ref, {
                 status: "completed",
                 endTime: Timestamp.fromDate(finalEndTime),
                 totalMinutes: durationMinutes,
@@ -835,6 +886,7 @@ exports.checkWorkdayReminders = onSchedule(
                 retroactiveClosed: true,
                 updatedAt: FieldValue.serverTimestamp(),
               });
+              await batch.commit();
 
               await sendPushNotification(
                 userId,

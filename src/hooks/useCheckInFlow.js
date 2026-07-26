@@ -510,12 +510,18 @@ export function useCheckInFlow(
       for (const s of currentGroup) {
         await updateScheduledServiceStatus(companyId, s.id, "in_progress");
         if (s.assignedUserId !== userProfile.uid) {
-          if (!s.companionIds?.includes(userProfile.uid)) {
+          if (
+            !s.companionIds?.includes(userProfile.uid) ||
+            !s.participantIds?.includes(userProfile.uid)
+          ) {
             await addCompanionToService(companyId, s.id, userProfile.uid);
           }
         }
         if (activeWorkday?.currentCompanionId) {
-          if (!s.companionIds?.includes(activeWorkday.currentCompanionId)) {
+          if (
+            !s.companionIds?.includes(activeWorkday.currentCompanionId) ||
+            !s.participantIds?.includes(activeWorkday.currentCompanionId)
+          ) {
             await addCompanionToService(companyId, s.id, activeWorkday.currentCompanionId);
           }
         }
@@ -1144,9 +1150,23 @@ export function useCheckInFlow(
           await updateScheduledServiceStatus(companyId, s.id, "completed");
         }
         if (s.assignedUserId !== userProfile.uid) {
-          if (!s.companionIds?.includes(userProfile.uid)) {
+          if (
+            !s.companionIds?.includes(userProfile.uid) ||
+            !s.participantIds?.includes(userProfile.uid)
+          ) {
             await addCompanionToService(companyId, s.id, userProfile.uid);
           }
+        }
+        if (
+          activeWorkday?.currentCompanionId &&
+          (!s.companionIds?.includes(activeWorkday.currentCompanionId) ||
+            !s.participantIds?.includes(activeWorkday.currentCompanionId))
+        ) {
+          await addCompanionToService(
+            companyId,
+            s.id,
+            activeWorkday.currentCompanionId,
+          );
         }
       }
 

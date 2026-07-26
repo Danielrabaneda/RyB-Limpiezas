@@ -29,7 +29,6 @@ describe("Service completion group regression", function () {
   it("fails closed when neither service data nor a group is available", function () {
     assert.deepEqual(getCurrentServiceGroup(undefined, null), []);
   });
-  });
 
   it("declares the service group inside executeCheckOut before iterating it", function () {
     const source = fs.readFileSync(

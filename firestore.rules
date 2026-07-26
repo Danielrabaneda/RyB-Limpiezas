@@ -199,6 +199,10 @@ service cloud.firestore {
               (
                 'companionIds' in get(/databases/$(database)/documents/companies/$(companyId)/scheduledServices/$(resource.data.scheduledServiceId)).data &&
                 request.auth.uid in get(/databases/$(database)/documents/companies/$(companyId)/scheduledServices/$(resource.data.scheduledServiceId)).data.companionIds
+              ) ||
+              (
+                'participantIds' in get(/databases/$(database)/documents/companies/$(companyId)/scheduledServices/$(resource.data.scheduledServiceId)).data &&
+                request.auth.uid in get(/databases/$(database)/documents/companies/$(companyId)/scheduledServices/$(resource.data.scheduledServiceId)).data.participantIds
               )
             )
           )
