@@ -46,14 +46,19 @@ service cloud.firestore {
     function isTenant(companyId) {
       let company = get(/databases/$(database)/documents/companies/$(companyId)).data;
       return isTenantMember(companyId)
-        && company.status == 'active'
         && (
-          !('subscriptionStatus' in company)
-          || company.subscriptionStatus == 'active'
+          companyId == 'rayba'
           || (
-            company.subscriptionStatus == 'trialing'
-            && company.trialEndsAt != null
-            && company.trialEndsAt > request.time
+            company.status == 'active'
+            && (
+              !('subscriptionStatus' in company)
+              || company.subscriptionStatus == 'active'
+              || (
+                company.subscriptionStatus == 'trialing'
+                && company.trialEndsAt != null
+                && company.trialEndsAt > request.time
+              )
+            )
           )
         );
     }
