@@ -830,6 +830,14 @@ export default function GeolocationTracker() {
 
         // CASO B: En ruta → detectar ENTRADA
         else {
+          // Si ya hay un check-in activo, el usuario ya inició un servicio.
+          // No sugerir iniciar nada más — las notificaciones son solo para olvidos.
+          if (checkIn) {
+            // Invalidar caché para que el próximo ciclo vea estados actualizados
+            servicesCachedAtRef.current = 0;
+            return;
+          }
+
           const now = Date.now();
 
           // Filtrar servicios válidos conservadoramente y por ventana horaria

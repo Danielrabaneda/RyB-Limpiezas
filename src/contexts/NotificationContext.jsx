@@ -152,8 +152,15 @@ export function NotificationProvider({ children }) {
       q,
       async (snapshot) => {
         const notifs = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-        setNotifications(notifs);
-        const count = snapshot.size;
+
+        // Excluir notificaciones que solo son para push nativo (ya se mostraron
+        // como notificación del sistema) y las de geo-detección para admins.
+        // Estas no requieren acción en la app y solo inflan el badge.
+        const visibleNotifs = notifs.filter(
+          (n) => n.triggerEvent !== "push_only" && n.source !== "geo_detection"
+        );
+        setNotifications(visibleNotifs);
+        const count = visibleNotifs.length;
         setUnreadCount(count);
 
         // Actualizar badge del icono PWA

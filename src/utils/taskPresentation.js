@@ -78,6 +78,7 @@ export function groupServicesByTaskPresentation(services = [], tasks = []) {
   }
 
   for (const service of embeddedServices) {
+    // First pass: try to find an active (non-completed) host
     const candidateHost = service.hostTaskIds
       .map((hostTaskId) =>
         services.find(
@@ -89,9 +90,28 @@ export function groupServicesByTaskPresentation(services = [], tasks = []) {
       )
       .find(Boolean);
 
-    const hostGroup = candidateHost
+    let hostGroup = candidateHost
       ? groupByHostServiceId.get(candidateHost.id)
       : null;
+
+    // Second pass: if no active host, allow completed/missed hosts so that
+    // finished embedded tasks still group with their parent card instead of
+    // rendering as duplicate standalone cards.
+    if (!hostGroup) {
+      const completedHost = service.hostTaskIds
+        .map((hostTaskId) =>
+          services.find(
+            (candidate) =>
+              candidate.communityTaskId === hostTaskId &&
+              sameContext(service, candidate),
+          ),
+        )
+        .find(Boolean);
+
+      hostGroup = completedHost
+        ? groupByHostServiceId.get(completedHost.id)
+        : null;
+    }
 
     if (!hostGroup) {
       groups.push({
