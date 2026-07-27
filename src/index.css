@@ -1769,7 +1769,10 @@ body.keyboard-open .operario-bottom-nav {
   }
 
   .admin-header {
-    padding: var(--space-3) var(--space-4);
+    padding-top: max(var(--space-3), calc(12px + env(safe-area-inset-top, 0px)));
+    padding-bottom: var(--space-3);
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
   }
 
   .admin-header-title {
@@ -1835,8 +1838,11 @@ body.keyboard-open .operario-bottom-nav {
   }
 
   .admin-header {
-    padding: var(--space-2) var(--space-3);
-    min-height: 52px;
+    padding-top: max(var(--space-3), calc(16px + env(safe-area-inset-top, 0px)));
+    padding-bottom: var(--space-2);
+    padding-left: var(--space-3);
+    padding-right: var(--space-3);
+    min-height: calc(56px + env(safe-area-inset-top, 0px));
   }
 
   .admin-header-title {
