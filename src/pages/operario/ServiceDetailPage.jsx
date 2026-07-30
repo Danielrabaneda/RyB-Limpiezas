@@ -111,6 +111,7 @@ export default function ServiceDetailPage() {
     setManualExitTime,
     pendingAction,
     setPendingAction,
+    cancelPendingAction,
     handleCheckIn,
     handleCheckOut,
     handleFullManualSubmit,
@@ -245,7 +246,7 @@ export default function ServiceDetailPage() {
 
       <ExceptionPromptModal
         isOpen={!!pendingAction}
-        onClose={() => setPendingAction(null)}
+        onClose={cancelPendingAction}
         onConfirm={handleConfirmException}
         title={pendingAction?.type === "checkin" ? "Excepción de Entrada" : pendingAction?.type === "checkout" ? "Excepción de Salida" : "Fichaje Retroactivo"}
         message={

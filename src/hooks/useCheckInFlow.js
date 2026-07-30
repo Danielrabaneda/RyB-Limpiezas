@@ -19,7 +19,10 @@ import {
   passTaskToNextService,
 } from "../services/scheduleService";
 import { createGPSSuggestion } from "../services/gpsSuggestionService";
-import { getDistance } from "../utils/geolocation";
+import {
+  closeServiceNotifications,
+  getDistance,
+} from "../utils/geolocation";
 import {
   collection,
   query,
@@ -36,6 +39,11 @@ import { parseHHMM, formatTimeToHHMM } from "../utils/formatTime";
 import { useTenant } from "../contexts/TenantContext";
 import { tenantCollection } from "../utils/tenantFirestore";
 import { getCurrentServiceGroup } from "../utils/serviceGroup";
+import {
+  clearCheckoutInProgress,
+  markCheckoutInProgress,
+} from "../utils/checkoutGuard";
+import { getCommunityExitRadiusMeters } from "../config/gpsConfig";
 
 export function useCheckInFlow(
   serviceId,
@@ -92,6 +100,18 @@ export function useCheckInFlow(
   const [pendingAction, setPendingAction] = useState(null);
 
   const lastEstimatedServiceId = useRef(null);
+
+  const beginCheckoutAttempt = () => {
+    markCheckoutInProgress(serviceId);
+    void closeServiceNotifications(serviceId);
+  };
+
+  const cancelPendingAction = () => {
+    if (pendingAction?.type === "checkout") {
+      clearCheckoutInProgress(serviceId);
+    }
+    setPendingAction(null);
+  };
 
   // Cargar sugerencias de geolocalización
   useEffect(() => {
@@ -773,6 +793,7 @@ export function useCheckInFlow(
       }
     }
 
+    beginCheckoutAttempt();
     setActionLoading(true);
     try {
       let pos = null;
@@ -814,7 +835,13 @@ export function useCheckInFlow(
           community.location._lat || community.location.latitude || 0;
         const commLng =
           community.location._long || community.location.longitude || 0;
-        check = isWithinRange(lat, lng, commLat, commLng, 500);
+        check = isWithinRange(
+          lat,
+          lng,
+          commLat,
+          commLng,
+          getCommunityExitRadiusMeters(community),
+        );
         setDistanceInfo(check);
 
         if (!check.withinRange) {
@@ -868,7 +895,13 @@ export function useCheckInFlow(
         const commLng =
           community.location._long || community.location.longitude || 0;
         if (!check) {
-          check = isWithinRange(lat, lng, commLat, commLng, 500);
+          check = isWithinRange(
+            lat,
+            lng,
+            commLat,
+            commLng,
+            getCommunityExitRadiusMeters(community),
+          );
           setDistanceInfo(check);
         }
         isOutOfBounds = !check.withinRange;
@@ -898,6 +931,7 @@ export function useCheckInFlow(
       await executeCheckOut(pos, lat, lng, manualTime, clientSignature, null);
     } catch (err) {
       console.error(err);
+      clearCheckoutInProgress(serviceId);
       setActionLoading(false);
     }
   }
@@ -910,6 +944,7 @@ export function useCheckInFlow(
     clientSignature,
     exceptionReason,
   ) {
+    beginCheckoutAttempt();
     setActionLoading(true);
     try {
       const currentGroup = getCurrentServiceGroup(groupedServices, service);
@@ -1002,6 +1037,7 @@ export function useCheckInFlow(
     } catch (err) {
       alert("Error: " + err);
     } finally {
+      clearCheckoutInProgress(serviceId);
       setActionLoading(false);
     }
   }
@@ -1326,6 +1362,7 @@ export function useCheckInFlow(
     setManualExitTime,
     pendingAction,
     setPendingAction,
+    cancelPendingAction,
     handleCheckIn,
     handleCheckOut,
     handleFullManualSubmit,

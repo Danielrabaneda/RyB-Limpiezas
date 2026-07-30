@@ -10,6 +10,7 @@ import {
   completeCheckOut,
 } from "../../services/checkInService";
 import { getDistance, sendNotification } from "../../utils/geolocation";
+import { isCheckoutInProgress } from "../../utils/checkoutGuard";
 import { createSystemNotification } from "../../services/notificationService";
 import {
   persistEntryDetection,
@@ -18,7 +19,11 @@ import {
 import { format } from "date-fns";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "../../config/firebase";
-import { GPS_CONFIG } from "../../config/gpsConfig";
+import {
+  GPS_CONFIG,
+  getCommunityExitRadiusMeters,
+  getCommunityGeofenceRadiusMeters,
+} from "../../config/gpsConfig";
 
 // ==================== CONSTANTES LOCALES ====================
 const COMMUNITY_CACHE_TTL = 10 * 60 * 1000; // Caché de comunidades: 10 min
@@ -425,11 +430,9 @@ export default function GeolocationTracker() {
               const dist = getDistance(latitude, longitude, commLat, commLng);
 
               const geofenceRadius =
-                community.geofenceRadiusMeters ||
-                GPS_CONFIG.DEFAULT_GEOFENCE_RADIUS_METERS;
+                getCommunityGeofenceRadiusMeters(community);
               const entryRadius = geofenceRadius;
-              const exitRadius =
-                geofenceRadius + GPS_CONFIG.HYSTERESIS_BUFFER_METERS;
+              const exitRadius = getCommunityExitRadiusMeters(community);
 
               const logEntry = `[${new Date().toLocaleTimeString()}] ${community.name}: ${Math.round(dist)}m (GPS±${Math.round(accuracy)}m, R_in:${entryRadius}m, R_out:${exitRadius}m) [${svc.status}]`;
               console.log(logEntry);
@@ -462,6 +465,13 @@ export default function GeolocationTracker() {
           detectedTime,
           isUrgent = false,
         ) => {
+          if (type === "exit" && isCheckoutInProgress(service.id)) {
+            console.log(
+              `[Tracker] Aviso de salida omitido: el servicio ${service.id} se está finalizando`,
+            );
+            return;
+          }
+
           const sessionId = `${type}_${service.id}_${detectedTime.getTime()}`;
           const notifiedKey = `notified_session_${sessionId}`;
 
@@ -518,6 +528,14 @@ export default function GeolocationTracker() {
             (s) => s.id === checkIn.scheduledServiceId,
           );
           if (activeSvc) {
+            if (isCheckoutInProgress(activeSvc.id)) {
+              consecutiveOutsideRef.current[activeSvc.id] = 0;
+              console.log(
+                `[Tracker] Detección de salida pausada: el servicio ${activeSvc.id} se está finalizando`,
+              );
+              return;
+            }
+
             if (accuracy > GPS_CONFIG.MAX_ACCURACY_FOR_EXIT_METERS) {
               console.log(
                 `[Tracker] GPS demasiado impreciso (${Math.round(accuracy)}m) para evaluar salida, ignorando`,

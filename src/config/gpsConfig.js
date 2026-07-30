@@ -34,3 +34,17 @@ export const GPS_CONFIG = {
   // Duración del silenciado de sugerencias descartadas
   DISMISSAL_SILENCE_DURATION_MS: 25 * 60 * 1000, // 25 minutos de silencio tras descartar una sugerencia
 };
+
+export function getCommunityGeofenceRadiusMeters(community) {
+  const configuredRadius = Number(community?.geofenceRadiusMeters);
+  return Number.isFinite(configuredRadius) && configuredRadius > 0
+    ? configuredRadius
+    : GPS_CONFIG.DEFAULT_GEOFENCE_RADIUS_METERS;
+}
+
+export function getCommunityExitRadiusMeters(community) {
+  return (
+    getCommunityGeofenceRadiusMeters(community) +
+    GPS_CONFIG.HYSTERESIS_BUFFER_METERS
+  );
+}

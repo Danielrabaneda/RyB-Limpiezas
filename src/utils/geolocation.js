@@ -157,6 +157,35 @@ export async function sendNotification(title, options) {
   }
 }
 
+export async function closeServiceNotifications(serviceId) {
+  if (
+    !serviceId ||
+    typeof navigator === "undefined" ||
+    !("serviceWorker" in navigator)
+  )
+    return;
+
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    if (typeof registration.getNotifications !== "function") return;
+
+    const notifications = await registration.getNotifications();
+    for (const notification of notifications) {
+      const notificationServiceId = notification.data?.serviceId;
+      const isExitNotification = notification.tag === `exit-${serviceId}`;
+
+      if (notificationServiceId === serviceId || isExitNotification) {
+        notification.close();
+      }
+    }
+  } catch (err) {
+    console.warn(
+      "[Notification] No se pudieron cerrar los avisos del servicio:",
+      err,
+    );
+  }
+}
+
 /**
  * Obtiene la ubicación GPS actual del dispositivo en una Promesa
  */
