@@ -1510,7 +1510,7 @@ export async function syncServicesForRange(companyId, startDate, endDate) {
       const key = `${ds.task.id}_${ds.targetUserId}_${dayStr}`;
 
       if (!keptKeys.has(key)) {
-        await createScheduledService({
+        await createScheduledService(companyId, {
           communityId: ds.task.communityId,
           communityTaskId: ds.task.id,
           taskName: ds.task.taskName,
