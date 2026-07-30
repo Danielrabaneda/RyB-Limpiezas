@@ -302,7 +302,7 @@ export default function DashboardPage() {
         <div className="flex flex-wrap gap-2">
           {companyId === "rayba" && userProfile?.platformAdmin === true && (
             <button
-              onClick={() => navigate("/admin/plataforma")}
+              onClick={() => navigate("/plataforma/empresas")}
               className="btn"
               style={{
                 padding: "10px 20px",

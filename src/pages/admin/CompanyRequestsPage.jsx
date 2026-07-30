@@ -55,6 +55,10 @@ function StatusBadge({ status }) {
   );
 }
 
+function notifyRequestsUpdated() {
+  window.dispatchEvent(new CustomEvent("platform-requests-updated"));
+}
+
 export default function CompanyRequestsPage() {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -69,7 +73,9 @@ export default function CompanyRequestsPage() {
   async function refreshRequests() {
     setLoading(true);
     try {
-      setRequests(await listCompanyRequests());
+      const items = await listCompanyRequests();
+      setRequests(items);
+      notifyRequestsUpdated();
     } catch (error) {
       setActionMessage(`Error al cargar solicitudes: ${error.message}`);
     } finally {
@@ -84,6 +90,7 @@ export default function CompanyRequestsPage() {
         item.id === id ? { ...item, status: newStatus } : item,
       ),
     );
+    notifyRequestsUpdated();
   }
 
   async function handleDelete(id) {
@@ -95,6 +102,7 @@ export default function CompanyRequestsPage() {
       return;
     await deleteCompanyRequest(id);
     setRequests((current) => current.filter((item) => item.id !== id));
+    notifyRequestsUpdated();
   }
 
   async function handleProvision(item) {

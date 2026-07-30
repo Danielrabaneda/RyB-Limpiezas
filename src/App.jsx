@@ -24,7 +24,6 @@ import {
 import { db } from "./config/firebase";
 import { RequireTenant, useTenant } from "./contexts/TenantContext";
 import { tenantCollection, tenantDoc } from "./utils/tenantFirestore";
-import { listCompanyRequests } from "./services/platformService";
 import "./index.css";
 
 // ==================== ERROR BOUNDARY ====================
@@ -130,6 +129,7 @@ const PoliticaCookiesPage = lazy(
 
 // Components
 import CookieBanner from "./components/CookieBanner";
+import PlatformLayout from "./components/layout/PlatformLayout";
 const GeolocationTracker = lazy(
   () => import("./components/operario/GeolocationTracker"),
 );
@@ -274,7 +274,6 @@ function AdminLayout() {
   const [pendingValidations, setPendingValidations] = useState(0);
   const [pendingGPS, setPendingGPS] = useState(0);
   const [pendingOrders, setPendingOrders] = useState(0);
-  const [pendingLeads, setPendingLeads] = useState(0);
   const { companyId } = useTenant();
 
   useEffect(() => {
@@ -323,17 +322,6 @@ function AdminLayout() {
     return () => unsub();
   }, [companyId]);
 
-  useEffect(() => {
-    if (userProfile?.platformAdmin !== true) return;
-    listCompanyRequests()
-      .then((items) => {
-        setPendingLeads(items.filter((item) => item.status === "pending").length);
-      })
-      .catch((error) =>
-        console.error("No se pudieron cargar solicitudes pendientes:", error),
-      );
-  }, [userProfile?.platformAdmin]);
-
   async function handleLogout() {
     await logout();
     navigate("/login");
@@ -352,9 +340,6 @@ function AdminLayout() {
     { path: "/admin/evidencias", icon: "📸", label: "Evidencias" },
     { path: "/admin/kilometraje", icon: "🚗", label: "Kilometraje" },
     { path: "/admin/inventory", icon: "📦", label: "Materiales" },
-    ...(isMasterAdmin
-      ? [{ path: "/admin/solicitudes", icon: "📩", label: "Solicitudes" }]
-      : []),
     { path: "/admin/ajustes", icon: "⚙️", label: "Ajustes" },
   ];
 
@@ -467,14 +452,6 @@ function AdminLayout() {
                   {pendingOrders}
                 </span>
               )}
-              {item.path === "/admin/solicitudes" && pendingLeads > 0 && (
-                <span
-                  className="badge bg-emerald-500 text-white border-0 text-xs px-2 py-0.5 shadow-sm animate-pulse"
-                  title="Solicitudes de empresa pendientes"
-                >
-                  {pendingLeads}
-                </span>
-              )}
             </NavLink>
           ))}
 
@@ -484,6 +461,17 @@ function AdminLayout() {
               borderTop: "1px solid rgba(255, 255, 255, 0.1)",
             }}
           />
+          {isMasterAdmin && (
+            <NavLink
+              to="/plataforma/empresas"
+              className="sidebar-link"
+              style={{ color: "#38bdf8", fontWeight: "bold" }}
+              onClick={() => setSidebarOpen(false)}
+            >
+              <span className="sidebar-link-icon">◈</span>
+              Consola global
+            </NavLink>
+          )}
           <NavLink
             to="/operario"
             className="sidebar-link flex items-center justify-between"
@@ -921,7 +909,10 @@ export default function App() {
                     path="solicitudes"
                     element={
                       <SuperAdminRoute>
-                        <CompanyRequestsPage />
+                        <Navigate
+                          to="/plataforma/solicitudes"
+                          replace
+                        />
                       </SuperAdminRoute>
                     }
                   />
@@ -929,9 +920,37 @@ export default function App() {
                     path="plataforma"
                     element={
                       <SuperAdminRoute>
-                        <PlatformDashboardPage />
+                        <Navigate
+                          to="/plataforma/empresas"
+                          replace
+                        />
                       </SuperAdminRoute>
                     }
+                  />
+                </Route>
+
+                {/* Consola global de plataforma */}
+                <Route
+                  path="/plataforma"
+                  element={
+                    <ProtectedRoute requiredRole="admin">
+                      <SuperAdminRoute>
+                        <PlatformLayout />
+                      </SuperAdminRoute>
+                    </ProtectedRoute>
+                  }
+                >
+                  <Route
+                    index
+                    element={<Navigate to="empresas" replace />}
+                  />
+                  <Route
+                    path="empresas"
+                    element={<PlatformDashboardPage />}
+                  />
+                  <Route
+                    path="solicitudes"
+                    element={<CompanyRequestsPage />}
                   />
                 </Route>
 
