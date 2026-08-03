@@ -140,6 +140,7 @@ export default function DashboardPage() {
         );
       }
 
+
       const completed = todayServices.filter(
         (s) => s.status === "completed",
       ).length;
@@ -149,8 +150,11 @@ export default function DashboardPage() {
 
       // Calculate real-time active operators (active workday OR active check-in/service in progress)
       const activeUserIds = new Set();
-      const canonicalUserId = (uid) =>
-        ops.find((op) => op.uid === uid || op.legacyUid === uid)?.uid || uid;
+      const canonicalUserId = (val) => {
+        if (!val) return "";
+        const rawUid = typeof val === "object" ? val.uid || val.id || "" : val;
+        return ops.find((op) => op.uid === rawUid || op.legacyUid === rawUid)?.uid || rawUid;
+      };
 
       // 1. Use the latest session state for each operator. This prevents an
       // orphaned duplicate session from keeping someone active after a newer
@@ -176,8 +180,9 @@ export default function DashboardPage() {
       });
 
       const canAppearAsActive = (uid) => {
+        if (!uid) return false;
         const latest = latestWorkdayByUser.get(canonicalUserId(uid));
-        return !latest || latest.workday.status === "active";
+        return latest?.workday?.status === "active";
       };
 
       latestWorkdayByUser.forEach(({ workday: wd }, uid) => {
