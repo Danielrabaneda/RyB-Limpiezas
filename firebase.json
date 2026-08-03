@@ -10,7 +10,7 @@
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "headers": [
       {
-        "source": "**/*.@(html|js|json|css)",
+        "source": "**/*.@(html|js|json|css|mjs)",
         "headers": [
           {
             "key": "Cache-Control",
@@ -19,7 +19,7 @@
         ]
       },
       {
-        "source": "sw.js",
+        "source": "**/*sw*.@(js|mjs)",
         "headers": [
           {
             "key": "Cache-Control",
