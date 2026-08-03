@@ -71,11 +71,36 @@ export function useTodayData(userProfile) {
         `[TodayPage] Loading data for ${userProfile.uid} at ${now.toISOString()}`,
       );
 
-      const [svcs, checkIn, summary] = await Promise.all([
-        getScheduledServicesForDate(companyId, userProfile.uid, now),
+      const legacyUid = userProfile.legacyUid;
+      const [svcs, canonicalCheckIn, canonicalSummary, legacyCheckIn, legacySummary] =
+        await Promise.all([
+        getScheduledServicesForDate(
+          companyId,
+          userProfile.uid,
+          now,
+          legacyUid ? [legacyUid] : [],
+        ),
         getActiveCheckIn(companyId, userProfile.uid),
         getWorkdaysSummaryForDate(companyId, userProfile.uid, now),
+        legacyUid ? getActiveCheckIn(companyId, legacyUid) : Promise.resolve(null),
+        legacyUid
+          ? getWorkdaysSummaryForDate(companyId, legacyUid, now)
+          : Promise.resolve(null),
       ]);
+      const checkIn = canonicalCheckIn || legacyCheckIn;
+      const summary = legacySummary
+        ? {
+            totalMinutes:
+              canonicalSummary.totalMinutes + legacySummary.totalMinutes,
+            hasActive: canonicalSummary.hasActive || legacySummary.hasActive,
+            activeWorkday:
+              canonicalSummary.activeWorkday || legacySummary.activeWorkday,
+            firstStartTime:
+              [canonicalSummary.firstStartTime, legacySummary.firstStartTime]
+                .filter(Boolean)
+                .sort((a, b) => a.getTime() - b.getTime())[0] || null,
+          }
+        : canonicalSummary;
 
       console.log(
         `[TodayPage] Fetched ${svcs.length} services and summary (active: ${summary.hasActive})`,

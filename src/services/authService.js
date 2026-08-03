@@ -42,7 +42,14 @@ export async function getOperarios(companyId) {
   const q = query(collection(db, "users"), where("companyId", "==", companyId));
   const snap = await getDocs(q);
   return snap.docs
-    .map((d) => ({ uid: d.id, ...d.data() }))
+    .map((d) => {
+      const data = d.data();
+      return {
+        ...data,
+        legacyUid: data.uid && data.uid !== d.id ? data.uid : null,
+        uid: d.id,
+      };
+    })
     .filter((u) => u.role === "operario" || u.isOperario === true);
 }
 
@@ -53,7 +60,14 @@ export async function getAllUsers(companyId) {
   }
   const q = query(collection(db, "users"), where("companyId", "==", companyId));
   const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ uid: d.id, ...d.data() }));
+  return snap.docs.map((d) => {
+    const data = d.data();
+    return {
+      ...data,
+      legacyUid: data.uid && data.uid !== d.id ? data.uid : null,
+      uid: d.id,
+    };
+  });
 }
 
 export async function updateUserProfile(uid, data) {

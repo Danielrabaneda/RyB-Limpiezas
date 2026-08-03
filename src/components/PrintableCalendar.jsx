@@ -20,8 +20,11 @@ export default function PrintableCalendar({
 }) {
   const monthName = format(month, "MMMM yyyy", { locale: es });
   const isIndividual = selectedOpId !== "all";
-  const selectedOpName =
-    operarios.find((o) => o.uid === selectedOpId)?.name || "";
+  const selectedOperator = operarios.find((o) => o.uid === selectedOpId);
+  const selectedOpName = selectedOperator?.name || "";
+  const selectedOperatorIds = new Set(
+    [selectedOperator?.uid, selectedOperator?.legacyUid].filter(Boolean),
+  );
 
   // Preparar cuadrícula de días (Lunes a Domingo)
   const monthStart = startOfMonth(month);
@@ -43,7 +46,8 @@ export default function PrintableCalendar({
         : new Date(s.scheduledDate);
       return (
         isSameDay(sDate, date) &&
-        (selectedOpId === "all" || s.assignedUserId === selectedOpId)
+        (selectedOpId === "all" ||
+          selectedOperatorIds.has(s.assignedUserId))
       );
     });
   };

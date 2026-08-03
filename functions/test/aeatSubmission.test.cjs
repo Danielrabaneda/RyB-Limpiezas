@@ -1,0 +1,101 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+
+const {
+  buildAeatSubmissionDraftXml,
+  buildSubmissionManifest,
+  getInitialSubmissionStatus,
+  normalizeAeatConnectionProfile,
+} = require("../lib/aeatSubmission");
+
+const fiscalRecord = {
+  invoiceId: "invoice-1",
+  recordType: "alta",
+  invoiceType: "F1",
+  issuerNif: "B04843843",
+  invoiceNumber: "A-2026-0001",
+  fechaExpedicionFactura: "26-07-2026",
+  fechaHoraHusoGenRegistro: "2026-07-26T12:30:00+02:00",
+  subtotal: 100,
+  taxAmount: 21,
+  surchargeAmount: 0,
+  totalAmount: 121,
+  client: {
+    name: "Comunidad & Portal",
+    taxId: "H12345678",
+    idType: "NIF",
+    countryCode: "ES",
+  },
+  taxBreakdown: [
+    {
+      taxTreatment: "taxable",
+      taxRate: 21,
+      taxableBase: 100,
+      taxAmount: 21,
+    },
+  ],
+  chain: {
+    previousFiscalRecordId: "alta_previous",
+    previousHash: "ABC",
+    hash: "DEF",
+    algorithm: "SHA-256",
+  },
+};
+
+test("normaliza el canal sin admitir producción ni credenciales", () => {
+  const profile = normalizeAeatConnectionProfile({
+    channel: "delegated",
+    environment: "production",
+    adviserName: "Asesoría Fiscal",
+    adviserTaxId: "b12345678",
+    certificate: "NO-DEBE-GUARDARSE",
+  });
+
+  assert.equal(profile.channel, "delegated");
+  assert.equal(profile.environment, "test");
+  assert.equal(profile.adviserTaxId, "B12345678");
+  assert.equal(profile.productionEnabled, false);
+  assert.equal(profile.credentialsStored, false);
+  assert.equal("certificate" in profile, false);
+});
+
+test("asigna una espera distinta al asesor y al conector local", () => {
+  assert.equal(getInitialSubmissionStatus("delegated"), "awaiting_sender");
+  assert.equal(
+    getInitialSubmissionStatus("local_connector"),
+    "awaiting_local_connector",
+  );
+  assert.equal(getInitialSubmissionStatus("disabled"), null);
+});
+
+test("genera un paquete XML de pruebas estable y escapado", () => {
+  const xml = buildAeatSubmissionDraftXml(fiscalRecord, {
+    companyName: "Limpiezas Rayba S.L",
+  });
+
+  assert.match(xml, /<ryb:Entorno>PRUEBAS<\/ryb:Entorno>/);
+  assert.match(
+    xml,
+    /<ryb:ProduccionHabilitada>false<\/ryb:ProduccionHabilitada>/,
+  );
+  assert.match(xml, /Comunidad &amp; Portal/);
+  assert.match(xml, /<ryb:Huella>DEF<\/ryb:Huella>/);
+  assert.doesNotMatch(xml, /NO-DEBE-GUARDARSE/);
+});
+
+test("el manifiesto enlaza la cola con la huella fiscal inmutable", () => {
+  const profile = normalizeAeatConnectionProfile({
+    channel: "local_connector",
+    connectorName: "PC Administración",
+  });
+  const manifest = buildSubmissionManifest({
+    companyId: "rayba",
+    fiscalRecordId: "alta_invoice-1",
+    fiscalRecord,
+    profile,
+  });
+
+  assert.equal(manifest.fiscalHash, "DEF");
+  assert.equal(manifest.channel, "local_connector");
+  assert.equal(manifest.productionEnabled, false);
+});

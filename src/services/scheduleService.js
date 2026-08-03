@@ -67,19 +67,29 @@ export async function createScheduledService(companyId, data) {
 
 export async function deleteFutureServicesForTask(companyId, taskId) {
   try {
-    const now = Timestamp.fromDate(startOfDay(new Date()));
+    const now = startOfDay(new Date()).getTime();
     const q = query(
       tenantCollection(db, companyId, "scheduledServices"),
       where("communityTaskId", "==", taskId),
-      where("scheduledDate", ">=", now),
-      where("status", "==", "pending"),
     );
 
     const snap = await getDocs(q);
     if (snap.empty) return 0;
 
-    // Don't delete services that were manually rescheduled
-    const toDelete = snap.docs.filter((d) => !d.data().isRescheduled);
+    // Filter in memory so editing a task does not depend on a composite
+    // Firestore index that may still be building or missing.
+    const toDelete = snap.docs.filter((d) => {
+      const data = d.data();
+      const scheduledDate = data.scheduledDate?.toDate
+        ? data.scheduledDate.toDate()
+        : new Date(data.scheduledDate);
+      return (
+        data.status === "pending" &&
+        !data.isRescheduled &&
+        !Number.isNaN(scheduledDate.getTime()) &&
+        scheduledDate.getTime() >= now
+      );
+    });
     if (toDelete.length === 0) return 0;
 
     const CHUNK_SIZE = 400;
@@ -91,7 +101,7 @@ export async function deleteFutureServicesForTask(companyId, taskId) {
     }
 
     console.log(
-      `[Schedule] Eliminados ${toDelete.length} servicios futuros pendientes para la tarea ${taskId} (${snap.size - toDelete.length} reprogramados preservados)`,
+      `[Schedule] Eliminados ${toDelete.length} servicios futuros pendientes para la tarea ${taskId}.`,
     );
     return toDelete.length;
   } catch (error) {
@@ -141,38 +151,52 @@ export async function deleteAllServicesForTask(companyId, taskId) {
   }
 }
 
-export async function getScheduledServicesForDate(companyId, userId, date = new Date()) {
+export async function getScheduledServicesForDate(
+  companyId,
+  userId,
+  date = new Date(),
+  userIdAliases = [],
+) {
   try {
     const startOfTarget = startOfDay(date);
+    const userIds = [...new Set([userId, ...userIdAliases].filter(Boolean))];
 
     console.log(
       `[Schedule] Fetching services for ${userId} on ${format(startOfTarget, "yyyy-MM-dd")}`,
     );
 
     // 1. Fetch my own services
-    const qOwn = query(
-      tenantCollection(db, companyId, "scheduledServices"),
-      where("assignedUserId", "==", userId),
+    const ownQueries = userIds.map((candidateId) =>
+      query(
+        tenantCollection(db, companyId, "scheduledServices"),
+        where("assignedUserId", "==", candidateId),
+      ),
     );
 
     // 2. Fetch services where I am explicitly listed as companion
-    const qExplicitCompanion = query(
-      tenantCollection(db, companyId, "scheduledServices"),
-      where("companionIds", "array-contains", userId),
+    const companionQueries = userIds.map((candidateId) =>
+      query(
+        tenantCollection(db, companyId, "scheduledServices"),
+        where("companionIds", "array-contains", candidateId),
+      ),
     );
 
     // 3. Completed services remain in the history of everyone who
     // participated, even after the active companion relationship ends.
-    const qHistoricalParticipant = query(
-      tenantCollection(db, companyId, "scheduledServices"),
-      where("participantIds", "array-contains", userId),
+    const participantQueries = userIds.map((candidateId) =>
+      query(
+        tenantCollection(db, companyId, "scheduledServices"),
+        where("participantIds", "array-contains", candidateId),
+      ),
     );
 
     // 4. Fetch services from active workdays where I am a companion today.
-    const qAllWorkdaysAsCompanion = query(
-      tenantCollection(db, companyId, "workdays"),
-      where("currentCompanionId", "==", userId),
-      where("status", "==", "active"),
+    const companionWorkdayQueries = userIds.map((candidateId) =>
+      query(
+        tenantCollection(db, companyId, "workdays"),
+        where("currentCompanionId", "==", candidateId),
+        where("status", "==", "active"),
+      ),
     );
 
     let results1 = [];
@@ -181,12 +205,18 @@ export async function getScheduledServicesForDate(companyId, userId, date = new 
     let results4 = [];
 
     try {
-      const fetches = await Promise.allSettled([
-        getDocs(qOwn),
-        getDocs(qExplicitCompanion),
-        getDocs(qHistoricalParticipant),
-        getDocs(qAllWorkdaysAsCompanion),
-      ]);
+      const queryGroups = [
+        ownQueries,
+        companionQueries,
+        participantQueries,
+        companionWorkdayQueries,
+      ];
+      const fetches = await Promise.allSettled(
+        queryGroups.map(async (queries) => {
+          const snapshots = await Promise.all(queries.map((item) => getDocs(item)));
+          return snapshots.flatMap((snapshot) => snapshot.docs);
+        }),
+      );
       fetches.forEach((result, index) => {
         if (result.status === "rejected") {
           console.warn(
@@ -195,29 +225,25 @@ export async function getScheduledServicesForDate(companyId, userId, date = new 
           );
         }
       });
-      const snapOwn =
-        fetches[0].status === "fulfilled" ? fetches[0].value : { docs: [] };
-      const snapExplicit =
-        fetches[1].status === "fulfilled" ? fetches[1].value : { docs: [] };
-      const snapHistorical =
-        fetches[2].status === "fulfilled" ? fetches[2].value : { docs: [] };
-      const snapWorkdays =
-        fetches[3].status === "fulfilled" ? fetches[3].value : { docs: [] };
+      const snapOwn = fetches[0].status === "fulfilled" ? fetches[0].value : [];
+      const snapExplicit = fetches[1].status === "fulfilled" ? fetches[1].value : [];
+      const snapHistorical = fetches[2].status === "fulfilled" ? fetches[2].value : [];
+      const snapWorkdays = fetches[3].status === "fulfilled" ? fetches[3].value : [];
 
-      results1 = snapOwn.docs.map((d) => ({ id: d.id, ...d.data() }));
-      results2 = snapExplicit.docs.map((d) => ({
+      results1 = snapOwn.map((d) => ({ id: d.id, ...d.data() }));
+      results2 = snapExplicit.map((d) => ({
         id: d.id,
         ...d.data(),
         isCompanion: true,
       }));
-      results4 = snapHistorical.docs
+      results4 = snapHistorical
         .map((d) => ({ id: d.id, ...d.data(), isCompanion: true }))
         .filter((service) => service.status === "completed");
 
       // Filter workdays to only those of "today"
       const relevantTitularIds = [
         ...new Set(
-          snapWorkdays.docs
+          snapWorkdays
             .filter((d) => {
               const wdDate = d.data().date?.toDate
                 ? d.data().date.toDate()
@@ -1217,42 +1243,42 @@ export async function generateServicesForTask(
 
     if (targetUsers.length === 0) return 0;
 
-    // Use current month if no range specified
-    const start = Timestamp.fromDate(startOfDay(startDate));
-    const end = Timestamp.fromDate(endOfDay(endDate));
-
+    // Query by task only and apply the date range locally. Requiring both the
+    // task id and a date range here makes task regeneration fail completely
+    // when the corresponding composite Firestore index is unavailable.
     const existingSnap = await getDocs(
       query(
         tenantCollection(db, companyId, "scheduledServices"),
         where("communityTaskId", "==", taskId),
-        where("scheduledDate", ">=", start),
-        where("scheduledDate", "<=", end),
       ),
     );
 
     const existingKeys = new Set(
-      existingSnap.docs.map((doc) => {
-        const data = doc.data();
-        const date = data.scheduledDate.toDate
-          ? data.scheduledDate.toDate()
-          : new Date(data.scheduledDate);
-        // IMPORTANT: include communityTaskId in key (same format as generateServicesForRange)
-        // to avoid blocking creation of a second task from the same community on the same day
-        return `${data.communityTaskId}_${data.assignedUserId}_${format(date, "yyyy-MM-dd")}`;
-      }),
+      existingSnap.docs
+        .map((doc) => {
+          const data = doc.data();
+          const date = data.scheduledDate?.toDate
+            ? data.scheduledDate.toDate()
+            : new Date(data.scheduledDate);
+          return { data, date };
+        })
+        .filter(
+          ({ date }) =>
+            !Number.isNaN(date.getTime()) &&
+            date.getTime() >= startOfDay(startDate).getTime() &&
+            date.getTime() <= endOfDay(endDate).getTime(),
+        )
+        .map(
+          ({ data, date }) =>
+            `${data.communityTaskId}_${data.assignedUserId}_${format(date, "yyyy-MM-dd")}`,
+        ),
     );
     const openCarryUsers = new Set();
 
     // Also check rescheduled services for this task whose originalDate falls in range.
     // Prevents recreating a service on the original date when it was moved.
     try {
-      const rescheduledSnap = await getDocs(
-        query(
-          tenantCollection(db, companyId, "scheduledServices"),
-          where("communityTaskId", "==", taskId),
-        ),
-      );
-      for (const d of rescheduledSnap.docs) {
+      for (const d of existingSnap.docs) {
         const data = d.data();
         if (
           data.status === "pending" &&

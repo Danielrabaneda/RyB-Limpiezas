@@ -14,6 +14,25 @@ const {
   getMadridDateKey,
 } = require("./lib/workdayAutoClose");
 const {
+  buildFiscalRecord,
+  calculateInvoiceFiscalTotals,
+  computeCancellationHash,
+  computeInvoiceHash,
+  formatInvoiceNumber,
+  formatIssueDateForHash,
+  getIssueDate,
+  getMadridIsoTimestamp,
+  resolveInvoiceSeries,
+  resolveInvoiceType,
+} = require("./lib/invoiceEmission");
+const {
+  AEAT_JOB_STATUSES,
+  buildAeatSubmissionDraftXml,
+  buildSubmissionManifest,
+  getInitialSubmissionStatus,
+  normalizeAeatConnectionProfile,
+} = require("./lib/aeatSubmission");
+const {
   onCall,
   HttpsError,
   onRequest,
@@ -221,6 +240,86 @@ async function assertTenantEnabled(companyId) {
     );
   }
   return company;
+}
+
+async function requireTenantAdmin(request) {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+  }
+  const companyId = String(request.auth.token.companyId || "").trim();
+  if (!companyId) {
+    throw new HttpsError(
+      "permission-denied",
+      "El usuario no tiene una empresa asociada.",
+    );
+  }
+  await assertTenantEnabled(companyId);
+  const userSnap = await db.collection("users").doc(request.auth.uid).get();
+  const user = userSnap.data();
+  if (
+    !userSnap.exists ||
+    user.role !== "admin" ||
+    user.active !== true ||
+    user.companyId !== companyId
+  ) {
+    throw new HttpsError(
+      "permission-denied",
+      "Esta operación requiere permisos de administración.",
+    );
+  }
+  return companyId;
+}
+
+function buildAeatSubmissionDocument({
+  companyId,
+  fiscalRecordId,
+  fiscalRecord,
+  settings,
+  profile,
+  createdBy,
+  createdAt,
+}) {
+  const status = getInitialSubmissionStatus(profile.channel);
+  if (!status) return null;
+  return {
+    companyId,
+    fiscalRecordId,
+    invoiceId: fiscalRecord.invoiceId,
+    invoiceNumber: fiscalRecord.invoiceNumber,
+    recordType: fiscalRecord.recordType || "alta",
+    issuerNif: fiscalRecord.issuerNif,
+    fiscalHash: fiscalRecord.chain?.hash || "",
+    channel: profile.channel,
+    environment: profile.environment,
+    status,
+    productionEnabled: false,
+    credentialsStored: false,
+    schemaValidationStatus: profile.schemaValidationStatus,
+    sender:
+      profile.channel === "delegated"
+        ? {
+            type: "delegated",
+            name: profile.adviserName,
+            taxId: profile.adviserTaxId,
+            email: profile.adviserEmail,
+          }
+        : {
+            type: "local_connector",
+            connectorName: profile.connectorName,
+          },
+    transportXml: buildAeatSubmissionDraftXml(fiscalRecord, settings),
+    manifest: buildSubmissionManifest({
+      companyId,
+      fiscalRecordId,
+      fiscalRecord,
+      profile,
+    }),
+    attempts: 0,
+    lastError: null,
+    aeatResponse: null,
+    createdBy,
+    createdAt,
+  };
 }
 
 function normalizeCompanyId(value) {
@@ -1345,6 +1444,990 @@ exports.onGeoDetectionCreated = onDocumentCreated(
       detectionId,
       adminCount: adminsSnap.size,
       type: detection.type,
+    });
+  },
+);
+
+/**
+ * Emite una o varias facturas exclusivamente desde el backend.
+ *
+ * - Modo tradicional: numera y bloquea la factura sin crear registro fiscal.
+ * - Modo VERI*FACTU de pruebas: crea además un registro fiscal inmutable,
+ *   calcula la huella y encadena el registro con el anterior.
+ *
+ * Esta fase no remite todavía registros a la AEAT.
+ */
+exports.emitInvoices = onCall(
+  {
+    region: "europe-west1",
+    memory: "256MiB",
+    timeoutSeconds: 120,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión para emitir facturas.",
+      );
+    }
+
+    const invoiceIds = request.data?.invoiceIds;
+    if (
+      !Array.isArray(invoiceIds) ||
+      invoiceIds.length === 0 ||
+      invoiceIds.length > 100
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Debes indicar entre 1 y 100 facturas.",
+      );
+    }
+
+    const uniqueInvoiceIds = [...new Set(invoiceIds)];
+    if (
+      uniqueInvoiceIds.length !== invoiceIds.length ||
+      uniqueInvoiceIds.some(
+        (id) => typeof id !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(id),
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "La lista contiene identificadores de factura no válidos o repetidos.",
+      );
+    }
+
+    const companyId = String(request.auth.token.companyId || "").trim();
+    if (!companyId) {
+      throw new HttpsError(
+        "permission-denied",
+        "El usuario no tiene una empresa asociada.",
+      );
+    }
+    await assertTenantEnabled(companyId);
+
+    const userSnap = await db.collection("users").doc(request.auth.uid).get();
+    const userData = userSnap.data();
+    if (
+      !userSnap.exists ||
+      userData.role !== "admin" ||
+      userData.active !== true ||
+      userData.companyId !== companyId
+    ) {
+      throw new HttpsError(
+        "permission-denied",
+        "No tienes permisos para emitir facturas de esta empresa.",
+      );
+    }
+
+    const settingsRef = db
+      .collection(`companies/${companyId}/settings`)
+      .doc("billing");
+    const invoiceRefs = uniqueInvoiceIds.map((id) =>
+      db.collection(`companies/${companyId}/invoices`).doc(id),
+    );
+    const fiscalRecordRefs = uniqueInvoiceIds.map((id) =>
+      db.collection(`companies/${companyId}/fiscalRecords`).doc(`alta_${id}`),
+    );
+    const submissionRefs = uniqueInvoiceIds.map((id) =>
+      db.collection(`companies/${companyId}/aeatSubmissions`).doc(`alta_${id}`),
+    );
+
+    try {
+      return await db.runTransaction(async (transaction) => {
+        const settingsSnap = await transaction.get(settingsRef);
+        const settings = settingsSnap.exists ? settingsSnap.data() : {};
+        const verifactuEnabled = settings.verifactuEnabled === true;
+        const aeatProfile = normalizeAeatConnectionProfile(
+          settings.aeatConnection || {},
+        );
+
+        const [invoiceSnaps, fiscalRecordSnaps] = await Promise.all([
+          Promise.all(invoiceRefs.map((ref) => transaction.get(ref))),
+          verifactuEnabled
+            ? Promise.all(fiscalRecordRefs.map((ref) => transaction.get(ref)))
+            : Promise.resolve([]),
+        ]);
+
+        const entries = invoiceSnaps.map((snap, index) => ({
+          snap,
+          ref: invoiceRefs[index],
+          fiscalRef: fiscalRecordRefs[index],
+          submissionRef: submissionRefs[index],
+          fiscalSnap: fiscalRecordSnaps[index] || null,
+        }));
+
+        entries.forEach(({ snap, fiscalSnap }) => {
+          if (!snap.exists) {
+            throw new HttpsError("not-found", "Una de las facturas no existe.");
+          }
+          const invoice = snap.data();
+          if (invoice.status !== "draft") {
+            throw new HttpsError(
+              "failed-precondition",
+              "Solo se pueden emitir facturas que estén en borrador.",
+            );
+          }
+          if (!Array.isArray(invoice.items) || invoice.items.length === 0) {
+            throw new HttpsError(
+              "failed-precondition",
+              "Una factura no contiene conceptos facturables.",
+            );
+          }
+          if (fiscalSnap?.exists) {
+            throw new HttpsError(
+              "already-exists",
+              "La factura ya tiene un registro fiscal asociado.",
+            );
+          }
+        });
+
+        entries.sort((a, b) => {
+          const aMillis = a.snap.data().createdAt?.toMillis?.() || 0;
+          const bMillis = b.snap.data().createdAt?.toMillis?.() || 0;
+          return aMillis - bMillis || a.snap.id.localeCompare(b.snap.id);
+        });
+
+        const legacyNextSequence = Math.max(
+          1,
+          Number.parseInt(settings.nextInvoiceSeq, 10) || 1,
+        );
+        const seriesCounters = { ...(settings.seriesCounters || {}) };
+        let previousFiscalRecordId = settings.lastFiscalRecordId || null;
+        // Las huellas antiguas creadas en navegador no tienen un registro fiscal
+        // inmutable asociado. La nueva cadena solo continúa si existe ese registro.
+        let previousHash = previousFiscalRecordId
+          ? settings.lastInvoiceHash || ""
+          : "";
+        const issuerNif = String(settings.nif || "").trim();
+        const now = new Date();
+        const issueDate = getIssueDate(settings, now);
+        if (Number.isNaN(issueDate.getTime())) {
+          throw new HttpsError(
+            "failed-precondition",
+            "La fecha de emisión configurada no es válida.",
+          );
+        }
+        const issueDateTimestamp = Timestamp.fromDate(issueDate);
+        const dueDateTimestamp = Timestamp.fromDate(
+          new Date(issueDate.getTime() + 30 * 24 * 60 * 60 * 1000),
+        );
+        const emitted = [];
+
+        if (verifactuEnabled && !issuerNif) {
+          throw new HttpsError(
+            "failed-precondition",
+            "Configura el NIF de la empresa antes de activar VeriFactu.",
+          );
+        }
+
+        entries.forEach(({ snap, ref, fiscalRef, submissionRef }, index) => {
+          const invoice = snap.data();
+          const invoiceType = resolveInvoiceType(invoice);
+          const series = resolveInvoiceSeries(settings, invoice);
+          const seriesKey = series || "__default";
+          const nextSequence = Math.max(
+            1,
+            Number.parseInt(
+              seriesCounters[seriesKey],
+              10,
+            ) || (series ? 1 : legacyNextSequence),
+          );
+          const fiscalTotals = calculateInvoiceFiscalTotals(
+            invoice.items,
+            invoice.taxRate ?? 21,
+          );
+          if (
+            fiscalTotals.items.some(
+              (item) =>
+                !item.description ||
+                !Number.isFinite(item.quantity) ||
+                !Number.isFinite(item.price),
+            ) ||
+            !Number.isFinite(fiscalTotals.totalAmount)
+          ) {
+            throw new HttpsError(
+              "failed-precondition",
+              "Una factura contiene conceptos o importes fiscales no válidos.",
+            );
+          }
+          if (invoiceType.startsWith("R")) {
+            const method = String(invoice.rectification?.method || "");
+            if (!["I", "S"].includes(method) || !invoice.rectification?.reason) {
+              throw new HttpsError(
+                "failed-precondition",
+                "La factura rectificativa debe indicar motivo y método.",
+              );
+            }
+            if (
+              method === "S" &&
+              (!Number.isFinite(
+                Number(invoice.rectification?.rectifiedBase),
+              ) ||
+                !Number.isFinite(
+                  Number(invoice.rectification?.rectifiedTax),
+                ))
+            ) {
+              throw new HttpsError(
+                "failed-precondition",
+                "La rectificación por sustitución requiere base y cuota rectificadas.",
+              );
+            }
+          }
+          const normalizedInvoice = {
+            ...invoice,
+            ...fiscalTotals,
+            invoiceType,
+            series,
+          };
+          const invoiceNumber = formatInvoiceNumber(
+            settings,
+            normalizedInvoice,
+            nextSequence,
+            series,
+          );
+          const generationDate = new Date(now.getTime() + index * 1000);
+          const generationTimestamp = getMadridIsoTimestamp(generationDate);
+          const commonInvoiceUpdate = {
+            status: "pending",
+            invoiceStatus: "issued",
+            paymentStatus: "pending",
+            invoiceNumber,
+            invoiceSeq: nextSequence,
+            invoiceType,
+            series,
+            issueDate: issueDateTimestamp,
+            dueDate: dueDateTimestamp,
+            emittedAt: Timestamp.fromDate(generationDate),
+            emittedBy: request.auth.uid,
+            emissionMode: verifactuEnabled ? "verifactu_test" : "legacy",
+            verifactuEnabledAtEmission: verifactuEnabled,
+            items: fiscalTotals.items,
+            taxBreakdown: fiscalTotals.taxBreakdown,
+            subtotal: fiscalTotals.subtotal,
+            taxAmount: fiscalTotals.taxAmount,
+            surchargeAmount: fiscalTotals.surchargeAmount,
+            totalAmount: fiscalTotals.totalAmount,
+          };
+
+          if (verifactuEnabled) {
+            const hash = computeInvoiceHash({
+              idEmisorFactura: issuerNif,
+              numSerieFactura: invoiceNumber,
+              fechaExpedicionFactura: formatIssueDateForHash(issueDate),
+              tipoFactura: invoiceType,
+              cuotaTotal: Number(fiscalTotals.taxAmount || 0).toFixed(2),
+              importeTotal: Number(fiscalTotals.totalAmount || 0).toFixed(2),
+              huellaAnterior: previousHash,
+              fechaHoraHusoGenRegistro: generationTimestamp,
+            });
+            const fiscalRecord = buildFiscalRecord({
+              companyId,
+              invoiceId: snap.id,
+              invoice: normalizedInvoice,
+              invoiceNumber,
+              invoiceSequence: nextSequence,
+              issuerNif,
+              previousHash,
+              previousFiscalRecordId,
+              generationTimestamp,
+              hash,
+              issueDate: issueDateTimestamp,
+              createdBy: request.auth.uid,
+            });
+
+            transaction.create(fiscalRef, {
+              ...fiscalRecord,
+              createdAt: Timestamp.fromDate(generationDate),
+            });
+            const submissionDocument = buildAeatSubmissionDocument({
+              companyId,
+              fiscalRecordId: fiscalRef.id,
+              fiscalRecord,
+              settings,
+              profile: aeatProfile,
+              createdBy: request.auth.uid,
+              createdAt: Timestamp.fromDate(generationDate),
+            });
+            if (submissionDocument) {
+              transaction.create(submissionRef, submissionDocument);
+            }
+            transaction.update(ref, {
+              ...commonInvoiceUpdate,
+              fiscalRecordId: fiscalRef.id,
+              fiscalStatus: "generated",
+              aeatStatus: submissionDocument
+                ? "queued"
+                : "not_connected",
+              aeatSubmissionId: submissionDocument
+                ? submissionRef.id
+                : null,
+              aeatEnvironment: "test",
+              aeatProductionAccepted: false,
+              tipoFactura: invoiceType,
+              hash,
+              previousHash,
+              fechaHoraHusoGenRegistro: generationTimestamp,
+            });
+            previousHash = hash;
+            previousFiscalRecordId = fiscalRef.id;
+          } else {
+            transaction.update(ref, {
+              ...commonInvoiceUpdate,
+              fiscalRecordId: null,
+              fiscalStatus: "not_applicable",
+              aeatStatus: "not_applicable",
+              tipoFactura: invoiceType,
+            });
+          }
+
+          emitted.push({
+            id: snap.id,
+            invoiceNumber,
+            emissionMode: commonInvoiceUpdate.emissionMode,
+          });
+          seriesCounters[seriesKey] = nextSequence + 1;
+        });
+
+        const settingsUpdate = {
+          nextInvoiceSeq:
+            seriesCounters.__default || legacyNextSequence,
+          seriesCounters,
+          lastEmissionMode: verifactuEnabled ? "verifactu_test" : "legacy",
+          updatedAt: FieldValue.serverTimestamp(),
+        };
+        if (verifactuEnabled) {
+          settingsUpdate.lastInvoiceHash = previousHash;
+          settingsUpdate.lastFiscalRecordId = previousFiscalRecordId;
+        }
+        transaction.set(settingsRef, settingsUpdate, { merge: true });
+
+        return {
+          emitted,
+          emissionMode: verifactuEnabled ? "verifactu_test" : "legacy",
+          aeatSubmissionEnabled: false,
+          aeatQueuePrepared: aeatProfile.channel !== "disabled",
+        };
+      });
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      logger.error("Error emitiendo facturas desde el backend", {
+        companyId,
+        invoiceIds: uniqueInvoiceIds,
+        error: error.message,
+      });
+      throw new HttpsError(
+        "internal",
+        "No se pudieron emitir las facturas. No se ha aplicado ningún cambio.",
+      );
+    }
+  },
+);
+
+exports.configureAeatConnection = onCall(
+  {
+    region: "europe-west1",
+    memory: "256MiB",
+    timeoutSeconds: 60,
+  },
+  async (request) => {
+    const companyId = await requireTenantAdmin(request);
+    const profile = normalizeAeatConnectionProfile(request.data?.profile || {});
+    if (
+      profile.channel === "delegated" &&
+      (!profile.adviserName || !profile.adviserTaxId)
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Indica el nombre y NIF del asesor o tercero autorizado.",
+      );
+    }
+    if (
+      profile.channel === "local_connector" &&
+      !profile.connectorName
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Indica un nombre para identificar el conector local.",
+      );
+    }
+
+    const settingsRef = db
+      .collection(`companies/${companyId}/settings`)
+      .doc("billing");
+    await settingsRef.set(
+      {
+        aeatConnection: profile,
+        aeatConnectionUpdatedAt: FieldValue.serverTimestamp(),
+        aeatConnectionUpdatedBy: request.auth.uid,
+      },
+      { merge: true },
+    );
+    return { profile };
+  },
+);
+
+exports.prepareAeatSubmissions = onCall(
+  {
+    region: "europe-west1",
+    memory: "256MiB",
+    timeoutSeconds: 120,
+  },
+  async (request) => {
+    const companyId = await requireTenantAdmin(request);
+    const invoiceIds = request.data?.invoiceIds;
+    if (
+      !Array.isArray(invoiceIds) ||
+      invoiceIds.length === 0 ||
+      invoiceIds.length > 50 ||
+      invoiceIds.some(
+        (id) => typeof id !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(id),
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Indica entre 1 y 50 facturas válidas.",
+      );
+    }
+    const uniqueInvoiceIds = [...new Set(invoiceIds)];
+    const settingsSnap = await db
+      .collection(`companies/${companyId}/settings`)
+      .doc("billing")
+      .get();
+    const settings = settingsSnap.exists ? settingsSnap.data() : {};
+    const profile = normalizeAeatConnectionProfile(
+      settings.aeatConnection || {},
+    );
+    if (profile.channel === "disabled") {
+      throw new HttpsError(
+        "failed-precondition",
+        "Configura primero el canal de envío a la AEAT.",
+      );
+    }
+
+    const prepared = [];
+    for (const invoiceId of uniqueInvoiceIds) {
+      const result = await db.runTransaction(async (transaction) => {
+        const invoiceRef = db
+          .collection(`companies/${companyId}/invoices`)
+          .doc(invoiceId);
+        const invoiceSnap = await transaction.get(invoiceRef);
+        if (!invoiceSnap.exists) {
+          throw new HttpsError("not-found", "Una factura no existe.");
+        }
+        const invoice = invoiceSnap.data();
+        const fiscalRecordId =
+          invoice.cancellationFiscalRecordId ||
+          invoice.lastSubsanationFiscalRecordId ||
+          invoice.fiscalRecordId;
+        if (!fiscalRecordId) {
+          throw new HttpsError(
+            "failed-precondition",
+            `La factura ${invoice.invoiceNumber || invoiceId} no tiene registro fiscal.`,
+          );
+        }
+        const fiscalRef = db
+          .collection(`companies/${companyId}/fiscalRecords`)
+          .doc(fiscalRecordId);
+        const submissionRef = db
+          .collection(`companies/${companyId}/aeatSubmissions`)
+          .doc(fiscalRecordId);
+        const [fiscalSnap, submissionSnap] = await Promise.all([
+          transaction.get(fiscalRef),
+          transaction.get(submissionRef),
+        ]);
+        if (!fiscalSnap.exists) {
+          throw new HttpsError(
+            "failed-precondition",
+            "No se encuentra el registro fiscal inmutable.",
+          );
+        }
+        if (submissionSnap.exists) {
+          return {
+            id: submissionRef.id,
+            invoiceId,
+            status: submissionSnap.data().status,
+            existing: true,
+          };
+        }
+        const fiscalRecord = fiscalSnap.data();
+        const createdAt = Timestamp.now();
+        const submissionDocument = buildAeatSubmissionDocument({
+          companyId,
+          fiscalRecordId,
+          fiscalRecord,
+          settings,
+          profile,
+          createdBy: request.auth.uid,
+          createdAt,
+        });
+        transaction.create(submissionRef, submissionDocument);
+        transaction.update(invoiceRef, {
+          aeatSubmissionId: submissionRef.id,
+          aeatStatus: "queued",
+          aeatEnvironment: "test",
+          aeatProductionAccepted: false,
+        });
+        return {
+          id: submissionRef.id,
+          invoiceId,
+          status: submissionDocument.status,
+          existing: false,
+        };
+      });
+      prepared.push(result);
+    }
+    return {
+      prepared,
+      environment: "test",
+      productionEnabled: false,
+    };
+  },
+);
+
+exports.getAeatSubmissionPackage = onCall(
+  {
+    region: "europe-west1",
+    memory: "256MiB",
+    timeoutSeconds: 60,
+  },
+  async (request) => {
+    const companyId = await requireTenantAdmin(request);
+    const submissionId = String(request.data?.submissionId || "").trim();
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(submissionId)) {
+      throw new HttpsError("invalid-argument", "Envío no válido.");
+    }
+    const snap = await db
+      .collection(`companies/${companyId}/aeatSubmissions`)
+      .doc(submissionId)
+      .get();
+    if (!snap.exists) {
+      throw new HttpsError("not-found", "El envío no existe.");
+    }
+    const submission = snap.data();
+    return {
+      submissionId,
+      status: submission.status,
+      environment: submission.environment,
+      productionEnabled: false,
+      schemaValidationStatus: submission.schemaValidationStatus,
+      transportXml: submission.transportXml,
+      manifest: submission.manifest,
+      fileName: `AEAT_PRUEBAS_${String(submission.invoiceNumber || submissionId).replace(/[^a-zA-Z0-9_-]/g, "_")}.xml`,
+    };
+  },
+);
+
+exports.recordAeatTestResult = onCall(
+  {
+    region: "europe-west1",
+    memory: "256MiB",
+    timeoutSeconds: 60,
+  },
+  async (request) => {
+    const companyId = await requireTenantAdmin(request);
+    const submissionId = String(request.data?.submissionId || "").trim();
+    const status = String(request.data?.status || "").trim();
+    const allowedResults = new Set([
+      "accepted",
+      "accepted_with_errors",
+      "rejected",
+      "retry_pending",
+    ]);
+    if (
+      !/^[a-zA-Z0-9_-]{1,128}$/.test(submissionId) ||
+      !allowedResults.has(status)
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Resultado de pruebas no válido.",
+      );
+    }
+    const response = request.data?.response || {};
+    const submissionRef = db
+      .collection(`companies/${companyId}/aeatSubmissions`)
+      .doc(submissionId);
+    return db.runTransaction(async (transaction) => {
+      const submissionSnap = await transaction.get(submissionRef);
+      if (!submissionSnap.exists) {
+        throw new HttpsError("not-found", "El envío no existe.");
+      }
+      const submission = submissionSnap.data();
+      if (submission.environment !== "test" || submission.productionEnabled) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Esta función solo admite resultados del entorno de pruebas.",
+        );
+      }
+      if (!AEAT_JOB_STATUSES.has(status)) {
+        throw new HttpsError("invalid-argument", "Estado no permitido.");
+      }
+      const now = Timestamp.now();
+      const sanitizedResponse = {
+        csv: String(response.csv || "").slice(0, 100),
+        code: String(response.code || "").slice(0, 100),
+        message: String(response.message || "").slice(0, 1000),
+        presentedByTaxId: String(
+          response.presentedByTaxId || "",
+        )
+          .toUpperCase()
+          .slice(0, 20),
+      };
+      transaction.update(submissionRef, {
+        status,
+        attempts: FieldValue.increment(1),
+        aeatResponse: sanitizedResponse,
+        lastError:
+          status === "rejected" || status === "retry_pending"
+            ? sanitizedResponse.message
+            : null,
+        processedAt: now,
+        processedBy: request.auth.uid,
+      });
+      const invoiceRef = db
+        .collection(`companies/${companyId}/invoices`)
+        .doc(submission.invoiceId);
+      transaction.update(invoiceRef, {
+        aeatStatus: status,
+        aeatEnvironment: "test",
+        aeatProductionAccepted: false,
+        aeatSubmissionId: submissionId,
+        aeatResponseCode: sanitizedResponse.code,
+        aeatCsv: sanitizedResponse.csv,
+        aeatProcessedAt: now,
+      });
+      return { submissionId, status };
+    });
+  },
+);
+
+exports.cancelInvoiceFiscalRecord = onCall(
+  {
+    region: "europe-west1",
+    memory: "256MiB",
+    timeoutSeconds: 60,
+  },
+  async (request) => {
+    const companyId = await requireTenantAdmin(request);
+    const invoiceId = String(request.data?.invoiceId || "").trim();
+    const reason = String(request.data?.reason || "").trim().slice(0, 500);
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(invoiceId) || !reason) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Indica una factura y el motivo de la anulación.",
+      );
+    }
+
+    const invoiceRef = db
+      .collection(`companies/${companyId}/invoices`)
+      .doc(invoiceId);
+    const settingsRef = db
+      .collection(`companies/${companyId}/settings`)
+      .doc("billing");
+    const cancellationRef = db
+      .collection(`companies/${companyId}/fiscalRecords`)
+      .doc(`anulacion_${invoiceId}`);
+    const cancellationSubmissionRef = db
+      .collection(`companies/${companyId}/aeatSubmissions`)
+      .doc(`anulacion_${invoiceId}`);
+
+    return db.runTransaction(async (transaction) => {
+      const [invoiceSnap, settingsSnap, cancellationSnap] = await Promise.all([
+        transaction.get(invoiceRef),
+        transaction.get(settingsRef),
+        transaction.get(cancellationRef),
+      ]);
+      if (!invoiceSnap.exists) {
+        throw new HttpsError("not-found", "La factura no existe.");
+      }
+      const invoice = invoiceSnap.data();
+      const settings = settingsSnap.exists ? settingsSnap.data() : {};
+      if (
+        invoice.emissionMode !== "verifactu_test" ||
+        !invoice.fiscalRecordId
+      ) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Solo se pueden anular registros creados en modo VeriFactu de pruebas.",
+        );
+      }
+      if (invoice.invoiceStatus === "cancelled" || cancellationSnap.exists) {
+        throw new HttpsError(
+          "already-exists",
+          "La factura ya tiene un registro de anulación.",
+        );
+      }
+
+      const generationDate = new Date();
+      const generationTimestamp = getMadridIsoTimestamp(generationDate);
+      const previousFiscalRecordId = settings.lastFiscalRecordId || null;
+      const previousHash = previousFiscalRecordId
+        ? settings.lastInvoiceHash || ""
+        : "";
+      const issueDate = invoice.issueDate?.toDate
+        ? invoice.issueDate.toDate()
+        : new Date(invoice.issueDate);
+      const issuerNif = String(settings.nif || "").trim();
+      const hash = computeCancellationHash({
+        issuerNif,
+        invoiceNumber: invoice.invoiceNumber,
+        issueDate: formatIssueDateForHash(issueDate),
+        previousHash,
+        generationTimestamp,
+      });
+
+      const cancellationRecord = {
+        schemaVersion: "verifactu-pre-aeat-v1",
+        system: {
+          name: "RyB App",
+          version: "0.1.0-phase4",
+          producer: "Limpiezas Rayba S.L",
+        },
+        companyId,
+        invoiceId,
+        originalFiscalRecordId: invoice.fiscalRecordId,
+        recordType: "anulacion",
+        issuerNif,
+        invoiceNumber: invoice.invoiceNumber,
+        issueDate: invoice.issueDate,
+        fechaExpedicionFactura: formatIssueDateForHash(issueDate),
+        fechaHoraHusoGenRegistro: generationTimestamp,
+        reason,
+        chain: {
+          previousFiscalRecordId,
+          previousHash,
+          hash,
+          algorithm: "SHA-256",
+        },
+        fiscalStatus: "generated",
+        aeatStatus: "not_connected",
+        aeatSubmissionEnabled: false,
+        environment: "test",
+        createdBy: request.auth.uid,
+        createdAt: Timestamp.fromDate(generationDate),
+      };
+      transaction.create(cancellationRef, cancellationRecord);
+      const aeatProfile = normalizeAeatConnectionProfile(
+        settings.aeatConnection || {},
+      );
+      const submissionDocument = buildAeatSubmissionDocument({
+        companyId,
+        fiscalRecordId: cancellationRef.id,
+        fiscalRecord: cancellationRecord,
+        settings,
+        profile: aeatProfile,
+        createdBy: request.auth.uid,
+        createdAt: Timestamp.fromDate(generationDate),
+      });
+      if (submissionDocument) {
+        transaction.create(cancellationSubmissionRef, submissionDocument);
+      }
+      transaction.update(invoiceRef, {
+        invoiceStatus: "cancelled",
+        fiscalStatus: "cancelled",
+        cancellationFiscalRecordId: cancellationRef.id,
+        cancellationReason: reason,
+        cancelledAt: Timestamp.fromDate(generationDate),
+        cancelledBy: request.auth.uid,
+        aeatSubmissionId: submissionDocument
+          ? cancellationSubmissionRef.id
+          : invoice.aeatSubmissionId || null,
+        aeatStatus: submissionDocument
+          ? "queued"
+          : invoice.aeatStatus || null,
+      });
+      transaction.set(
+        settingsRef,
+        {
+          lastInvoiceHash: hash,
+          lastFiscalRecordId: cancellationRef.id,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      return {
+        invoiceId,
+        cancellationFiscalRecordId: cancellationRef.id,
+        hash,
+      };
+    });
+  },
+);
+
+exports.subsanateInvoiceFiscalRecord = onCall(
+  {
+    region: "europe-west1",
+    memory: "256MiB",
+    timeoutSeconds: 60,
+  },
+  async (request) => {
+    const companyId = await requireTenantAdmin(request);
+    const invoiceId = String(request.data?.invoiceId || "").trim();
+    const reason = String(request.data?.reason || "").trim().slice(0, 500);
+    const corrections = request.data?.corrections || {};
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(invoiceId) || !reason) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Indica una factura y el motivo de la subsanación.",
+      );
+    }
+
+    const invoiceRef = db
+      .collection(`companies/${companyId}/invoices`)
+      .doc(invoiceId);
+    const settingsRef = db
+      .collection(`companies/${companyId}/settings`)
+      .doc("billing");
+    const subsanationRef = db
+      .collection(`companies/${companyId}/fiscalRecords`)
+      .doc();
+    const subsanationSubmissionRef = db
+      .collection(`companies/${companyId}/aeatSubmissions`)
+      .doc(subsanationRef.id);
+
+    return db.runTransaction(async (transaction) => {
+      const [invoiceSnap, settingsSnap] = await Promise.all([
+        transaction.get(invoiceRef),
+        transaction.get(settingsRef),
+      ]);
+      if (!invoiceSnap.exists) {
+        throw new HttpsError("not-found", "La factura no existe.");
+      }
+      const invoice = invoiceSnap.data();
+      const settings = settingsSnap.exists ? settingsSnap.data() : {};
+      if (
+        invoice.emissionMode !== "verifactu_test" ||
+        !invoice.fiscalRecordId ||
+        invoice.invoiceStatus === "cancelled"
+      ) {
+        throw new HttpsError(
+          "failed-precondition",
+          "La factura no admite una subsanación fiscal.",
+        );
+      }
+
+      const correctedInvoice = {
+        ...invoice,
+        invoiceType: corrections.invoiceType || invoice.invoiceType,
+        operationDate: corrections.operationDate || invoice.operationDate || null,
+        client: {
+          ...(invoice.client || {}),
+          name: String(
+            corrections.clientName || invoice.client?.name || "",
+          ).slice(0, 200),
+          cif: String(
+            corrections.clientTaxId || invoice.client?.cif || "",
+          ).slice(0, 30),
+          idType: String(
+            corrections.clientIdType || invoice.client?.idType || "NIF",
+          ).slice(0, 20),
+          countryCode: String(
+            corrections.countryCode || invoice.client?.countryCode || "ES",
+          )
+            .toUpperCase()
+            .slice(0, 2),
+        },
+      };
+      const totals = calculateInvoiceFiscalTotals(
+        correctedInvoice.items || [],
+        correctedInvoice.taxRate ?? 21,
+      );
+      Object.assign(correctedInvoice, totals);
+
+      const generationDate = new Date();
+      const generationTimestamp = getMadridIsoTimestamp(generationDate);
+      const previousFiscalRecordId = settings.lastFiscalRecordId || null;
+      const previousHash = previousFiscalRecordId
+        ? settings.lastInvoiceHash || ""
+        : "";
+      const issueDate = invoice.issueDate?.toDate
+        ? invoice.issueDate.toDate()
+        : new Date(invoice.issueDate);
+      const issuerNif = String(settings.nif || "").trim();
+      const invoiceType = resolveInvoiceType(correctedInvoice);
+      const hash = computeInvoiceHash({
+        idEmisorFactura: issuerNif,
+        numSerieFactura: invoice.invoiceNumber,
+        fechaExpedicionFactura: formatIssueDateForHash(issueDate),
+        tipoFactura: invoiceType,
+        cuotaTotal: Number(totals.taxAmount || 0).toFixed(2),
+        importeTotal: Number(totals.totalAmount || 0).toFixed(2),
+        huellaAnterior: previousHash,
+        fechaHoraHusoGenRegistro: generationTimestamp,
+      });
+      const record = buildFiscalRecord({
+        companyId,
+        invoiceId,
+        invoice: correctedInvoice,
+        invoiceNumber: invoice.invoiceNumber,
+        invoiceSequence: invoice.invoiceSeq,
+        issuerNif,
+        previousHash,
+        previousFiscalRecordId,
+        generationTimestamp,
+        hash,
+        issueDate: invoice.issueDate,
+        createdBy: request.auth.uid,
+      });
+
+      const subsanationRecord = {
+        ...record,
+        recordType: "alta_subsanacion",
+        subsanacion: true,
+        correctionReason: reason,
+        originalFiscalRecordId:
+          invoice.lastSubsanationFiscalRecordId || invoice.fiscalRecordId,
+        createdAt: Timestamp.fromDate(generationDate),
+      };
+      transaction.create(subsanationRef, subsanationRecord);
+      const aeatProfile = normalizeAeatConnectionProfile(
+        settings.aeatConnection || {},
+      );
+      const submissionDocument = buildAeatSubmissionDocument({
+        companyId,
+        fiscalRecordId: subsanationRef.id,
+        fiscalRecord: subsanationRecord,
+        settings,
+        profile: aeatProfile,
+        createdBy: request.auth.uid,
+        createdAt: Timestamp.fromDate(generationDate),
+      });
+      if (submissionDocument) {
+        transaction.create(
+          subsanationSubmissionRef,
+          submissionDocument,
+        );
+      }
+      transaction.update(invoiceRef, {
+        fiscalStatus: "subsanated",
+        lastSubsanationFiscalRecordId: subsanationRef.id,
+        correctedFiscalData: {
+          invoiceType,
+          operationDate: correctedInvoice.operationDate,
+          client: correctedInvoice.client,
+        },
+        lastSubsanationReason: reason,
+        lastSubsanationAt: Timestamp.fromDate(generationDate),
+        aeatSubmissionId: submissionDocument
+          ? subsanationSubmissionRef.id
+          : invoice.aeatSubmissionId || null,
+        aeatStatus: submissionDocument
+          ? "queued"
+          : invoice.aeatStatus || null,
+      });
+      transaction.set(
+        settingsRef,
+        {
+          lastInvoiceHash: hash,
+          lastFiscalRecordId: subsanationRef.id,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      return {
+        invoiceId,
+        subsanationFiscalRecordId: subsanationRef.id,
+        hash,
+      };
     });
   },
 );

@@ -65,6 +65,25 @@ export default function DashboardPage() {
     loadDashboard();
   }, []);
 
+  // Keep the "active operators" card in sync when a workday starts or ends.
+  useEffect(() => {
+    if (!companyId) return undefined;
+    let receivedInitialSnapshot = false;
+    const todayWorkdaysQuery = query(
+      tenantCollection(db, companyId, "workdays"),
+      where("date", ">=", startOfDay(new Date())),
+      where("date", "<=", endOfDay(new Date())),
+    );
+    const unsubscribe = onSnapshot(todayWorkdaysQuery, () => {
+      if (!receivedInitialSnapshot) {
+        receivedInitialSnapshot = true;
+        return;
+      }
+      loadDashboard();
+    });
+    return unsubscribe;
+  }, [companyId]);
+
   // Real-time listeners for pending counts
   useEffect(() => {
     if (!companyId) return;
@@ -101,15 +120,16 @@ export default function DashboardPage() {
 
       // Las estadísticas de jornada son complementarias. Un índice pendiente
       // no debe impedir cargar los operarios ni bloquear las notificaciones.
-      let activeWorkdays = [];
+      let todayWorkdays = [];
       try {
-        const activeWorkdaysSnap = await getDocs(
+        const todayWorkdaysSnap = await getDocs(
           query(
             tenantCollection(db, companyId, "workdays"),
-            where("status", "==", "active"),
+            where("date", ">=", startOfDay(new Date())),
+            where("date", "<=", endOfDay(new Date())),
           ),
         );
-        activeWorkdays = activeWorkdaysSnap.docs.map((d) => ({
+        todayWorkdays = todayWorkdaysSnap.docs.map((d) => ({
           id: d.id,
           ...d.data(),
         }));
@@ -129,19 +149,55 @@ export default function DashboardPage() {
 
       // Calculate real-time active operators (active workday OR active check-in/service in progress)
       const activeUserIds = new Set();
+      const canonicalUserId = (uid) =>
+        ops.find((op) => op.uid === uid || op.legacyUid === uid)?.uid || uid;
 
-      // 1. Add all operators with active workdays (and their global companions)
-      activeWorkdays.forEach((wd) => {
-        if (wd.userId) activeUserIds.add(wd.userId);
-        if (wd.currentCompanionId) activeUserIds.add(wd.currentCompanionId);
+      // 1. Use the latest session state for each operator. This prevents an
+      // orphaned duplicate session from keeping someone active after a newer
+      // session has already been completed.
+      const latestWorkdayByUser = new Map();
+      todayWorkdays.forEach((workday) => {
+        if (!workday.userId) return;
+        const uid = canonicalUserId(workday.userId);
+        const rawActivityTime =
+          workday.status === "active"
+            ? workday.startTime
+            : workday.endTime || workday.updatedAt || workday.startTime;
+        const activityDate = rawActivityTime?.toDate
+          ? rawActivityTime.toDate()
+          : new Date(rawActivityTime);
+        const activityTime = Number.isNaN(activityDate.getTime())
+          ? 0
+          : activityDate.getTime();
+        const current = latestWorkdayByUser.get(uid);
+        if (!current || activityTime >= current.activityTime) {
+          latestWorkdayByUser.set(uid, { workday, activityTime });
+        }
+      });
+
+      const canAppearAsActive = (uid) => {
+        const latest = latestWorkdayByUser.get(canonicalUserId(uid));
+        return !latest || latest.workday.status === "active";
+      };
+
+      latestWorkdayByUser.forEach(({ workday: wd }, uid) => {
+        if (wd.status !== "active") return;
+        activeUserIds.add(uid);
+        if (
+          wd.currentCompanionId &&
+          canAppearAsActive(wd.currentCompanionId)
+        ) {
+          activeUserIds.add(canonicalUserId(wd.currentCompanionId));
+        }
       });
 
       // 2. Add all operators with active check-ins (and service-specific companions)
       const activeCheckInDocs = checkIns.filter((c) => !c.checkOutTime);
       activeCheckInDocs.forEach((c) => {
-        if (c.userId) {
-          activeUserIds.add(c.userId);
-        }
+        const checkInUserId = canonicalUserId(c.userId);
+        // An open service check-in alone must not keep an operator active after
+        // their workday has been closed.
+        if (!c.userId || !activeUserIds.has(checkInUserId)) return;
 
         if (c.scheduledServiceId) {
           const service = todayServices.find(
@@ -149,8 +205,8 @@ export default function DashboardPage() {
           );
           if (service && Array.isArray(service.companionIds)) {
             service.companionIds.forEach((companionId) => {
-              if (companionId) {
-                activeUserIds.add(companionId);
+              if (companionId && canAppearAsActive(companionId)) {
+                activeUserIds.add(canonicalUserId(companionId));
               }
             });
           }
@@ -163,7 +219,7 @@ export default function DashboardPage() {
 
       // Map UIDs to actual operator names
       const names = uniqueActiveUserIds.map((uid) => {
-        const op = ops.find((o) => o.uid === uid);
+        const op = ops.find((o) => o.uid === uid || o.legacyUid === uid);
         return op ? op.name || op.email : "Desconocido";
       });
 

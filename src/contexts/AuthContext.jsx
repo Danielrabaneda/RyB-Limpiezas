@@ -35,12 +35,18 @@ export function AuthProvider({ children }) {
   const [companyId, setCompanyId] = useState(null);
   const [authClaimsLoaded, setAuthClaimsLoaded] = useState(false);
 
+  const buildUserProfile = useCallback((authUid, data) => ({
+    ...data,
+    legacyUid: data?.uid && data.uid !== authUid ? data.uid : null,
+    uid: authUid,
+  }), []);
+
   const login = useCallback(async (email, password) => {
     const cred = await signInWithEmailAndPassword(auth, email, password);
     const snap = await getDoc(doc(db, "users", cred.user.uid));
     let profile = null;
     if (snap.exists()) {
-      profile = { uid: cred.user.uid, ...snap.data() };
+      profile = buildUserProfile(cred.user.uid, snap.data());
       setUserProfile(profile);
     }
     if (!profile || profile.active === false) {
@@ -49,7 +55,7 @@ export function AuthProvider({ children }) {
       throw new Error("Su cuenta está inactiva o ha sido dada de baja.");
     }
     return { user: cred.user, profile };
-  }, []);
+  }, [buildUserProfile]);
 
   const logout = useCallback(async () => {
     setUserProfile(null);
@@ -117,14 +123,14 @@ export function AuthProvider({ children }) {
 
     const profileSnap = await getDoc(doc(db, "users", cred.user.uid));
     const profile = profileSnap.exists()
-      ? { uid: cred.user.uid, ...profileSnap.data() }
+      ? buildUserProfile(cred.user.uid, profileSnap.data())
       : null;
     setUserProfile(profile);
     return {
       user: cred.user,
       profile,
     };
-  }, []);
+  }, [buildUserProfile]);
 
   useEffect(() => {
     let active = true;
@@ -164,7 +170,7 @@ export function AuthProvider({ children }) {
             if (!active) return;
 
             if (snap.exists()) {
-              const profile = { uid: user.uid, ...snap.data() };
+              const profile = buildUserProfile(user.uid, snap.data());
 
               // Si el operario o administrador es desactivado, forzar deslogueo inmediato
               if (profile.active === false) {
@@ -281,7 +287,7 @@ export function AuthProvider({ children }) {
       }
       clearTimeout(safetyTimer);
     };
-  }, []);
+  }, [buildUserProfile]);
 
   const value = useMemo(
     () => ({

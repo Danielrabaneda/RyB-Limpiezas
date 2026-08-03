@@ -109,9 +109,12 @@ export default function DashboardCalendar({ operarios }) {
   // Group by operario
   const groupedByOperario = {};
   operarios.forEach((op) => {
+    const operatorIds = new Set([op.uid, op.legacyUid].filter(Boolean));
     groupedByOperario[op.uid] = {
       name: op.name,
-      services: selectedDayServices.filter((s) => s.assignedUserId === op.uid),
+      services: selectedDayServices.filter((s) =>
+        operatorIds.has(s.assignedUserId),
+      ),
     };
   });
 

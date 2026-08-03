@@ -38,15 +38,16 @@ export default function useAdministrators({
     setShowAdminModal(true);
   };
 
-  const handleSaveAdmin = async (e) => {
+  const handleSaveAdmin = async (e, formOverride) => {
     if (e) e.preventDefault();
     if (actionLoading) return; // Prevent concurrent submissions
+    const formData = formOverride || adminForm;
     setActionLoading(true);
     try {
       if (editingAdmin) {
-        await updateAdministrator(companyId, editingAdmin.id, adminForm);
+        await updateAdministrator(companyId, editingAdmin.id, formData);
       } else {
-        await createAdministrator(companyId, adminForm);
+        await createAdministrator(companyId, formData);
       }
       setShowAdminModal(false);
       if (onRefresh) await onRefresh();

@@ -71,7 +71,10 @@ describe('Firestore Security Rules - Multi-Tenant', function () {
 
     it('Admin (Rayba) can write invoice in Rayba', async () => {
       const db = getAuthContext('rayba_admin', 'admin', 'rayba').firestore();
-      await assertSucceeds(db.collection('companies').doc('rayba').collection('invoices').doc('inv1').set({ status: 'draft' }));
+      await assertSucceeds(db.collection('companies').doc('rayba').collection('invoices').doc('inv1').set({
+        status: 'draft',
+        invoiceNumber: 'Borrador'
+      }));
     });
 
     it('Admin (Rayba) must create communities through the quota backend', async () => {

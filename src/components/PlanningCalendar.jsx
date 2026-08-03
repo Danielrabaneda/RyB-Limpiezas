@@ -67,6 +67,9 @@ export default function PlanningCalendar({
   const [actionLoading, setActionLoading] = useState(false);
   const [selectedPrintOpId, setSelectedPrintOpId] = useState("all");
 
+  const getOperatorIds = (operator) =>
+    new Set([operator?.uid, operator?.legacyUid].filter(Boolean));
+
   useEffect(() => {
     if (!companyId) return;
     loadMonthData();
@@ -289,9 +292,14 @@ export default function PlanningCalendar({
     for (let i = 0; i < allDays.length; i += 7)
       weeks.push(allDays.slice(i, i + 7));
 
+    const selectedPrintOperator = operarios.find(
+      (operator) => operator.uid === selectedPrintOpId,
+    );
+    const selectedPrintOperatorIds = getOperatorIds(selectedPrintOperator);
     const filteredServices = monthServices.filter(
-      (s) =>
-        selectedPrintOpId === "all" || s.assignedUserId === selectedPrintOpId,
+      (service) =>
+        selectedPrintOpId === "all" ||
+        selectedPrintOperatorIds.has(service.assignedUserId),
     );
     const getCommunityName = (id) =>
       communities.find((c) => c.id === id)?.name || "?";
@@ -570,10 +578,11 @@ export default function PlanningCalendar({
   const groupedByOperario = {};
   if (isAdmin) {
     operarios.forEach((op) => {
+      const operatorIds = getOperatorIds(op);
       groupedByOperario[op.uid] = {
         name: op.name,
         services: selectedDayServices.filter(
-          (s) => s.assignedUserId === op.uid,
+          (service) => operatorIds.has(service.assignedUserId),
         ),
       };
     });

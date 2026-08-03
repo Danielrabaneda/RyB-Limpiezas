@@ -1,4 +1,12 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
+
+const splitEmails = (value = "") =>
+  value
+    .split(/[,;]/)
+    .map((email) => email.trim())
+    .filter(Boolean);
+
+const normalizeEmail = (value = "") => value.trim().toLowerCase();
 
 export default function AdministratorTab({
   administrators,
@@ -13,6 +21,70 @@ export default function AdministratorTab({
   handleDeleteAdmin,
   actionLoading,
 }) {
+  const [newAdminEmail, setNewAdminEmail] = useState("");
+
+  useEffect(() => {
+    setNewAdminEmail("");
+  }, [showAdminModal, editingAdmin]);
+
+  const isValidEmail = (email) => {
+    const validator = document.createElement("input");
+    validator.type = "email";
+    validator.value = email;
+    return validator.checkValidity();
+  };
+
+  const addAdminEmail = (value = newAdminEmail) => {
+    const email = normalizeEmail(value.replace(/[,;]/g, ""));
+    if (!email) return true;
+    if (!isValidEmail(email)) return false;
+
+    const currentEmails = splitEmails(adminForm.email);
+    if (
+      !currentEmails.some(
+        (currentEmail) => normalizeEmail(currentEmail) === email,
+      )
+    ) {
+      setAdminForm((form) => ({
+        ...form,
+        email: [...currentEmails, email].join(", "),
+      }));
+    }
+    setNewAdminEmail("");
+    return true;
+  };
+
+  const removeAdminEmail = (index) => {
+    const emails = splitEmails(adminForm.email);
+    emails.splice(index, 1);
+    setAdminForm((form) => ({ ...form, email: emails.join(", ") }));
+  };
+
+  const submitAdmin = (event) => {
+    event.preventDefault();
+    const pendingEmail = normalizeEmail(newAdminEmail.replace(/[,;]/g, ""));
+    const currentEmails = splitEmails(adminForm.email);
+    let finalEmails = currentEmails;
+
+    if (pendingEmail) {
+      if (!isValidEmail(pendingEmail)) return;
+      if (
+        !currentEmails.some(
+          (currentEmail) => normalizeEmail(currentEmail) === pendingEmail,
+        )
+      ) {
+        finalEmails = [...currentEmails, pendingEmail];
+      }
+    }
+
+    if (finalEmails.length === 0) return;
+
+    const finalForm = { ...adminForm, email: finalEmails.join(", ") };
+    setAdminForm(finalForm);
+    setNewAdminEmail("");
+    handleSaveAdmin(event, finalForm);
+  };
+
   return (
     <>
       {/* Administrators Management Table */}
@@ -152,7 +224,7 @@ export default function AdministratorTab({
                 ✕
               </button>
             </div>
-            <form onSubmit={handleSaveAdmin}>
+            <form onSubmit={submitAdmin}>
               <div className="modal-body">
                 <div className="form-group">
                   <label className="form-label">
@@ -171,18 +243,84 @@ export default function AdministratorTab({
                 </div>
                 <div className="form-group">
                   <label className="form-label">
-                    Email Principal de Facturación
+                    Emails de Facturación
                   </label>
-                  <input
-                    type="email"
-                    className="form-input"
-                    placeholder="Ej. administracion@fincasgomez.com"
-                    value={adminForm.email}
-                    onChange={(e) =>
-                      setAdminForm((f) => ({ ...f, email: e.target.value }))
-                    }
-                    required
-                  />
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "6px",
+                    }}
+                  >
+                    <div
+                      style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}
+                    >
+                      {splitEmails(adminForm.email).map((email, index) => (
+                        <span
+                          key={`${email}-${index}`}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "4px",
+                            background: "#e2e8f0",
+                            color: "#334155",
+                            padding: "3px 8px",
+                            borderRadius: "12px",
+                            fontSize: "11px",
+                            fontWeight: "500",
+                          }}
+                        >
+                          {email}
+                          <button
+                            type="button"
+                            aria-label={`Eliminar ${email}`}
+                            onClick={() => removeAdminEmail(index)}
+                            style={{
+                              border: "none",
+                              background: "transparent",
+                              color: "#64748b",
+                              cursor: "pointer",
+                              padding: "0 2px",
+                              fontWeight: "bold",
+                            }}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                    <div style={{ display: "flex", gap: "4px" }}>
+                      <input
+                        type="email"
+                        className="form-input"
+                        placeholder="Escribe un email y pulsa Enter"
+                        value={newAdminEmail}
+                        onChange={(e) => setNewAdminEmail(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (
+                            e.key === "Enter" ||
+                            e.key === "," ||
+                            e.key === ";"
+                          ) {
+                            e.preventDefault();
+                            if (!addAdminEmail(e.currentTarget.value)) {
+                              e.currentTarget.reportValidity();
+                            }
+                          }
+                        }}
+                        required={splitEmails(adminForm.email).length === 0}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        aria-label="Añadir email"
+                        onClick={() => addAdminEmail()}
+                        style={{ padding: "6px 12px", fontSize: "13px" }}
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
                   <p
                     style={{
                       fontSize: "10px",
@@ -191,7 +329,7 @@ export default function AdministratorTab({
                     }}
                   >
                     Las facturas de todas las comunidades asociadas se enviarán
-                    de forma agrupada a este correo.
+                    de forma agrupada a todos estos correos.
                   </p>
                 </div>
                 <div className="form-group">
