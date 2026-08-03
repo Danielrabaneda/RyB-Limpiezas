@@ -437,12 +437,15 @@ export default function InvoicesPage() {
 
   const handleSaveSettings = async (e) => {
     e.preventDefault();
+    if (!companyId) return;
     setActionLoading(true);
-      if (!companyId) return;
-      try {
-        await saveBillingSettings(companyId, settingsForm);
-        setBillingSettings(settingsForm);
-        alert("Configuración guardada correctamente.");
+    try {
+      await saveBillingSettings(companyId, settingsForm);
+      // Re-read from Firestore to confirm persistence
+      const saved = await getBillingSettings(companyId);
+      setBillingSettings(saved);
+      setSettingsForm(saved);
+      alert("Configuración guardada correctamente.");
     } catch (err) {
       console.error(err);
       alert("Error al guardar configuración: " + err.message);

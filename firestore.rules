@@ -53,6 +53,7 @@ service cloud.firestore {
             && (
               !('subscriptionStatus' in company)
               || company.subscriptionStatus == 'active'
+              || company.subscriptionStatus == 'legacy'
               || (
                 company.subscriptionStatus == 'trialing'
                 && company.trialEndsAt != null
@@ -278,12 +279,89 @@ service cloud.firestore {
 
       // invoices (VERIFACTU logic)
       match /invoices/{id} {
-        allow read, create: if isTenant(companyId) && isAdminActive();
+        allow read: if isTenant(companyId) && isAdminActive();
+        allow create: if isTenant(companyId)
+          && isAdminActive()
+          && request.resource.data.status == 'draft'
+          && request.resource.data.invoiceNumber == 'Borrador'
+          && !request.resource.data.keys().hasAny([
+            'hash',
+            'previousHash',
+            'fiscalRecordId',
+            'fiscalStatus',
+            'aeatStatus',
+            'aeatSubmissionId',
+            'aeatEnvironment',
+            'aeatProductionAccepted',
+            'aeatProcessedAt',
+            'aeatResponseCode',
+            'aeatCsv',
+            'emittedAt',
+            'emittedBy',
+            'invoiceSeq',
+            'invoiceStatus',
+            'emissionMode',
+            'verifactuEnabledAtEmission',
+            'fechaHoraHusoGenRegistro'
+          ]);
         allow update: if isTenant(companyId) && isAdminActive() && (
-          resource.data.status == 'draft' ||
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+          (
+            resource.data.status == 'draft'
+            && request.resource.data.status == 'draft'
+            && request.resource.data.invoiceNumber in ['Borrador', 'Borrador (Rectificativa)']
+            && !request.resource.data.keys().hasAny([
+              'hash',
+              'previousHash',
+              'fiscalRecordId',
+              'fiscalStatus',
+              'aeatStatus',
+              'aeatSubmissionId',
+              'aeatEnvironment',
+              'aeatProductionAccepted',
+              'aeatProcessedAt',
+              'aeatResponseCode',
+              'aeatCsv',
+              'emittedAt',
+              'emittedBy',
+              'invoiceSeq',
+              'invoiceStatus',
+              'emissionMode',
+              'verifactuEnabledAtEmission',
+              'fechaHoraHusoGenRegistro'
+            ])
+          )
+          ||
+          (
+            resource.data.status in ['pending', 'paid']
+            && request.resource.data.status in ['pending', 'paid']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status',
+              'paymentStatus',
+              'updatedAt',
+              'pdfUrl',
+              'pdfStoragePath',
+              'emailSent',
+              'emailSentAt',
+              'emailError',
+              'lastEmailErrorAt'
+            ])
+          )
         );
         allow delete: if isTenant(companyId) && isAdminActive() && resource.data.status == 'draft';
+      }
+
+      // Registros fiscales: visibles para administración e inmutables desde cliente.
+      // Su creación queda reservada a Cloud Functions (Admin SDK).
+      match /fiscalRecords/{id} {
+        allow read: if isTenant(companyId) && isAdminActive();
+        allow create, update, delete: if false;
+      }
+
+      // Cola de transporte AEAT: solo lectura desde la aplicación.
+      // La preparación y los cambios de estado se realizan en Cloud Functions.
+      match /aeatSubmissions/{id} {
+        allow read: if isTenant(companyId) && isAdminActive();
+        allow create, update, delete: if false;
       }
 
       // products

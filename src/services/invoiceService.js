@@ -11,7 +11,6 @@ import {
   orderBy,
   limit,
   serverTimestamp,
-  runTransaction,
   setDoc,
   writeBatch,
 } from "firebase/firestore";
@@ -65,13 +64,12 @@ export async function computeInvoiceHash({
 
 // ==================== BILLING SETTINGS ====================
 const DEFAULT_SETTINGS = {
-  companyName: "Limpiezas Rayba S.L",
-  nif: "B04843843",
-  address: "C/ Ilusión Nº6, 5Esc. 3º A, ALCANTARILLA, 30820",
-  phone: "687983162",
-  contactPerson: "Daniel Rabaneda",
-  inscriptionText:
-    "Limpiezas Rayba S.L ha sido inscrita en el Registro Mercantil de Almería al tomo 1792, folio 20, inscripción 1 con hoja AL-46180",
+  companyName: "",
+  nif: "",
+  address: "",
+  phone: "",
+  contactPerson: "",
+  inscriptionText: "",
   logoBase64: "",
   logoWidth: 45,
   logoHeight: 20,
@@ -83,6 +81,19 @@ const DEFAULT_SETTINGS = {
   seqMode: "manual",
   issueDateMode: "today",
   customIssueDate: "",
+  verifactuEnabled: false,
+  verifactuMode: "disabled",
+  aeatConnection: {
+    channel: "disabled",
+    environment: "test",
+    adviserName: "",
+    adviserTaxId: "",
+    adviserEmail: "",
+    connectorName: "",
+    productionEnabled: false,
+    credentialsStored: false,
+    schemaValidationStatus: "pending_official_xsd",
+  },
   smtpHost: "",
   smtpPort: "587",
   smtpSecure: false,
@@ -110,6 +121,51 @@ export async function saveBillingSettings(companyId, data) {
   await setDoc(ref, data, { merge: true });
 }
 
+export async function setVerifactuMode(companyId, enabled) {
+  await saveBillingSettings(companyId, {
+    verifactuEnabled: enabled === true,
+    verifactuMode: enabled === true ? "test" : "disabled",
+    verifactuModeUpdatedAt: serverTimestamp(),
+  });
+}
+
+export async function configureAeatConnection(profile) {
+  const fn = httpsCallable(functions, "configureAeatConnection");
+  const result = await fn({ profile });
+  return result.data;
+}
+
+export async function getAeatSubmissions(companyId) {
+  const q = query(
+    tenantCollection(db, companyId, "aeatSubmissions"),
+    orderBy("createdAt", "desc"),
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((entry) => ({ id: entry.id, ...entry.data() }));
+}
+
+export async function prepareAeatSubmissions(invoiceIds) {
+  const fn = httpsCallable(functions, "prepareAeatSubmissions");
+  const result = await fn({ invoiceIds });
+  return result.data;
+}
+
+export async function getAeatSubmissionPackage(submissionId) {
+  const fn = httpsCallable(functions, "getAeatSubmissionPackage");
+  const result = await fn({ submissionId });
+  return result.data;
+}
+
+export async function recordAeatTestResult(
+  submissionId,
+  status,
+  response = {},
+) {
+  const fn = httpsCallable(functions, "recordAeatTestResult");
+  const result = await fn({ submissionId, status, response });
+  return result.data;
+}
+
 // ==================== INVOICE CRUD ====================
 export async function getInvoices(companyId, year, month) {
   let q = query(
@@ -124,8 +180,17 @@ export async function getInvoices(companyId, year, month) {
 }
 
 export async function createInvoice(companyId, data) {
+  if (data.status && data.status !== "draft") {
+    throw new Error(
+      "Las facturas nuevas deben guardarse como borrador antes de emitirlas",
+    );
+  }
   const ref = await addDoc(tenantCollection(db, companyId, COLLECTION), {
     ...data,
+    invoiceNumber: "Borrador",
+    status: "draft",
+    issueDate: null,
+    dueDate: null,
     createdAt: serverTimestamp(),
   });
   return ref.id;
@@ -133,12 +198,27 @@ export async function createInvoice(companyId, data) {
 
 export async function updateInvoice(companyId, id, data) {
   const ref = tenantDoc(db, companyId, COLLECTION, id);
-  // VERIFACTU: Inmutabilidad — solo se pueden editar borradores
   const snap = await getDoc(ref);
   if (!snap.exists()) throw new Error("La factura no existe");
-  if (snap.data().status !== "draft") {
+  const invoice = snap.data();
+
+  // En facturas emitidas solo se admiten metadatos operativos que no alteran
+  // el documento ni su registro fiscal.
+  const emittedMetadataKeys = new Set([
+    "pdfUrl",
+    "pdfStoragePath",
+    "emailSent",
+    "emailSentAt",
+    "emailError",
+    "lastEmailErrorAt",
+  ]);
+  const changedKeys = Object.keys(data);
+  if (
+    invoice.status !== "draft" &&
+    !changedKeys.every((key) => emittedMetadataKeys.has(key))
+  ) {
     throw new Error(
-      "No se puede modificar una factura emitida (solo borradores)",
+      "No se puede modificar el contenido de una factura emitida",
     );
   }
   await updateDoc(ref, {
@@ -194,86 +274,23 @@ export async function getNextInvoiceNumber(companyId, year) {
   return String(nextSeq);
 }
 
-// Emit Invoice: Change status from draft to pending, assign number atomically
-// VERIFACTU: Calcula y almacena hash encadenado con la factura anterior
+// La numeración, el bloqueo y el posible registro fiscal se realizan
+// exclusivamente en Cloud Functions.
 export async function emitInvoice(companyId, id) {
-  const invoiceRef = tenantDoc(db, companyId, COLLECTION, id);
-  const settingsRef = tenantDoc(db, companyId, "settings", "billing");
-
-  await runTransaction(db, async (transaction) => {
-    const [invoiceSnap, settingsSnap] = await Promise.all([
-      transaction.get(invoiceRef),
-      transaction.get(settingsRef),
-    ]);
-
-    if (!invoiceSnap.exists()) throw new Error("La factura no existe");
-    const data = invoiceSnap.data();
-    if (data.status !== "draft")
-      throw new Error("Solo se pueden emitir facturas en borrador");
-
-    const settings = settingsSnap.exists() ? settingsSnap.data() : {};
-    const nextSeq = parseInt(settings.nextInvoiceSeq) || 1;
-    const fmt = settings.invoiceNumberFormat || "numeric";
-    const previousHash = settings.lastInvoiceHash || "";
-
-    let invoiceNumber;
-    if (fmt === "formatted") {
-      invoiceNumber = `F-${data.year}-${String(nextSeq).padStart(4, "0")}`;
-    } else {
-      invoiceNumber = String(nextSeq);
-    }
-
-    let issueDate;
-    if (settings.issueDateMode === "custom" && settings.customIssueDate) {
-      issueDate = new Date(settings.customIssueDate + "T00:00:00");
-    } else {
-      issueDate = new Date();
-    }
-    const dueDate = new Date(issueDate.getTime() + 30 * 24 * 60 * 60 * 1000);
-
-    // VERIFACTU: Calcular hash encadenado
-    const dd = String(issueDate.getDate()).padStart(2, "0");
-    const mm = String(issueDate.getMonth() + 1).padStart(2, "0");
-    const yyyy = issueDate.getFullYear();
-    const fechaExpedicion = `${dd}-${mm}-${yyyy}`;
-    const tipoFactura = data.rectifiesInvoiceId ? "R1" : "F1";
-
-    const hash = await computeInvoiceHash({
-      idEmisorFactura: settings.nif || "B04843843",
-      numSerieFactura: invoiceNumber,
-      fechaExpedicionFactura: fechaExpedicion,
-      tipoFactura,
-      cuotaTotal: parseFloat(data.taxAmount || 0).toFixed(2),
-      importeTotal: parseFloat(data.totalAmount || 0).toFixed(2),
-      huellaAnterior: previousHash,
-      fechaHoraHusoGenRegistro: new Date().toISOString(),
-    });
-
-    // Update invoice with assigned number and hash chain
-    transaction.update(invoiceRef, {
-      status: "pending",
-      invoiceNumber: invoiceNumber,
-      invoiceSeq: nextSeq,
-      issueDate: issueDate,
-      dueDate: dueDate,
-      hash: hash,
-      previousHash: previousHash,
-      tipoFactura: tipoFactura,
-    });
-
-    // Increment sequence counter and update lastInvoiceHash atomically
-    transaction.update(settingsRef, {
-      nextInvoiceSeq: nextSeq + 1,
-      lastInvoiceHash: hash,
-    });
-  });
+  const fn = httpsCallable(functions, "emitInvoices");
+  const result = await fn({ invoiceIds: [id] });
+  return result.data;
 }
 
 // Mark invoice as Paid
 export async function updateInvoiceStatus(companyId, id, status) {
+  if (!["pending", "paid"].includes(status)) {
+    throw new Error("Estado de cobro no válido");
+  }
   const ref = tenantDoc(db, companyId, COLLECTION, id);
   await updateDoc(ref, {
     status,
+    paymentStatus: status,
     updatedAt: serverTimestamp(),
   });
 }
@@ -410,98 +427,12 @@ export async function getLastEmittedInvoice(companyId) {
   return { id: snap.docs[0].id, ...snap.docs[0].data() };
 }
 
-// Emit multiple invoices at once atomically using a single transaction
-// VERIFACTU: Encadena hashes secuencialmente dentro del lote
+// Emisión en lote segura desde Cloud Functions.
 export async function emitAllInvoices(companyId, ids) {
   if (!ids || ids.length === 0) return;
-
-  const settingsRef = tenantDoc(db, companyId, "settings", "billing");
-
-  await runTransaction(db, async (transaction) => {
-    const settingsSnap = await transaction.get(settingsRef);
-    const settings = settingsSnap.exists() ? settingsSnap.data() : {};
-    let nextSeq = parseInt(settings.nextInvoiceSeq) || 1;
-    const fmt = settings.invoiceNumberFormat || "numeric";
-    let chainHash = settings.lastInvoiceHash || "";
-
-    const invoiceSnaps = [];
-    for (const id of ids) {
-      const ref = tenantDoc(db, companyId, COLLECTION, id);
-      const snap = await transaction.get(ref);
-      invoiceSnaps.push({ ref, snap });
-    }
-
-    // Ordenamiento determinista de los borradores para la asignación secuencial de números y hashes
-    invoiceSnaps.sort((a, b) => {
-      const tA = a.snap.data().createdAt?.toDate ? a.snap.data().createdAt.toDate().getTime() : new Date(a.snap.data().createdAt || 0).getTime();
-      const tB = b.snap.data().createdAt?.toDate ? b.snap.data().createdAt.toDate().getTime() : new Date(b.snap.data().createdAt || 0).getTime();
-      if (tA !== tB) return tA - tB;
-      return a.snap.id.localeCompare(b.snap.id);
-    });
-
-    let issueDate;
-    if (settings.issueDateMode === "custom" && settings.customIssueDate) {
-      issueDate = new Date(settings.customIssueDate + "T00:00:00");
-    } else {
-      issueDate = new Date();
-    }
-    const dueDate = new Date(issueDate.getTime() + 30 * 24 * 60 * 60 * 1000);
-
-    // VERIFACTU: Formatear fecha para el hash
-    const dd = String(issueDate.getDate()).padStart(2, "0");
-    const mm = String(issueDate.getMonth() + 1).padStart(2, "0");
-    const yyyy = issueDate.getFullYear();
-    const fechaExpedicion = `${dd}-${mm}-${yyyy}`;
-
-    for (const { ref, snap } of invoiceSnaps) {
-      if (!snap.exists()) throw new Error("Una de las facturas no existe");
-      const data = snap.data();
-      if (data.status !== "draft")
-        throw new Error("Solo se pueden emitir facturas en borrador");
-
-      let invoiceNumber;
-      if (fmt === "formatted") {
-        invoiceNumber = `F-${data.year}-${String(nextSeq).padStart(4, "0")}`;
-      } else {
-        invoiceNumber = String(nextSeq);
-      }
-
-      // VERIFACTU: Hash encadenado secuencial
-      const tipoFactura = data.rectifiesInvoiceId ? "R1" : "F1";
-      const previousHash = chainHash;
-
-      const hash = await computeInvoiceHash({
-        idEmisorFactura: settings.nif || "B04843843",
-        numSerieFactura: invoiceNumber,
-        fechaExpedicionFactura: fechaExpedicion,
-        tipoFactura,
-        cuotaTotal: parseFloat(data.taxAmount || 0).toFixed(2),
-        importeTotal: parseFloat(data.totalAmount || 0).toFixed(2),
-        huellaAnterior: previousHash,
-        fechaHoraHusoGenRegistro: new Date().toISOString(),
-      });
-
-      transaction.update(ref, {
-        status: "pending",
-        invoiceNumber: invoiceNumber,
-        invoiceSeq: nextSeq,
-        issueDate: issueDate,
-        dueDate: dueDate,
-        hash: hash,
-        previousHash: previousHash,
-        tipoFactura: tipoFactura,
-      });
-
-      // Encadenar: el hash de esta factura es el previousHash de la siguiente
-      chainHash = hash;
-      nextSeq++;
-    }
-
-    transaction.update(settingsRef, {
-      nextInvoiceSeq: nextSeq,
-      lastInvoiceHash: chainHash,
-    });
-  });
+  const fn = httpsCallable(functions, "emitInvoices");
+  const result = await fn({ invoiceIds: ids });
+  return result.data;
 }
 
 export async function uploadInvoicePDFToStorage(companyId, invoiceId, pdfBlob, filename) {
@@ -527,6 +458,22 @@ export async function sendGroupedInvoiceEmails(companyId, invoiceIds) {
   return result.data;
 }
 
+export async function cancelInvoiceFiscalRecord(invoiceId, reason) {
+  const fn = httpsCallable(functions, "cancelInvoiceFiscalRecord");
+  const result = await fn({ invoiceId, reason });
+  return result.data;
+}
+
+export async function subsanateInvoiceFiscalRecord(
+  invoiceId,
+  reason,
+  corrections,
+) {
+  const fn = httpsCallable(functions, "subsanateInvoiceFiscalRecord");
+  const result = await fn({ invoiceId, reason, corrections });
+  return result.data;
+}
+
 // ==================== VERIFACTU: FACTURA RECTIFICATIVA ====================
 /**
  * Crea una factura rectificativa que referencia a la original.
@@ -549,23 +496,76 @@ export async function createRectifyingInvoice(
     );
   }
 
+  const method = correctionData.method || "I";
+  const rectifyingItems =
+    correctionData.items ||
+    (method === "I"
+      ? (original.items || []).map((item) => ({
+          ...item,
+          price: 0,
+          taxableBase: 0,
+          taxAmount: 0,
+          surchargeAmount: 0,
+          total: 0,
+        }))
+      : original.items);
+
   const rectifyingData = {
-    invoiceNumber: "Borrador (Rectificativa)",
+    invoiceNumber: "Borrador",
     status: "draft",
+    invoiceType: correctionData.invoiceType || "R1",
+    series: correctionData.series || "R",
+    operationDate:
+      correctionData.operationDate || original.operationDate || null,
     year: correctionData.year || original.year,
     month: correctionData.month || original.month,
     client: { ...original.client },
-    items: correctionData.items || original.items,
-    subtotal: correctionData.subtotal ?? original.subtotal,
+    items: rectifyingItems,
+    subtotal:
+      correctionData.subtotal ?? (method === "I" ? 0 : original.subtotal),
     taxRate: correctionData.taxRate ?? original.taxRate,
-    taxAmount: correctionData.taxAmount ?? original.taxAmount,
-    totalAmount: correctionData.totalAmount ?? original.totalAmount,
+    taxAmount:
+      correctionData.taxAmount ?? (method === "I" ? 0 : original.taxAmount),
+    surchargeAmount:
+      correctionData.surchargeAmount ??
+      (method === "I" ? 0 : original.surchargeAmount || 0),
+    totalAmount:
+      correctionData.totalAmount ??
+      (method === "I" ? 0 : original.totalAmount),
+    taxBreakdown: method === "I" ? [] : original.taxBreakdown || [],
     paymentMethod: correctionData.paymentMethod || original.paymentMethod,
     issueDate: null,
     dueDate: null,
-    // VERIFACTU: Referencia a la factura original
     rectifiesInvoiceId: originalInvoiceId,
     rectifiesInvoiceNumber: original.invoiceNumber,
+    rectification: {
+      invoiceType: correctionData.invoiceType || "R1",
+      method,
+      reason: correctionData.reason || "",
+      rectifiedInvoiceId: originalInvoiceId,
+      rectifiedInvoiceNumber: original.invoiceNumber,
+      rectifiedIssueDate: original.issueDate || null,
+      rectifiedBase:
+        method === "S"
+          ? Number(
+              correctionData.rectifiedBase ?? original.subtotal ?? 0,
+            )
+          : null,
+      rectifiedTax:
+        method === "S"
+          ? Number(
+              correctionData.rectifiedTax ?? original.taxAmount ?? 0,
+            )
+          : null,
+      rectifiedSurcharge:
+        method === "S"
+          ? Number(
+              correctionData.rectifiedSurcharge ??
+                original.surchargeAmount ??
+                0,
+            )
+          : null,
+    },
     createdAt: serverTimestamp(),
   };
 
