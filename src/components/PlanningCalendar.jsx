@@ -574,6 +574,88 @@ export default function PlanningCalendar({
   const getCommunityName = (id) =>
     communities.find((c) => c.id === id)?.name || "Comunidad...";
 
+  const renderCellGroupedContent = (daySvcs) => {
+    if (!isAdmin || operarios.length === 0) {
+      return (
+        <div className="cell-svc-list">
+          {daySvcs.map((s) => {
+            const task = allTasks.find((t) => t.id === s.communityTaskId);
+            const dotColor = task?.printColor || "#3b82f6";
+            const commName = getCommunityName(s.communityId);
+            const isCompleted = s.status === "completed";
+            return (
+              <div
+                key={s.id}
+                className={`cell-svc-row ${isCompleted ? "completed" : ""}`}
+                title={`${commName} (${isCompleted ? "Completado" : "Pendiente"})`}
+              >
+                <span
+                  className="cell-svc-dot"
+                  style={{ backgroundColor: dotColor }}
+                ></span>
+                <span className="cell-svc-text truncate">{commName}</span>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    const opGroupsMap = new Map();
+    const unassigned = [];
+
+    daySvcs.forEach((s) => {
+      const op = operarios.find((o) => getOperatorIds(o).has(s.assignedUserId));
+      if (op) {
+        if (!opGroupsMap.has(op.uid)) {
+          opGroupsMap.set(op.uid, { opName: op.name, services: [] });
+        }
+        opGroupsMap.get(op.uid).services.push(s);
+      } else {
+        unassigned.push(s);
+      }
+    });
+
+    const groups = Array.from(opGroupsMap.values());
+    if (unassigned.length > 0) {
+      groups.push({ opName: "Sin asignar", services: unassigned });
+    }
+
+    return (
+      <div className="cell-op-groups">
+        {groups.map((grp, gIdx) => (
+          <div key={gIdx} className="cell-op-group">
+            {grp.opName && (
+              <div className="cell-op-header">
+                <span className="text-[9px]">👤</span>
+                <span className="truncate">{grp.opName}</span>
+              </div>
+            )}
+            {grp.services.map((s) => {
+              const task = allTasks.find((t) => t.id === s.communityTaskId);
+              const dotColor = task?.printColor || "#3b82f6";
+              const commName = getCommunityName(s.communityId);
+              const isCompleted = s.status === "completed";
+              return (
+                <div
+                  key={s.id}
+                  className={`cell-svc-row ${isCompleted ? "completed" : ""}`}
+                  title={`${grp.opName ? grp.opName + " - " : ""}${commName} (${isCompleted ? "Completado" : "Pendiente"})`}
+                >
+                  <span
+                    className="cell-svc-dot"
+                    style={{ backgroundColor: dotColor }}
+                  ></span>
+                  <span className="cell-svc-text truncate">{commName}</span>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   // Group by operario (Admin view only)
   const groupedByOperario = {};
   if (isAdmin) {
@@ -800,27 +882,32 @@ export default function PlanningCalendar({
                     position: "relative",
                   }}
                 >
-                  <span className="day-number">{format(day, "d")}</span>
-                  {hasConflict && (
-                    <span
-                      className="text-[10px]"
-                      style={{
-                        position: "absolute",
-                        top: "2px",
-                        left: "4px",
-                        color: "#dc2626",
-                        zIndex: 5,
-                      }}
-                      title="Conflicto de Ausencia/Baja de Operario"
-                    >
-                      ⚠️
-                    </span>
-                  )}
+                  <div className="cell-top-bar">
+                    {hasConflict ? (
+                      <span
+                        className="text-[11px]"
+                        style={{ color: "#dc2626" }}
+                        title="Conflicto de Ausencia/Baja de Operario"
+                      >
+                        ⚠️
+                      </span>
+                    ) : (
+                      <span></span>
+                    )}
+                    <span className="day-number">{format(day, "d")}</span>
+                  </div>
+
                   {daySvcs.length > 0 && (
-                    <div className="svc-indicators">
+                    <div className="cell-content-scroll custom-scrollbar">
+                      {renderCellGroupedContent(daySvcs)}
+                    </div>
+                  )}
+
+                  {daySvcs.length > 0 && (
+                    <div className="svc-indicators mobile-svc-summary">
                       <span className="svc-count">{daySvcs.length}</span>
                       <div className="svc-dots">
-                        {daySvcs.slice(0, 3).map((s, i) => (
+                        {daySvcs.slice(0, 3).map((s) => (
                           <div
                             key={s.id}
                             className={`svc-dot ${s.status === "completed" ? "completed" : ""}`}
@@ -1168,39 +1255,84 @@ export default function PlanningCalendar({
         .calendar-day-cell {
           min-height: 40px;
           aspect-ratio: 1;
-          border-radius: 6px;
-          padding: 2px;
+          border-radius: 8px;
+          padding: 4px;
           cursor: pointer;
           position: relative;
           display: flex;
           flex-direction: column;
-          align-items: center;
+          align-items: stretch;
           transition: all 0.2s ease;
           border: 1px solid #cbd5e1;
           background: #ffffff;
+          overflow: hidden;
         }
 
         .calendar-day-cell.outside {
           opacity: 0.55;
-          background: #f1f5f9;
+          background: #f8fafc;
           border-color: #e2e8f0;
+        }
+
+        .cell-top-bar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          width: 100%;
+          padding: 1px 2px;
+          line-height: 1;
+        }
+
+        .day-number {
+          font-weight: 800;
+          font-size: 0.85rem;
+          color: #1e293b;
+          margin-left: auto;
         }
 
         @media (min-width: 640px) {
           .calendar-day-cell {
-            padding: 8px;
+            padding: 6px;
             border-width: 2px;
           }
           .calendar-header-cell {
             font-size: 0.75rem;
+          }
+          .day-number {
+            font-size: 1.05rem;
+            font-weight: 800;
+            color: #0f172a;
+          }
+          .cell-content-scroll {
+            display: block;
+            flex: 1;
+            overflow-y: hidden;
+            margin-top: 2px;
+            padding-right: 1px;
+          }
+          .calendar-day-cell:hover .cell-content-scroll {
+            overflow-y: auto;
+          }
+          .mobile-svc-summary {
+            display: none !important;
+          }
+        }
+
+        @media (max-width: 639px) {
+          .cell-content-scroll {
+            display: none !important;
+          }
+          .mobile-svc-summary {
+            display: flex;
+            margin-top: auto;
           }
         }
 
         .calendar-day-cell:hover {
           background: #fff;
           transform: translateY(-2px);
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-          border-color: #94a3b8;
+          box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+          border-color: #64748b;
           z-index: 10;
         }
 
@@ -1215,10 +1347,72 @@ export default function PlanningCalendar({
           border-color: #f59e0b;
         }
 
-        .day-number {
+        /* Grouped content inside cells */
+        .cell-op-groups {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+        }
+
+        .cell-op-group {
+          display: flex;
+          flex-direction: column;
+          gap: 1px;
+        }
+
+        .cell-op-header {
+          font-size: 0.65rem;
           font-weight: 800;
-          font-size: 0.8rem;
           color: #1e293b;
+          margin-top: 2px;
+          line-height: 1.2;
+          display: flex;
+          align-items: center;
+          gap: 2px;
+          border-bottom: 1px solid #f1f5f9;
+          padding-bottom: 1px;
+        }
+
+        .cell-svc-row {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          font-size: 0.65rem;
+          line-height: 1.3;
+          color: #334155;
+          padding: 1px 0;
+          font-weight: 600;
+        }
+
+        .cell-svc-row.completed {
+          color: #94a3b8;
+          font-weight: 500;
+        }
+
+        .cell-svc-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          flex-shrink: 0;
+          display: inline-block;
+        }
+
+        .cell-svc-text {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .cell-content-scroll::-webkit-scrollbar {
+          width: 3px;
+        }
+        .cell-content-scroll::-webkit-scrollbar-thumb {
+          background: #cbd5e1;
+          border-radius: 3px;
+        }
+        .cell-content-scroll {
+          scrollbar-width: thin;
+          scrollbar-color: #cbd5e1 transparent;
         }
 
         .svc-indicators {
