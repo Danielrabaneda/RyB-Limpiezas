@@ -601,8 +601,12 @@ export default function PlanningCalendar({
       );
     }
 
+    const sortedOperarios = [...operarios].sort((a, b) =>
+      (a.name || "").localeCompare(b.name || "", "es", { sensitivity: "base" }),
+    );
+
     const groups = [];
-    operarios.forEach((op) => {
+    sortedOperarios.forEach((op) => {
       const opIds = getOperatorIds(op);
       const opSvcs = daySvcs.filter((s) => opIds.has(s.assignedUserId));
       if (opSvcs.length > 0) {
@@ -611,7 +615,7 @@ export default function PlanningCalendar({
     });
 
     const assignedUserIds = new Set();
-    operarios.forEach((op) => {
+    sortedOperarios.forEach((op) => {
       getOperatorIds(op).forEach((id) => assignedUserIds.add(id));
     });
     const unassigned = daySvcs.filter((s) => !assignedUserIds.has(s.assignedUserId));
