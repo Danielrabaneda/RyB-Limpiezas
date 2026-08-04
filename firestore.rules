@@ -102,8 +102,10 @@ service cloud.firestore {
       // get de otro usuario permitido si están en el mismo tenant
       allow get, list: if isEmployeeActive() && isTenant(resource.data.companyId);
       
-      // La creación y borrado la hace exclusivamente el Backend.
-      allow create, delete: if false;
+      // La creación la hace exclusivamente el Backend (Cloud Functions / Admin SDK).
+      allow create: if false;
+      // Un admin activo puede borrar operarios de su propio tenant.
+      allow delete: if isAdminActive() && isTenant(resource.data.companyId);
       
       // Updates desde el cliente (solo el propio usuario):
       allow update: if isEmployeeActive() && isOwner(userId)
