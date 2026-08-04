@@ -672,6 +672,30 @@ export default function PlanningCalendar({
     });
   }
 
+  const renderColorLegend = () => (
+    <div className="flex flex-wrap items-center gap-2.5 text-[11px] font-bold text-slate-600 bg-white/90 backdrop-blur-sm px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+      <span className="text-[10px] uppercase tracking-wider text-slate-400 font-extrabold mr-0.5">
+        Leyenda:
+      </span>
+      <div className="flex items-center gap-1">
+        <span className="w-2.5 h-2.5 rounded-full bg-[#22c55e] inline-block shadow-sm"></span>
+        <span>Escalera</span>
+      </div>
+      <div className="flex items-center gap-1">
+        <span className="w-2.5 h-2.5 rounded-full bg-[#eab308] inline-block shadow-sm"></span>
+        <span>Portal</span>
+      </div>
+      <div className="flex items-center gap-1">
+        <span className="w-2.5 h-2.5 rounded-full bg-[#3b82f6] inline-block shadow-sm"></span>
+        <span>Oficina</span>
+      </div>
+      <div className="flex items-center gap-1">
+        <span className="w-2.5 h-2.5 rounded-full bg-[#ef4444] inline-block shadow-sm"></span>
+        <span>Otras</span>
+      </div>
+    </div>
+  );
+
   function renderOperarioActions() {
     const hasStartedDay = selectedDayServices.some(
       (s) => s.status === "completed" || s.status === "in_progress",
@@ -854,6 +878,9 @@ export default function PlanningCalendar({
           )}
         </div>
 
+        {/* Leyenda superior derecha */}
+        <div className="flex justify-end mb-3">{renderColorLegend()}</div>
+
         <div className="planning-grid-container custom-scrollbar">
           <div className="calendar-grid">
             {["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"].map((d) => (
@@ -923,6 +950,9 @@ export default function PlanningCalendar({
             })}
           </div>
         </div>
+
+        {/* Leyenda inferior derecha */}
+        <div className="flex justify-end mt-3">{renderColorLegend()}</div>
       </div>
 
       {/* Day Detail View Container */}
