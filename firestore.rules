@@ -215,7 +215,10 @@ service cloud.firestore {
             )
           )
         )));
-        allow create, update, delete: if false;
+        // Los checkIns los crea/actualiza exclusivamente el Backend.
+        allow create, update: if false;
+        // Un admin puede borrar fichajes (ej: al eliminar un operario con historial).
+        allow delete: if isTenant(companyId) && isAdminActive();
       }
 
       // dailyMileage
