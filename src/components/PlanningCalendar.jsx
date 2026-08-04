@@ -601,22 +601,20 @@ export default function PlanningCalendar({
       );
     }
 
-    const opGroupsMap = new Map();
-    const unassigned = [];
-
-    daySvcs.forEach((s) => {
-      const op = operarios.find((o) => getOperatorIds(o).has(s.assignedUserId));
-      if (op) {
-        if (!opGroupsMap.has(op.uid)) {
-          opGroupsMap.set(op.uid, { opName: op.name, services: [] });
-        }
-        opGroupsMap.get(op.uid).services.push(s);
-      } else {
-        unassigned.push(s);
+    const groups = [];
+    operarios.forEach((op) => {
+      const opIds = getOperatorIds(op);
+      const opSvcs = daySvcs.filter((s) => opIds.has(s.assignedUserId));
+      if (opSvcs.length > 0) {
+        groups.push({ opName: op.name, services: opSvcs });
       }
     });
 
-    const groups = Array.from(opGroupsMap.values());
+    const assignedUserIds = new Set();
+    operarios.forEach((op) => {
+      getOperatorIds(op).forEach((id) => assignedUserIds.add(id));
+    });
+    const unassigned = daySvcs.filter((s) => !assignedUserIds.has(s.assignedUserId));
     if (unassigned.length > 0) {
       groups.push({ opName: "Sin asignar", services: unassigned });
     }
@@ -1305,7 +1303,8 @@ export default function PlanningCalendar({
           }
           .cell-content-scroll {
             display: block;
-            flex: 1;
+            height: 72px;
+            max-height: 72px;
             overflow-y: hidden;
             margin-top: 2px;
             padding-right: 1px;
