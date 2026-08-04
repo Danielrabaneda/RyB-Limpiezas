@@ -673,25 +673,72 @@ export default function PlanningCalendar({
   }
 
   const renderColorLegend = () => (
-    <div className="flex flex-wrap items-center gap-2.5 text-[11px] font-bold text-slate-600 bg-white/90 backdrop-blur-sm px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm">
-      <span className="text-[10px] uppercase tracking-wider text-slate-400 font-extrabold mr-0.5">
-        Leyenda:
-      </span>
-      <div className="flex items-center gap-1">
-        <span className="w-2.5 h-2.5 rounded-full bg-[#22c55e] inline-block shadow-sm"></span>
-        <span>Escalera</span>
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "10px",
+        fontSize: "11px",
+        fontWeight: 700,
+        color: "#475569",
+        backgroundColor: "#ffffff",
+        padding: "4px 10px",
+        borderRadius: "8px",
+        border: "1px solid #cbd5e1",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+      }}
+    >
+      <div style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+        <span
+          style={{
+            width: "8px",
+            height: "8px",
+            borderRadius: "50%",
+            backgroundColor: "#22c55e",
+            display: "inline-block",
+            flexShrink: 0,
+          }}
+        />
+        <span style={{ fontSize: "11px" }}>Escalera</span>
       </div>
-      <div className="flex items-center gap-1">
-        <span className="w-2.5 h-2.5 rounded-full bg-[#eab308] inline-block shadow-sm"></span>
-        <span>Portal</span>
+      <div style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+        <span
+          style={{
+            width: "8px",
+            height: "8px",
+            borderRadius: "50%",
+            backgroundColor: "#eab308",
+            display: "inline-block",
+            flexShrink: 0,
+          }}
+        />
+        <span style={{ fontSize: "11px" }}>Portal</span>
       </div>
-      <div className="flex items-center gap-1">
-        <span className="w-2.5 h-2.5 rounded-full bg-[#3b82f6] inline-block shadow-sm"></span>
-        <span>Oficina</span>
+      <div style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+        <span
+          style={{
+            width: "8px",
+            height: "8px",
+            borderRadius: "50%",
+            backgroundColor: "#3b82f6",
+            display: "inline-block",
+            flexShrink: 0,
+          }}
+        />
+        <span style={{ fontSize: "11px" }}>Oficina</span>
       </div>
-      <div className="flex items-center gap-1">
-        <span className="w-2.5 h-2.5 rounded-full bg-[#ef4444] inline-block shadow-sm"></span>
-        <span>Otras</span>
+      <div style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+        <span
+          style={{
+            width: "8px",
+            height: "8px",
+            borderRadius: "50%",
+            backgroundColor: "#ef4444",
+            display: "inline-block",
+            flexShrink: 0,
+          }}
+        />
+        <span style={{ fontSize: "11px" }}>Otras</span>
       </div>
     </div>
   );
@@ -879,7 +926,9 @@ export default function PlanningCalendar({
         </div>
 
         {/* Leyenda superior derecha */}
-        <div className="flex justify-end mb-3">{renderColorLegend()}</div>
+        <div style={{ width: "100%", display: "flex", justifyContent: "flex-end", marginBottom: "8px" }}>
+          {renderColorLegend()}
+        </div>
 
         <div className="planning-grid-container custom-scrollbar">
           <div className="calendar-grid">
@@ -952,7 +1001,9 @@ export default function PlanningCalendar({
         </div>
 
         {/* Leyenda inferior derecha */}
-        <div className="flex justify-end mt-3">{renderColorLegend()}</div>
+        <div style={{ width: "100%", display: "flex", justifyContent: "flex-end", marginTop: "8px" }}>
+          {renderColorLegend()}
+        </div>
       </div>
 
       {/* Day Detail View Container */}
