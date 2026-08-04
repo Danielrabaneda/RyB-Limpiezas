@@ -107,6 +107,12 @@ service cloud.firestore {
       // Un admin activo puede borrar operarios de su propio tenant.
       allow delete: if isAdminActive() && isTenant(resource.data.companyId);
       
+      // Un admin puede activar/desactivar operarios de su tenant.
+      // Solo puede cambiar 'active'; no puede modificar role ni companyId.
+      allow update: if isAdminActive() && isTenant(resource.data.companyId)
+                    && request.resource.data.role == resource.data.role
+                    && request.resource.data.companyId == resource.data.companyId;
+      
       // Updates desde el cliente (solo el propio usuario):
       allow update: if isEmployeeActive() && isOwner(userId)
                     // No se pueden modificar propiedades core

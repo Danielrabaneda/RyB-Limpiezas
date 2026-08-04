@@ -128,8 +128,12 @@ export default function OperariosPage() {
   }
 
   async function handleToggleActive(op) {
-    await toggleUserActive(op.uid, !op.active);
-    await loadOperarios();
+    try {
+      await toggleUserActive(op.uid, !op.active);
+      await loadOperarios();
+    } catch (err) {
+      alert("Error al cambiar estado: " + err.message);
+    }
   }
 
   async function handleResetPassword(email) {
