@@ -3,10 +3,14 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useTenant } from "../../contexts/TenantContext";
 import { tenantCollection } from "../../utils/tenantFirestore";
 import { getActiveWorkday } from "../../services/workdayService";
-import { getScheduledServicesForDate } from "../../services/scheduleService";
+import {
+  getScheduledServicesForDate,
+  updateScheduledServiceStatus,
+} from "../../services/scheduleService";
 import { getCommunity } from "../../services/communityService";
 import {
   getActiveCheckIn,
+  createCheckIn,
   completeCheckOut,
 } from "../../services/checkInService";
 import { getDistance, sendNotification } from "../../utils/geolocation";
@@ -17,10 +21,27 @@ import {
   persistExitDetection,
 } from "../../services/geoDetectionService";
 import { format } from "date-fns";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
+import {
+  drainNativeLocations,
+  configureNativeGeofences,
+  drainNativeGeofenceEvents,
+  isNativeLocationAvailable,
+  requestNativeTrackingPermissions,
+  startNativeLocationTracking,
+  stopNativeLocationTracking,
+} from "../../services/nativeBackgroundLocationService";
+import {
+  collection,
+  query,
+  where,
+  onSnapshot,
+  getDocs,
+} from "firebase/firestore";
 import { db } from "../../config/firebase";
 import {
   GPS_CONFIG,
+  getCommunityEntryConfirmDelayMs,
+  getCommunityExitConfirmDelayMs,
   getCommunityExitRadiusMeters,
   getCommunityGeofenceRadiusMeters,
 } from "../../config/gpsConfig";
@@ -107,6 +128,8 @@ export default function GeolocationTracker() {
   // Refs para optimización y mejoras de geolocalización
   const activeWorkdayRef = useRef(null);
   const activeCheckInRef = useRef(null);
+  const nativeConfigRefreshRef = useRef(null);
+  const nativeSyncInProgressRef = useRef(false);
   const lastWatchPositionTimeRef = useRef(Date.now());
   const kalmanRef = useRef({
     lat: null,
@@ -175,6 +198,33 @@ export default function GeolocationTracker() {
 
         setActiveWorkday(active || null);
         activeWorkdayRef.current = active || null;
+        if (isNativeLocationAvailable()) {
+          if (active) {
+            requestNativeTrackingPermissions()
+              .then(() =>
+                startNativeLocationTracking({
+                  intervalMs: GPS_CONFIG.CHECK_INTERVAL_MS,
+                }),
+              )
+              .then((result) => {
+                if (result?.backgroundPermissionRequired) {
+                  console.warn(
+                    "[Tracker] Android requiere habilitar 'Permitir siempre' para máxima fiabilidad.",
+                  );
+                }
+                return nativeConfigRefreshRef.current?.(
+                  activeCheckInRef.current,
+                );
+              })
+              .catch((error) =>
+                console.error("[Tracker] No se pudo iniciar el GPS nativo:", error),
+              );
+          } else {
+            stopNativeLocationTracking().catch((error) =>
+              console.warn("[Tracker] No se pudo detener el GPS nativo:", error),
+            );
+          }
+        }
         console.log(
           "[Tracker] Estado de jornada actualizado:",
           active ? "Activo" : "Inactivo",
@@ -221,6 +271,13 @@ export default function GeolocationTracker() {
           "[Tracker] Estado de check-in actualizado:",
           activeCheckInRef.current ? "Activo" : "Inactivo",
         );
+        nativeConfigRefreshRef.current?.(activeCheckInRef.current).catch(
+          (error) =>
+            console.warn(
+              "[Tracker] No se pudo actualizar inmediatamente la geovalla Android:",
+              error,
+            ),
+        );
       },
       (err) => {
         console.error("[Tracker] Error en suscripción a check-in:", err);
@@ -248,7 +305,178 @@ export default function GeolocationTracker() {
       localStorage.setItem("last_geo_cleanup", todayStr);
     }
 
+    const ensureTodayServices = async () => {
+      if (servicesRef.current.length > 0) return servicesRef.current;
+      const services = await getScheduledServicesForDate(
+        companyId,
+        userProfile.uid,
+        new Date(),
+      );
+      servicesRef.current = Array.isArray(services) ? services : [];
+      servicesCachedAtRef.current = Date.now();
+      return servicesRef.current;
+    };
+
+    const configureNativeForActiveCheckIn = async (checkIn) => {
+      if (!isNativeLocationAvailable()) return;
+      if (!activeWorkdayRef.current || !checkIn?.scheduledServiceId) {
+        await configureNativeGeofences([]);
+        return;
+      }
+
+      const services = await ensureTodayServices();
+      const service = services.find(
+        (item) => item.id === checkIn.scheduledServiceId,
+      );
+      if (!service) {
+        await configureNativeGeofences([]);
+        return;
+      }
+      const community = await getCommunityWithCache(service.communityId);
+      const latitude =
+        community?.location?._lat ?? community?.location?.latitude;
+      const longitude =
+        community?.location?._long ?? community?.location?.longitude;
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        await configureNativeGeofences([]);
+        return;
+      }
+
+      await configureNativeGeofences([
+        {
+          serviceId: service.id,
+          communityName: community.name,
+          latitude,
+          longitude,
+          entryRadius: getCommunityGeofenceRadiusMeters(community),
+          exitRadius: getCommunityExitRadiusMeters(community),
+          entryConfirmMs: getCommunityEntryConfirmDelayMs(community),
+          exitConfirmMs: getCommunityExitConfirmDelayMs(community),
+          autoCloseOnExit: community.autoCloseOnExit === true,
+          active: true,
+        },
+      ]);
+    };
+    nativeConfigRefreshRef.current = configureNativeForActiveCheckIn;
+
     // ==================== PROCESAR POSICIÓN GPS ====================
+    const processNativeAutomationEvent = async (event) => {
+      const detectedAt = new Date(event.detectedAt || Date.now());
+      const telemetry = {
+        lat: event.latitude,
+        lng: event.longitude,
+        accuracy: event.accuracy,
+        speed: event.speed,
+        timestamp: event.timestamp || event.detectedAt || Date.now(),
+      };
+
+      if (event.type === "entry") {
+        const activeCheckIn = await getActiveCheckIn(
+          companyId,
+          userProfile.uid,
+        );
+        if (!activeCheckIn) {
+          await createCheckIn({
+            userId: userProfile.uid,
+            scheduledServiceId: event.serviceId,
+            ...telemetry,
+            manualTime: detectedAt,
+            exceptionReason: "Inicio automático por llegada GPS confirmada",
+          });
+        } else if (activeCheckIn.scheduledServiceId !== event.serviceId) {
+          // El evento ya no corresponde al estado actual: no iniciar dos servicios.
+          return;
+        }
+        await updateScheduledServiceStatus(
+          companyId,
+          event.serviceId,
+          "in_progress",
+        );
+        localStorage.setItem(
+          `detected_entry_${event.serviceId}`,
+          detectedAt.toISOString(),
+        );
+        servicesCachedAtRef.current = 0;
+        return;
+      }
+
+      if (event.type === "exit") {
+        localStorage.setItem(
+          `detected_exit_${event.serviceId}`,
+          detectedAt.toISOString(),
+        );
+        await persistExitDetection(
+          companyId,
+          userProfile.uid,
+          event.serviceId,
+          event.communityName,
+          detectedAt,
+          "confirmed",
+          {
+            latitude: event.latitude,
+            longitude: event.longitude,
+            accuracy: event.accuracy,
+            speed: event.speed,
+            originalReadingTimestamp: new Date(
+              event.timestamp || event.detectedAt || Date.now(),
+            ),
+          },
+        );
+        servicesCachedAtRef.current = 0;
+
+        // La salida siempre se registra y se muestra al operario, pero solo
+        // cierra el fichaje si la comunidad lo tiene activado expresamente.
+        if (event.autoCloseOnExit !== true) return;
+
+        const openQuery = query(
+          tenantCollection(db, companyId, "checkIns"),
+          where("scheduledServiceId", "==", event.serviceId),
+          where("checkOutTime", "==", null),
+        );
+        const openSnapshot = await getDocs(openQuery);
+        for (const checkInDoc of openSnapshot.docs) {
+          await completeCheckOut(
+            checkInDoc.id,
+            event.latitude,
+            event.longitude,
+            detectedAt,
+            null,
+            {
+              ...telemetry,
+              exceptionReason:
+                "Finalización automática por salida GPS confirmada",
+            },
+          );
+        }
+        await updateScheduledServiceStatus(
+          companyId,
+          event.serviceId,
+          "completed",
+        );
+        if (
+          activeCheckInRef.current?.scheduledServiceId === event.serviceId
+        ) {
+          activeCheckInRef.current = null;
+        }
+        markServiceCompletedToday(event.serviceId);
+      }
+    };
+
+    const syncNativeAutomationEvents = async () => {
+      if (nativeSyncInProgressRef.current) return;
+      nativeSyncInProgressRef.current = true;
+      try {
+        await drainNativeGeofenceEvents(processNativeAutomationEvent);
+      } catch (error) {
+        console.warn(
+          "[Tracker] Error sincronizando automatizaciones Android; se reintentará:",
+          error,
+        );
+      } finally {
+        nativeSyncInProgressRef.current = false;
+      }
+    };
+
     const processPosition = async (position) => {
       try {
         // --- Detectar suspensión de la app ---
@@ -433,6 +661,10 @@ export default function GeolocationTracker() {
                 getCommunityGeofenceRadiusMeters(community);
               const entryRadius = geofenceRadius;
               const exitRadius = getCommunityExitRadiusMeters(community);
+              const entryConfirmDelayMs =
+                getCommunityEntryConfirmDelayMs(community);
+              const exitConfirmDelayMs =
+                getCommunityExitConfirmDelayMs(community);
 
               const logEntry = `[${new Date().toLocaleTimeString()}] ${community.name}: ${Math.round(dist)}m (GPS±${Math.round(accuracy)}m, R_in:${entryRadius}m, R_out:${exitRadius}m) [${svc.status}]`;
               console.log(logEntry);
@@ -449,12 +681,43 @@ export default function GeolocationTracker() {
                 geofenceRadius,
                 entryRadius,
                 exitRadius,
+                entryConfirmDelayMs,
+                exitConfirmDelayMs,
+                autoCloseOnExit: community.autoCloseOnExit === true,
                 gpsAccuracy: accuracy,
               });
             }
           }
         }
         localStorage.setItem("tracker_debug_logs", JSON.stringify(trackerLogs));
+
+        if (isNativeLocationAvailable()) {
+          const nativeServices = servicesWithDistance
+            .filter((item) =>
+              checkIn
+                ? item.id === checkIn.scheduledServiceId
+                : item.status !== "completed" && item.status !== "in_progress",
+            )
+            .sort((a, b) => a.distance - b.distance)
+            .slice(0, 1)
+            .map((item) => ({
+              serviceId: item.id,
+              communityName: item.communityName,
+              latitude: item.communityLat,
+              longitude: item.communityLng,
+              entryRadius: item.entryRadius,
+              exitRadius: item.exitRadius,
+              entryConfirmMs: item.entryConfirmDelayMs,
+              exitConfirmMs: item.exitConfirmDelayMs,
+              autoCloseOnExit: item.autoCloseOnExit === true,
+              active: Boolean(checkIn),
+            }));
+          await configureNativeGeofences(nativeServices);
+          // En Android la máquina de estados nativa es la única que decide
+          // llegadas y salidas. Evita temporizadores y autocierres duplicados
+          // del WebView, que queda suspendido con la pantalla apagada.
+          return;
+        }
 
         // ==================== FUNCIÓN INTERNA DE NOTIFICACIÓN COMPARTIDA ====================
         const triggerSessionNotification = (
@@ -576,10 +839,10 @@ export default function GeolocationTracker() {
                     const pending = JSON.parse(existingPendingRaw);
                     const elapsed = Date.now() - pending.firstDetectedAt;
 
-                    if (elapsed >= GPS_CONFIG.EXIT_CONFIRM_DELAY_MS) {
+                    if (elapsed >= activeSvc.exitConfirmDelayMs) {
                       const confirmedExitTime = new Date(pending.exitTime);
                       console.log(
-                        `[Tracker] SALIDA CONFIRMADA tras 5 min: ${confirmedExitTime.toLocaleTimeString()}`,
+                        `[Tracker] SALIDA CONFIRMADA tras ${Math.round(activeSvc.exitConfirmDelayMs / 1000)}s: ${confirmedExitTime.toLocaleTimeString()}`,
                       );
                       localStorage.setItem(
                         confirmedKey,
@@ -753,10 +1016,10 @@ export default function GeolocationTracker() {
                     const pending = JSON.parse(pendingRaw);
                     const elapsed = Date.now() - pending.firstDetectedAt;
 
-                    if (elapsed >= GPS_CONFIG.EXIT_CONFIRM_DELAY_MS) {
+                    if (elapsed >= activeSvc.exitConfirmDelayMs) {
                       const confirmedExitTime = new Date(pending.exitTime);
                       console.log(
-                        "[Tracker] SALIDA CONFIRMADA tras 5 min fuera",
+                        `[Tracker] SALIDA CONFIRMADA tras ${Math.round(activeSvc.exitConfirmDelayMs / 1000)}s fuera`,
                       );
                       localStorage.setItem(
                         confirmedKey,
@@ -946,20 +1209,20 @@ export default function GeolocationTracker() {
 
             const isFirstEntry = previousState === "OUTSIDE";
 
-            // Permanencia de 90 segundos
+            // Permanencia configurable por comunidad
             if (isFirstEntry) {
               if (!firstSeenInsideRef.current[closest.id]) {
                 firstSeenInsideRef.current[closest.id] = now;
                 console.log(
-                  `[Tracker] ${closest.communityName} en rango. Iniciando temporizador de permanencia de 90s...`,
+                  `[Tracker] ${closest.communityName} en rango. Iniciando temporizador de permanencia de ${Math.round(closest.entryConfirmDelayMs / 1000)}s...`,
                 );
                 return;
               }
 
               const elapsed = now - firstSeenInsideRef.current[closest.id];
-              if (elapsed < GPS_CONFIG.ENTRY_CONFIRM_DELAY_MS) {
+              if (elapsed < closest.entryConfirmDelayMs) {
                 console.log(
-                  `[Tracker] ${closest.communityName} en rango. Tiempo restante para confirmar: ${Math.round((GPS_CONFIG.ENTRY_CONFIRM_DELAY_MS - elapsed) / 1000)}s`,
+                  `[Tracker] ${closest.communityName} en rango. Tiempo restante para confirmar: ${Math.round((closest.entryConfirmDelayMs - elapsed) / 1000)}s`,
                 );
                 return;
               }
@@ -1124,19 +1387,26 @@ export default function GeolocationTracker() {
     };
 
     // ==================== MANEJAR VISIBILIDAD (RECOVERY) ====================
-    const handleVisibilityChange = () => {
+    const handleVisibilityChange = async () => {
       if (document.visibilityState === "visible") {
         console.log("[Tracker] App volvió a primer plano — doble disparo GPS");
         requestWakeLock();
         servicesCachedAtRef.current = 0;
 
-        navigator.geolocation.getCurrentPosition(processPosition, () => {}, {
-          enableHighAccuracy: true,
-          timeout: 5000,
-          maximumAge: 60000,
-        });
+        if (isNativeLocationAvailable()) {
+          await syncNativeAutomationEvents();
+          await drainNativeLocations(processPosition).catch((error) =>
+            console.warn("[Tracker] Error recuperando ubicaciones Android:", error),
+          );
+        } else {
+          navigator.geolocation.getCurrentPosition(processPosition, () => {}, {
+            enableHighAccuracy: true,
+            timeout: 5000,
+            maximumAge: 60000,
+          });
+        }
 
-        setTimeout(() => {
+        if (!isNativeLocationAvailable()) setTimeout(() => {
           navigator.geolocation.getCurrentPosition(
             processPosition,
             (err) => console.warn("[Tracker] GPS fresh recovery error:", err),
@@ -1148,17 +1418,26 @@ export default function GeolocationTracker() {
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     // ==================== INICIAR TRACKING GPS ====================
-    watchIdRef.current = navigator.geolocation.watchPosition(
-      processPosition,
-      (err) => console.error("Error GPS watchPosition:", err),
-      {
-        enableHighAccuracy: true,
-        maximumAge: 30000,
-        timeout: 27000,
-      },
-    );
+    if (!isNativeLocationAvailable()) {
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        processPosition,
+        (err) => console.error("Error GPS watchPosition:", err),
+        {
+          enableHighAccuracy: true,
+          maximumAge: 30000,
+          timeout: 27000,
+        },
+      );
+    }
 
-    const fallbackInterval = setInterval(() => {
+    const fallbackInterval = setInterval(async () => {
+      if (isNativeLocationAvailable()) {
+        await syncNativeAutomationEvents();
+        await drainNativeLocations(processPosition).catch((error) =>
+          console.warn("[Tracker] Error leyendo el GPS Android:", error),
+        );
+        return;
+      }
       const timeSinceLastUpdate = Date.now() - lastWatchPositionTimeRef.current;
       if (timeSinceLastUpdate > 60000) {
         navigator.geolocation.getCurrentPosition(

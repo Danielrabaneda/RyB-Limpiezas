@@ -49,6 +49,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [pendingTransfers, setPendingTransfers] = useState(0);
   const [pendingGPS, setPendingGPS] = useState(0);
+  const [showGPSPanel, setShowGPSPanel] = useState(false);
   const [activeOpsNames, setActiveOpsNames] = useState([]);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
   const [notifForm, setNotifForm] = useState({
@@ -504,7 +505,7 @@ export default function DashboardPage() {
             )}
             {pendingGPS > 0 && (
               <button
-                onClick={() => scrollTo("panel-gps")}
+                onClick={() => setShowGPSPanel(true)}
                 style={{
                   background: "white",
                   color: "#1d4ed8",
@@ -644,15 +645,6 @@ export default function DashboardPage() {
         />
       </div>
 
-      <div id="panel-gps">
-        <GPSSuggestionsPanel
-          onActionComplete={() => {
-            loadDashboard();
-            setRefreshKey((prev) => prev + 1);
-          }}
-        />
-      </div>
-
       <div className="mb-12">
         <h3 className="section-title mb-6">📅 Planificación Mensual</h3>
         <div
@@ -715,6 +707,65 @@ export default function DashboardPage() {
           )}
         </div>
       </div>
+
+      {showGPSPanel && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Ubicaciones GPS pendientes"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 10000,
+            background: "rgba(15, 23, 42, 0.65)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "20px",
+            backdropFilter: "blur(4px)",
+          }}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setShowGPSPanel(false);
+          }}
+        >
+          <div
+            style={{
+              width: "min(900px, 100%)",
+              maxHeight: "90vh",
+              overflowY: "auto",
+              background: "#f8fafc",
+              borderRadius: "20px",
+              padding: "20px",
+              boxShadow: "0 24px 60px rgba(0,0,0,.3)",
+            }}
+          >
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div>
+                <h3 className="text-xl font-black text-slate-900">
+                  Ubicaciones GPS pendientes
+                </h3>
+                <p className="text-sm text-slate-600 mt-1">
+                  «Aplicar ubicación» sustituye las coordenadas actuales de la
+                  comunidad por las enviadas por el operario.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setShowGPSPanel(false)}
+              >
+                Cerrar
+              </button>
+            </div>
+            <GPSSuggestionsPanel
+              onActionComplete={() => {
+                loadDashboard();
+                setRefreshKey((prev) => prev + 1);
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* ===== MODAL CENTRO DE NOTIFICACIONES ===== */}
       {showNotificationModal && (

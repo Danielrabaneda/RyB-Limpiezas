@@ -208,6 +208,121 @@ export default function CommunityFormModal({
                 </div>
               )}
             </div>
+            <div
+              className="form-group"
+              style={{
+                padding: "var(--space-3)",
+                background: "var(--color-bg)",
+                borderRadius: "var(--radius-md)",
+                border: "1px solid var(--color-border)",
+              }}
+            >
+              <label className="form-label" style={{ fontWeight: "bold" }}>
+                Zona de detección GPS
+              </label>
+              <div className="form-row">
+                <div className="form-group">
+                  <label className="form-label text-xs">Radio de entrada (metros)</label>
+                  <input
+                    className="form-input"
+                    type="number"
+                    min="10"
+                    step="5"
+                    value={form.geofenceRadiusMeters || ""}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, geofenceRadiusMeters: e.target.value }))
+                    }
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label text-xs">Radio de salida (metros)</label>
+                  <input
+                    className="form-input"
+                    type="number"
+                    min="20"
+                    step="5"
+                    value={form.exitGeofenceRadiusMeters || ""}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, exitGeofenceRadiusMeters: e.target.value }))
+                    }
+                    required
+                  />
+                </div>
+              </div>
+              <div className="form-row" style={{ marginBottom: 0 }}>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label text-xs">Confirmar entrada tras (segundos)</label>
+                  <input
+                    className="form-input"
+                    type="number"
+                    min="30"
+                    step="30"
+                    value={form.entryConfirmDelaySeconds || ""}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, entryConfirmDelaySeconds: e.target.value }))
+                    }
+                    required
+                  />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label text-xs">Confirmar salida tras (segundos)</label>
+                  <input
+                    className="form-input"
+                    type="number"
+                    min="60"
+                    step="30"
+                    value={form.exitConfirmDelaySeconds || ""}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, exitConfirmDelaySeconds: e.target.value }))
+                    }
+                    required
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-muted mt-2">
+                La salida debe tener un radio mayor que la entrada. En recintos grandes,
+                amplía especialmente el radio de salida para evitar falsas salidas.
+              </p>
+              <label
+                className="form-label flex items-center gap-2 cursor-pointer"
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  marginTop: "var(--space-3)",
+                  paddingTop: "var(--space-3)",
+                  borderTop: "1px solid var(--color-border)",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={form.autoCloseOnExit === true}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      autoCloseOnExit: e.target.checked,
+                    }))
+                  }
+                  style={{
+                    width: "18px",
+                    height: "18px",
+                    margin: "2px 0 0",
+                    cursor: "pointer",
+                    flexShrink: 0,
+                  }}
+                />
+                <span>
+                  <strong>Finalizar automáticamente al confirmar la salida</strong>
+                  <span
+                    className="text-xs text-muted"
+                    style={{ display: "block", marginTop: "4px" }}
+                  >
+                    Si está desactivado, el móvil avisará de la salida, pero el
+                    operario deberá finalizar el servicio desde la aplicación.
+                  </span>
+                </span>
+              </label>
+            </div>
             <div className="form-row">
               <div className="form-group">
                 <label className="form-label">Tipo</label>

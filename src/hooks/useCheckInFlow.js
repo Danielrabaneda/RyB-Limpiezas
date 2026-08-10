@@ -43,7 +43,17 @@ import {
   clearCheckoutInProgress,
   markCheckoutInProgress,
 } from "../utils/checkoutGuard";
-import { getCommunityExitRadiusMeters } from "../config/gpsConfig";
+import {
+  getCommunityExitRadiusMeters,
+  getCommunityGeofenceRadiusMeters,
+} from "../config/gpsConfig";
+import {
+  getLatestNativeLocation,
+  getNativeLocationStatus,
+  isNativeLocationAvailable,
+  openNativeLocationSettings,
+} from "../services/nativeBackgroundLocationService";
+import { shouldNeverCarryTask } from "../utils/taskRolloverPolicy";
 
 export function useCheckInFlow(
   serviceId,
@@ -52,7 +62,6 @@ export function useCheckInFlow(
   {
     navigate,
     getCurrentPosition,
-    getFilteredPosition,
     clientSignature,
     setClientSignature,
     actionLoading: externalActionLoading,
@@ -105,6 +114,44 @@ export function useCheckInFlow(
     markCheckoutInProgress(serviceId);
     void closeServiceNotifications(serviceId);
   };
+
+  const getFastPosition = async ({ allowLiveRequest = true } = {}) => {
+    if (isNativeLocationAvailable()) {
+      const status = await getNativeLocationStatus();
+      if (status?.locationServicesEnabled === false) {
+        const error = new Error("La ubicación del teléfono está desactivada.");
+        error.code = "LOCATION_SERVICES_DISABLED";
+        throw error;
+      }
+    }
+
+    const nativePosition = await getLatestNativeLocation();
+    const nativeAge = nativePosition?.timestamp
+      ? Date.now() - nativePosition.timestamp
+      : Infinity;
+    if (
+      nativePosition &&
+      nativeAge <= 2 * 60_000 &&
+      nativePosition.accuracy <= 75
+    ) {
+      return nativePosition;
+    }
+
+    // Las actualizaciones visuales de distancia no deben abrir una nueva
+    // búsqueda GPS. La lectura en vivo se reserva para acciones del operario.
+    if (!allowLiveRequest) return null;
+
+    return getCurrentPosition({
+      enableHighAccuracy: true,
+      timeout: 5_000,
+      maximumAge: 30_000,
+      retryLowAccuracy: false,
+    });
+  };
+
+  const getEntryAllowedRadius = (pos) =>
+    getCommunityGeofenceRadiusMeters(community) +
+    Math.max(100, Number(pos?.accuracy) || 0);
 
   const cancelPendingAction = () => {
     if (pendingAction?.type === "checkout") {
@@ -306,14 +353,21 @@ export function useCheckInFlow(
 
     const updateDistance = async () => {
       try {
-        const pos = await getCurrentPosition({ maximumAge: 5000 });
+        const pos = await getFastPosition({ allowLiveRequest: false });
+        if (!pos) return;
         if (!active) return;
         const commLat =
           community.location._lat || community.location.latitude || 0;
         const commLng =
           community.location._long || community.location.longitude || 0;
         if (commLat && commLng) {
-          const check = isWithinRange(pos.lat, pos.lng, commLat, commLng, 500);
+          const check = isWithinRange(
+            pos.lat,
+            pos.lng,
+            commLat,
+            commLng,
+            getEntryAllowedRadius(pos),
+          );
           setDistanceInfo(check);
         }
       } catch (err) {
@@ -425,34 +479,21 @@ export function useCheckInFlow(
     try {
       let pos = null;
       try {
-        pos = await getFilteredPosition();
+        pos = await getFastPosition();
       } catch (geoErr) {
-        console.warn(
-          "[useCheckInFlow] Error al obtener posición filtrada, usando fallback:",
-          geoErr,
-        );
-        try {
-          pos = await getCurrentPosition({
-            enableHighAccuracy: false,
-            timeout: 5000,
-          });
-        } catch (rawErr) {
-          console.warn(
-            "[useCheckInFlow] Error al obtener posición rápida, usando fallback de la comunidad:",
-            rawErr,
+        console.warn("[useCheckInFlow] No se pudo obtener una posición válida:", geoErr);
+        if (geoErr?.code === "LOCATION_SERVICES_DISABLED") {
+          alert(
+            "La ubicación del teléfono está desactivada. Actívala para iniciar el servicio.",
           );
-          const commLat =
-            community?.location?._lat || community?.location?.latitude || 0;
-          const commLng =
-            community?.location?._long || community?.location?.longitude || 0;
-          pos = {
-            lat: commLat,
-            lng: commLng,
-            accuracy: 999,
-            speed: null,
-            timestamp: Date.now(),
-          };
+          await openNativeLocationSettings();
+        } else {
+          alert(
+            "No se ha podido obtener una ubicación reciente. Comprueba el GPS y vuelve a intentarlo.",
+          );
         }
+        setActionLoading(false);
+        return;
       }
 
       let needsException = false;
@@ -464,7 +505,13 @@ export function useCheckInFlow(
           community.location._lat || community.location.latitude || 0;
         const commLng =
           community.location._long || community.location.longitude || 0;
-        const check = isWithinRange(pos.lat, pos.lng, commLat, commLng, 500);
+        const check = isWithinRange(
+          pos.lat,
+          pos.lng,
+          commLat,
+          commLng,
+          getEntryAllowedRadius(pos),
+        );
         setDistanceInfo(check);
 
         isOutOfBounds = !check.withinRange;
@@ -798,35 +845,28 @@ export function useCheckInFlow(
     try {
       let pos = null;
       try {
-        pos = await getFilteredPosition();
+        pos = await getFastPosition();
       } catch (geoErr) {
-        console.warn(
-          "[useCheckInFlow] Error al obtener posición filtrada, usando fallback:",
-          geoErr,
-        );
-        try {
-          pos = await getCurrentPosition({
-            enableHighAccuracy: false,
-            timeout: 5000,
-          });
-        } catch (rawErr) {
-          console.warn(
-            "[useCheckInFlow] Error al obtener posición rápida, usando fallback de check-in:",
-            rawErr,
-          );
+        console.warn("[useCheckInFlow] No se pudo obtener GPS para finalizar:", geoErr);
+        if (!manualTime) {
+          if (geoErr?.code === "LOCATION_SERVICES_DISABLED") {
+            alert(
+              "La ubicación del teléfono está desactivada. Actívala para finalizar el servicio.",
+            );
+            await openNativeLocationSettings();
+          } else {
+            alert(
+              "No se ha podido obtener una ubicación reciente. Comprueba el GPS y vuelve a intentarlo.",
+            );
+          }
+          clearCheckoutInProgress(serviceId);
+          setActionLoading(false);
+          return;
         }
       }
 
-      const lat =
-        pos?.lat ||
-        activeCheckIn?.checkInLocation?.latitude ||
-        activeCheckIn?.checkInLocation?._lat ||
-        0;
-      const lng =
-        pos?.lng ||
-        activeCheckIn?.checkInLocation?.longitude ||
-        activeCheckIn?.checkInLocation?._long ||
-        0;
+      const lat = pos?.lat ?? null;
+      const lng = pos?.lng ?? null;
 
       // First, check for exit geofence/detection if not manualTime and out of bounds
       let check = null;
@@ -1000,6 +1040,7 @@ export function useCheckInFlow(
             sName.includes("garaje") ||
             sName.includes("oficina");
           const isGarage = sName.includes("garaje");
+          const mustStayOnScheduledDay = shouldNeverCarryTask(sName);
 
           const presentation =
             specificTask?.displayMode || s.displayMode || "standalone";
@@ -1011,6 +1052,7 @@ export function useCheckInFlow(
 
           if (
             (exec && exec.status === "completed") ||
+            mustStayOnScheduledDay ||
             (isException && presentation !== "embedded")
           ) {
             await updateScheduledServiceStatus(companyId, s.id, "completed");
@@ -1078,24 +1120,19 @@ export function useCheckInFlow(
     try {
       let pos = null;
       try {
-        pos = await getFilteredPosition();
+        pos = await getFastPosition();
       } catch (geoErr) {
         console.warn(
-          "[useCheckInFlow] Error al obtener posición para manual, usando fallback:",
+          "[useCheckInFlow] Registro manual sin posición GPS disponible:",
           geoErr,
         );
-        try {
-          pos = await getCurrentPosition({
-            enableHighAccuracy: false,
-            timeout: 5000,
-          });
-        } catch (rawErr) {
-          const commLat =
-            community?.location?._lat || community?.location?.latitude || 0;
-          const commLng =
-            community?.location?._long || community?.location?.longitude || 0;
-          pos = { lat: commLat, lng: commLng };
-        }
+        pos = {
+          lat: null,
+          lng: null,
+          accuracy: null,
+          speed: null,
+          timestamp: null,
+        };
       }
 
       const checkInId = await createCheckIn({
@@ -1307,7 +1344,12 @@ export function useCheckInFlow(
   async function sendGPSLocation() {
     setSendingGPS(true);
     try {
-      const pos = await getFilteredPosition();
+      const pos = await getFastPosition();
+      if (!pos || pos.accuracy > 100) {
+        throw new Error(
+          "La señal GPS no tiene suficiente precisión. Sal al exterior y vuelve a intentarlo.",
+        );
+      }
       await createGPSSuggestion(companyId, {
         communityId: service.communityId,
         communityName: community.name,

@@ -43,8 +43,30 @@ export function getCommunityGeofenceRadiusMeters(community) {
 }
 
 export function getCommunityExitRadiusMeters(community) {
-  return (
-    getCommunityGeofenceRadiusMeters(community) +
-    GPS_CONFIG.HYSTERESIS_BUFFER_METERS
+  const entryRadius = getCommunityGeofenceRadiusMeters(community);
+  const configuredRadius = Number(community?.exitGeofenceRadiusMeters);
+  return Number.isFinite(configuredRadius) && configuredRadius > entryRadius
+    ? configuredRadius
+    : entryRadius + GPS_CONFIG.HYSTERESIS_BUFFER_METERS;
+}
+
+function getConfiguredDelayMs(value, defaultMs) {
+  const seconds = Number(value);
+  return Number.isFinite(seconds) && seconds > 0
+    ? seconds * 1000
+    : defaultMs;
+}
+
+export function getCommunityEntryConfirmDelayMs(community) {
+  return getConfiguredDelayMs(
+    community?.entryConfirmDelaySeconds,
+    GPS_CONFIG.ENTRY_CONFIRM_DELAY_MS,
+  );
+}
+
+export function getCommunityExitConfirmDelayMs(community) {
+  return getConfiguredDelayMs(
+    community?.exitConfirmDelaySeconds,
+    GPS_CONFIG.EXIT_CONFIRM_DELAY_MS,
   );
 }

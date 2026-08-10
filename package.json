@@ -6,9 +6,14 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "android:add": "cap add android",
+    "android:sync": "npm run build && cap sync android",
+    "android:open": "cap open android",
+    "android:run": "npm run android:sync && cap run android"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.5.0",
     "@firebase/rules-unit-testing": "^5.0.1",
     "@vitejs/plugin-react": "^4.3.4",
     "firebase-admin": "^14.2.0",
@@ -18,6 +23,8 @@
     "vite-plugin-pwa": "^0.21.1"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/core": "^8.5.0",
     "date-fns": "^4.1.0",
     "firebase": "^12.12.0",
     "html2canvas": "^1.4.1",

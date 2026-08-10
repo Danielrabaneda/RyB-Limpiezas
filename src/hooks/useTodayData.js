@@ -18,6 +18,27 @@ import {
 import { format, isSameDay } from "date-fns";
 import { getCurrentLocation, getDistance } from "../utils/geolocation";
 import { groupServicesByTaskPresentation } from "../utils/taskPresentation";
+import {
+  getLatestNativeLocation,
+  getNativeLocationStatus,
+  isNativeLocationAvailable,
+} from "../services/nativeBackgroundLocationService";
+
+async function getPassiveCurrentLocation() {
+  if (!isNativeLocationAvailable()) {
+    return getCurrentLocation();
+  }
+
+  const status = await getNativeLocationStatus();
+  if (status?.locationServicesEnabled === false) return null;
+
+  const position = await getLatestNativeLocation();
+  const age = position?.timestamp ? Date.now() - position.timestamp : Infinity;
+  if (position && age <= 2 * 60_000 && position.accuracy <= 100) {
+    return position;
+  }
+  return null;
+}
 
 export function useTodayData(userProfile) {
   const [enrichedServices, setEnrichedServices] = useState([]);
@@ -34,14 +55,15 @@ export function useTodayData(userProfile) {
   const isLoadingTodayRef = useRef(false);
   const { companyId } = useTenant();
 
-  // 1. Ubicación periódica (cada 15s)
+  // 1. Ubicación periódica. En Android solo lee la caché del servicio nativo:
+  // nunca inicia solicitudes GPS costosas desde una actualización pasiva.
   useEffect(() => {
     let active = true;
     let intervalId = null;
 
     const updateLocation = async () => {
       try {
-        const pos = await getCurrentLocation();
+        const pos = await getPassiveCurrentLocation();
         if (active && pos) {
           setUserLocation(pos);
         }
@@ -308,7 +330,7 @@ export function useTodayData(userProfile) {
 
       if (!startLat || !startLng) {
         try {
-          const currentPos = await getCurrentLocation();
+          const currentPos = await getPassiveCurrentLocation();
           if (
             currentPos &&
             getValidCoordinates({

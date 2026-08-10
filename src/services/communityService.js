@@ -21,15 +21,24 @@ const COLLECTION = "communities";
 
 export async function createCommunity(companyId, data) {
   if (!companyId) throw new Error("No hay una empresa activa.");
-  const result = await httpsCallable(functions, "createTenantCommunity")({
-    community: {
-      ...data,
-      basePrice: parseFloat(data.basePrice) || 0,
-      individualTimeTracking: !!data.individualTimeTracking,
-      active: true,
-    },
-  });
-  return { id: result.data.id, ...data, active: true };
+  try {
+    const result = await httpsCallable(functions, "createTenantCommunity")({
+      community: {
+        ...data,
+        basePrice: parseFloat(data.basePrice) || 0,
+        individualTimeTracking: !!data.individualTimeTracking,
+        active: true,
+      },
+    });
+    return { id: result.data.id, ...data, active: true };
+  } catch (error) {
+    if (error?.code === "functions/not-found") {
+      throw new Error(
+        "El servicio para crear comunidades no está disponible. Contacta con soporte.",
+      );
+    }
+    throw error;
+  }
 }
 
 export async function updateCommunity(companyId, id, data) {

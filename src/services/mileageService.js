@@ -50,7 +50,21 @@ function calculateBreadcrumbsDistance(carSessions) {
       const p2 = breadcrumbs[i + 1];
 
       if (p1.lat && p1.lng && p2.lat && p2.lng) {
-        totalMeters += getDistance(p1.lat, p1.lng, p2.lat, p2.lng);
+        const segmentMeters = getDistance(p1.lat, p1.lng, p2.lat, p2.lng);
+        const uncertainty =
+          (Number(p1.accuracy) || 25) + (Number(p2.accuracy) || 25);
+        const minimumMovement = Math.max(50, uncertainty);
+        const rawElapsedSeconds =
+          (Number(p2.timestamp) - Number(p1.timestamp)) / 1000;
+        const impliedSpeed =
+          Number.isFinite(rawElapsedSeconds) && rawElapsedSeconds > 0
+            ? segmentMeters / rawElapsedSeconds
+            : 0;
+
+        // Ignorar deriva en reposo y saltos imposibles del proveedor de red.
+        if (segmentMeters >= minimumMovement && impliedSpeed <= 55) {
+          totalMeters += segmentMeters;
+        }
       }
     }
   }

@@ -3,6 +3,12 @@ import { requestNotificationPermission } from "../../utils/geolocation";
 import { registerForPushNotifications } from "../../services/fcmService";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTenant } from "../../contexts/TenantContext";
+import {
+  getNativeLocationStatus,
+  isNativeLocationAvailable,
+  openNativeLocationSettings,
+  requestNativeTrackingPermissions,
+} from "../../services/nativeBackgroundLocationService";
 
 export default function PermissionsCheck() {
   const { userProfile } = useAuth();
@@ -11,6 +17,7 @@ export default function PermissionsCheck() {
   const [status, setStatus] = useState("pending"); // 'pending', 'loading', 'granted', 'error'
   const [errorMessage, setErrorMessage] = useState("");
   const [infoMessage, setInfoMessage] = useState("");
+  const [needsLocationSettings, setNeedsLocationSettings] = useState(false);
 
   // Detectar si es iOS en navegador (no instalado como PWA)
   const isIOS =
@@ -39,17 +46,42 @@ export default function PermissionsCheck() {
 
     // 1. Pedir Ubicación GPS (Obligatorio para la app)
     try {
-      await new Promise((resolve, reject) => {
-        if (!navigator.geolocation) {
-          reject(new Error("La geolocalización no está soportada en tu navegador."));
+      if (isNativeLocationAvailable()) {
+        const nativeStatus = await getNativeLocationStatus();
+        if (nativeStatus?.locationServicesEnabled === false) {
+          setNeedsLocationSettings(true);
+          setErrorMessage(
+            "La ubicación del teléfono está desactivada. Actívala en los ajustes para continuar.",
+          );
+          setStatus("error");
+          await openNativeLocationSettings();
           return;
         }
-        navigator.geolocation.getCurrentPosition(
-          (pos) => resolve(pos),
-          (err) => reject(err),
-          { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 },
-        );
-      });
+
+        setNeedsLocationSettings(false);
+        const permissionResult = await requestNativeTrackingPermissions();
+        if (permissionResult?.location !== "granted") {
+          const permissionError = new Error(
+            "Debes permitir la ubicación precisa para utilizar el GPS de la aplicación.",
+          );
+          permissionError.code = 1;
+          throw permissionError;
+        }
+      } else {
+        await new Promise((resolve, reject) => {
+          if (!navigator.geolocation) {
+            reject(
+              new Error("La geolocalización no está soportada en tu navegador."),
+            );
+            return;
+          }
+          navigator.geolocation.getCurrentPosition(
+            (pos) => resolve(pos),
+            (err) => reject(err),
+            { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 },
+          );
+        });
+      }
       gpsSuccess = true;
     } catch (err) {
       console.error("Error al obtener ubicación GPS:", err);
@@ -99,6 +131,38 @@ export default function PermissionsCheck() {
     }
   };
 
+  const openLocationSettings = async () => {
+    setErrorMessage(
+      "La ubicación del teléfono está desactivada. Actívala y vuelve a la aplicación.",
+    );
+    await openNativeLocationSettings();
+  };
+
+  // Al regresar de los ajustes, continuar automáticamente si el usuario
+  // ya ha activado la ubicación general del teléfono.
+  useEffect(() => {
+    if (!showModal || !needsLocationSettings || !isNativeLocationAvailable()) {
+      return undefined;
+    }
+
+    const retryWhenVisible = async () => {
+      if (document.visibilityState !== "visible") return;
+      try {
+        const nativeStatus = await getNativeLocationStatus();
+        if (nativeStatus?.locationServicesEnabled) {
+          setNeedsLocationSettings(false);
+          await requestPermissions();
+        }
+      } catch (error) {
+        console.warn("[Permissions] No se pudo comprobar el ajuste GPS:", error);
+      }
+    };
+
+    document.addEventListener("visibilitychange", retryWhenVisible);
+    return () =>
+      document.removeEventListener("visibilitychange", retryWhenVisible);
+  }, [showModal, needsLocationSettings]);
+
   const handleClose = () => {
     sessionStorage.setItem("permissions_checked", "true");
     setShowModal(false);
@@ -139,10 +203,14 @@ export default function PermissionsCheck() {
 
         <button
           className="btn btn-primary w-full py-3 text-base font-bold mb-3"
-          onClick={requestPermissions}
+          onClick={
+            needsLocationSettings ? openLocationSettings : requestPermissions
+          }
           disabled={status === "loading" || status === "granted"}
         >
-          {status === "loading"
+          {needsLocationSettings
+            ? "⚙️ Abrir ajustes de ubicación"
+            : status === "loading"
             ? "⏳ Solicitando ubicación..."
             : status === "granted"
               ? "✅ Ubicación concedida"

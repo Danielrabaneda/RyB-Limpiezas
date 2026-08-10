@@ -3425,6 +3425,22 @@ exports.createTenantCommunity = onCall(
         "Solo un administrador puede crear comunidades.",
       );
     }
+    if (companyId === PLATFORM_TENANT_ID) {
+      const companyRef = db.collection("companies").doc(companyId);
+      await db.runTransaction(async (transaction) => {
+        const companySnap = await transaction.get(companyRef);
+        if (!companySnap.exists) {
+          transaction.create(companyRef, {
+            name: "Limpiezas Rayba",
+            status: "active",
+            plan: "enterprise",
+            subscriptionStatus: "legacy",
+            createdAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+        }
+      });
+    }
     await assertPlanCapacity(companyId, "communities");
     const data = request.data?.community;
     if (!data || typeof data !== "object") {
@@ -3439,7 +3455,9 @@ exports.createTenantCommunity = onCall(
       "preferredTime", "individualTimeTracking", "billingCif",
       "billingAddress", "basePrice", "paymentMethod", "billingEmail",
       "billingIban", "billingMandateRef", "billingMandateDate",
-      "administratorId", "active",
+      "administratorId", "geofenceRadiusMeters",
+      "exitGeofenceRadiusMeters", "entryConfirmDelaySeconds",
+      "exitConfirmDelaySeconds", "autoCloseOnExit", "active",
     ];
     const cleanData = {};
     for (const field of allowedFields) {

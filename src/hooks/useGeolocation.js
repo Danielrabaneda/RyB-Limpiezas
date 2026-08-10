@@ -104,7 +104,11 @@ export function useGeolocation(customOptions = {}) {
             });
           },
           (err) => {
-            if (err.code === 3 && opts.enableHighAccuracy) {
+            if (
+              err.code === 3 &&
+              opts.enableHighAccuracy &&
+              opts.retryLowAccuracy !== false
+            ) {
               console.warn(
                 "[KalmanFilter] Timeout con alta precisión. Reintentando con baja precisión...",
               );

@@ -94,6 +94,9 @@ export function useCarAndCompanion(
         const currentBreadcrumb = {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+          speed: pos.coords.speed,
+          provider: pos.nativeProvider || null,
           timestamp: Date.now(),
         };
 
@@ -111,9 +114,17 @@ export function useCarAndCompanion(
               currentBreadcrumb.lng,
             );
             const timeDiff = currentBreadcrumb.timestamp - last.timestamp;
+            const uncertainty =
+              (Number(last.accuracy) || 25) +
+              (Number(currentBreadcrumb.accuracy) || 25);
+            const movementThreshold = Math.max(50, uncertainty);
 
-            // Guardar si se ha movido > 50m o pasaron > 2 minutos (120s)
-            if (dist >= 50 || timeDiff >= 120000) {
+            // La posición oscila incluso con el teléfono quieto. Guardamos un
+            // punto solo si el desplazamiento supera la incertidumbre del GPS.
+            const confirmedMovement = dist >= movementThreshold;
+            const usefulHeartbeat =
+              timeDiff >= 120000 && dist >= movementThreshold / 2;
+            if (confirmedMovement || usefulHeartbeat) {
               existing.push(currentBreadcrumb);
               localStorage.setItem(
                 "ryb_car_breadcrumbs",

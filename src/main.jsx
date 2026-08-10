@@ -3,9 +3,13 @@ import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
 import "./index.css";
 import { registerSW } from "virtual:pwa-register";
+import { Capacitor } from "@capacitor/core";
 
 // Register service worker for PWA only if not in a client portal.
-if (!window.location.pathname.startsWith("/portal/")) {
+if (
+  !Capacitor.isNativePlatform() &&
+  !window.location.pathname.startsWith("/portal/")
+) {
   let refreshing = false;
   navigator.serviceWorker?.addEventListener("controllerchange", () => {
     if (refreshing) return;

@@ -16,6 +16,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../config/firebase";
 import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
+import { getPreservedScheduleKeys } from "../utils/schedulePreservation";
 import {
   startOfDay,
   endOfDay,
@@ -1086,13 +1087,12 @@ export async function generateServicesForRange(companyId, startDate, endDate) {
       ),
     );
 
-    const existingKeys = new Set(
-      existingSnap.docs.map((d) => {
-        const data = d.data();
-        const date = data.scheduledDate.toDate();
-        return `${data.communityTaskId}_${data.assignedUserId}_${format(date, "yyyy-MM-dd")}`;
-      }),
-    );
+    const existingKeys = new Set();
+    for (const document of existingSnap.docs) {
+      for (const key of getPreservedScheduleKeys(document.data())) {
+        existingKeys.add(key);
+      }
+    }
     const openCarrySnap = await getDocs(
       query(
         tenantCollection(db, companyId, "scheduledServices"),
@@ -1136,11 +1136,9 @@ export async function generateServicesForRange(companyId, startDate, endDate) {
 
     for (const d of rescheduledSnap.docs) {
       const data = d.data();
-      const origDate = data.originalDate?.toDate
-        ? data.originalDate.toDate()
-        : new Date(data.originalDate);
-      const origKey = `${data.communityTaskId}_${data.assignedUserId}_${format(origDate, "yyyy-MM-dd")}`;
-      existingKeys.add(origKey);
+      for (const key of getPreservedScheduleKeys(data)) {
+        existingKeys.add(key);
+      }
     }
 
     console.log(
@@ -1253,26 +1251,32 @@ export async function generateServicesForTask(
       ),
     );
 
-    const existingKeys = new Set(
-      existingSnap.docs
-        .map((doc) => {
-          const data = doc.data();
-          const date = data.scheduledDate?.toDate
-            ? data.scheduledDate.toDate()
-            : new Date(data.scheduledDate);
-          return { data, date };
-        })
-        .filter(
-          ({ date }) =>
-            !Number.isNaN(date.getTime()) &&
-            date.getTime() >= startOfDay(startDate).getTime() &&
-            date.getTime() <= endOfDay(endDate).getTime(),
-        )
-        .map(
-          ({ data, date }) =>
-            `${data.communityTaskId}_${data.assignedUserId}_${format(date, "yyyy-MM-dd")}`,
-        ),
-    );
+    const existingKeys = new Set();
+    for (const document of existingSnap.docs) {
+      const data = document.data();
+      const scheduledDate = data.scheduledDate?.toDate
+        ? data.scheduledDate.toDate()
+        : new Date(data.scheduledDate);
+      const originalDate = data.originalDate?.toDate
+        ? data.originalDate.toDate()
+        : data.originalDate
+          ? new Date(data.originalDate)
+          : null;
+      const scheduledInRange =
+        !Number.isNaN(scheduledDate.getTime()) &&
+        scheduledDate.getTime() >= startOfDay(startDate).getTime() &&
+        scheduledDate.getTime() <= endOfDay(endDate).getTime();
+      const originalInRange =
+        originalDate &&
+        !Number.isNaN(originalDate.getTime()) &&
+        originalDate.getTime() >= startOfDay(startDate).getTime() &&
+        originalDate.getTime() <= endOfDay(endDate).getTime();
+      if (scheduledInRange || originalInRange) {
+        for (const key of getPreservedScheduleKeys(data)) {
+          existingKeys.add(key);
+        }
+      }
+    }
     const openCarryUsers = new Set();
 
     // Also check rescheduled services for this task whose originalDate falls in range.
@@ -1297,8 +1301,9 @@ export async function generateServicesForTask(
           origTime >= startOfDay(startDate).getTime() &&
           origTime <= endOfDay(endDate).getTime()
         ) {
-          const origKey = `${data.communityTaskId}_${data.assignedUserId}_${format(origDate, "yyyy-MM-dd")}`;
-          existingKeys.add(origKey);
+          for (const key of getPreservedScheduleKeys(data)) {
+            existingKeys.add(key);
+          }
         }
       }
     } catch (reschErr) {
@@ -1442,12 +1447,9 @@ export async function syncServicesForRange(companyId, startDate, endDate) {
     for (const d of rescheduledSnap.docs) {
       const data = d.data();
       if (!data.originalDate) continue;
-      const origDate = data.originalDate?.toDate
-        ? data.originalDate.toDate()
-        : new Date(data.originalDate);
-      rescheduledOriginalKeys.add(
-        `${data.communityTaskId}_${data.assignedUserId}_${format(origDate, "yyyy-MM-dd")}`,
-      );
+      for (const key of getPreservedScheduleKeys(data)) {
+        rescheduledOriginalKeys.add(key);
+      }
     }
 
     const desiredKeys = new Set();
@@ -1481,8 +1483,13 @@ export async function syncServicesForRange(companyId, startDate, endDate) {
     let batchCount = 0;
 
     for (const svc of pendingServices) {
-      // Never delete a rescheduled service — it was intentionally moved
-      if (svc.isRescheduled) continue;
+      // Approved manual decisions take precedence over the base schedule.
+      if (
+        (svc.isRescheduled && svc.rescheduleValidated !== false) ||
+        (svc.isTransferred && svc.transferValidated !== false)
+      ) {
+        continue;
+      }
 
       const svcDate = svc.scheduledDate?.toDate
         ? svc.scheduledDate.toDate()
@@ -1508,20 +1515,17 @@ export async function syncServicesForRange(companyId, startDate, endDate) {
 
     const keptKeys = new Set();
     for (const svc of workedServices) {
-      const svcDate = svc.scheduledDate?.toDate
-        ? svc.scheduledDate.toDate()
-        : new Date(svc.scheduledDate);
-      keptKeys.add(
-        `${svc.communityTaskId}_${svc.assignedUserId}_${format(svcDate, "yyyy-MM-dd")}`,
-      );
+      for (const key of getPreservedScheduleKeys(svc)) keptKeys.add(key);
     }
     for (const svc of pendingServices) {
       const svcDate = svc.scheduledDate?.toDate
         ? svc.scheduledDate.toDate()
         : new Date(svc.scheduledDate);
       const key = `${svc.communityTaskId}_${svc.assignedUserId}_${format(svcDate, "yyyy-MM-dd")}`;
-      if (desiredKeys.has(key)) {
-        keptKeys.add(key);
+      if (desiredKeys.has(key) || svc.isTransferred || svc.isRescheduled) {
+        for (const preservedKey of getPreservedScheduleKeys(svc)) {
+          keptKeys.add(preservedKey);
+        }
       }
     }
 
