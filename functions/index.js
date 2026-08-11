@@ -355,7 +355,7 @@ function normalizeAccessCode(value) {
 }
 
 function getStripeClient() {
-  const key = stripeSecretKey.value();
+  const key = stripeSecretKey.value().trim();
   if (!key) {
     throw new HttpsError(
       "failed-precondition",
@@ -3856,7 +3856,7 @@ exports.stripeWebhook = onRequest(
       event = getStripeClient().webhooks.constructEvent(
         request.rawBody,
         request.headers["stripe-signature"],
-        stripeWebhookSecret.value(),
+        stripeWebhookSecret.value().trim(),
       );
     } catch (error) {
       logger.warn("Firma de webhook Stripe no válida", error.message);
