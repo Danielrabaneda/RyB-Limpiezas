@@ -129,9 +129,9 @@ export async function setVerifactuMode(companyId, enabled) {
   });
 }
 
-export async function configureAeatConnection(profile) {
+export async function configureAeatConnection(profile, verifactuEnabled) {
   const fn = httpsCallable(functions, "configureAeatConnection");
-  const result = await fn({ profile });
+  const result = await fn({ profile, verifactuEnabled });
   return result.data;
 }
 
@@ -139,6 +139,16 @@ export async function getAeatSubmissions(companyId) {
   const q = query(
     tenantCollection(db, companyId, "aeatSubmissions"),
     orderBy("createdAt", "desc"),
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((entry) => ({ id: entry.id, ...entry.data() }));
+}
+
+export async function getVerifactuEvents(companyId) {
+  const q = query(
+    tenantCollection(db, companyId, "verifactuEvents"),
+    orderBy("createdAt", "desc"),
+    limit(100),
   );
   const snap = await getDocs(q);
   return snap.docs.map((entry) => ({ id: entry.id, ...entry.data() }));

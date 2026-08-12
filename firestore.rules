@@ -375,6 +375,12 @@ service cloud.firestore {
         allow create, update, delete: if false;
       }
 
+      // Bitácora operativa VeriFactu: visible e inmutable desde cliente.
+      match /verifactuEvents/{id} {
+        allow read: if isTenant(companyId) && isAdminActive();
+        allow create, update, delete: if false;
+      }
+
       // products
       match /products/{id} {
         allow read: if isTenant(companyId) && isEmployeeActive();

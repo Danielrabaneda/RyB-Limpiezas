@@ -27,9 +27,11 @@ const {
 } = require("./lib/invoiceEmission");
 const {
   AEAT_JOB_STATUSES,
+  MAX_SUBMISSION_ATTEMPTS,
   buildAeatSubmissionDraftXml,
   buildSubmissionManifest,
   getInitialSubmissionStatus,
+  getNextRetryDate,
   normalizeAeatConnectionProfile,
 } = require("./lib/aeatSubmission");
 const {
@@ -315,11 +317,51 @@ function buildAeatSubmissionDocument({
       profile,
     }),
     attempts: 0,
+    maxAttempts: MAX_SUBMISSION_ATTEMPTS,
+    nextAttemptAt: createdAt,
     lastError: null,
     aeatResponse: null,
     createdBy,
     createdAt,
   };
+}
+
+function appendVerifactuEvent(transaction, companyId, event) {
+  const ref = db.collection(`companies/${companyId}/verifactuEvents`).doc();
+  transaction.create(ref, {
+    companyId,
+    type: String(event.type || "unknown").slice(0, 80),
+    actorId: event.actorId || "system",
+    invoiceId: event.invoiceId || null,
+    invoiceNumber: event.invoiceNumber || null,
+    fiscalRecordId: event.fiscalRecordId || null,
+    submissionId: event.submissionId || null,
+    channel: event.channel || null,
+    environment: "test",
+    productionEnabled: false,
+    details: event.details || {},
+    createdAt: event.createdAt || Timestamp.now(),
+  });
+  return ref.id;
+}
+
+async function recordVerifactuEvent(companyId, event) {
+  const ref = db.collection(`companies/${companyId}/verifactuEvents`).doc();
+  await ref.create({
+    companyId,
+    type: String(event.type || "unknown").slice(0, 80),
+    actorId: event.actorId || "system",
+    invoiceId: event.invoiceId || null,
+    invoiceNumber: event.invoiceNumber || null,
+    fiscalRecordId: event.fiscalRecordId || null,
+    submissionId: event.submissionId || null,
+    channel: event.channel || null,
+    environment: "test",
+    productionEnabled: false,
+    details: event.details || {},
+    createdAt: event.createdAt || Timestamp.now(),
+  });
+  return ref.id;
 }
 
 function normalizeCompanyId(value) {
@@ -1798,6 +1840,16 @@ exports.emitInvoices = onCall(
         if (verifactuEnabled) {
           settingsUpdate.lastInvoiceHash = previousHash;
           settingsUpdate.lastFiscalRecordId = previousFiscalRecordId;
+          appendVerifactuEvent(transaction, companyId, {
+            type: "invoice_records_emitted",
+            actorId: request.auth.uid,
+            details: {
+              count: emitted.length,
+              invoiceIds: emitted.map((item) => item.id),
+              lastFiscalRecordId: previousFiscalRecordId,
+            },
+            createdAt: Timestamp.fromDate(now),
+          });
         }
         transaction.set(settingsRef, settingsUpdate, { merge: true });
 
@@ -1832,6 +1884,7 @@ exports.configureAeatConnection = onCall(
   async (request) => {
     const companyId = await requireTenantAdmin(request);
     const profile = normalizeAeatConnectionProfile(request.data?.profile || {});
+    const verifactuEnabled = request.data?.verifactuEnabled === true;
     if (
       profile.channel === "delegated" &&
       (!profile.adviserName || !profile.adviserTaxId)
@@ -1857,11 +1910,24 @@ exports.configureAeatConnection = onCall(
     await settingsRef.set(
       {
         aeatConnection: profile,
+        verifactuEnabled,
+        verifactuMode: verifactuEnabled ? "test" : "disabled",
+        verifactuModeUpdatedAt: FieldValue.serverTimestamp(),
         aeatConnectionUpdatedAt: FieldValue.serverTimestamp(),
         aeatConnectionUpdatedBy: request.auth.uid,
       },
       { merge: true },
     );
+    await recordVerifactuEvent(companyId, {
+      type: "aeat_connection_configured",
+      actorId: request.auth.uid,
+      channel: profile.channel,
+      details: {
+        verifactuEnabled,
+        schemaValidationStatus: profile.schemaValidationStatus,
+        credentialsStored: false,
+      },
+    });
     return { profile };
   },
 );
@@ -1961,6 +2027,15 @@ exports.prepareAeatSubmissions = onCall(
           createdAt,
         });
         transaction.create(submissionRef, submissionDocument);
+        appendVerifactuEvent(transaction, companyId, {
+          type: "aeat_submission_prepared",
+          actorId: request.auth.uid,
+          invoiceId,
+          invoiceNumber: invoice.invoiceNumber,
+          fiscalRecordId,
+          submissionId: submissionRef.id,
+          channel: profile.channel,
+        });
         transaction.update(invoiceRef, {
           aeatSubmissionId: submissionRef.id,
           aeatStatus: "queued",
@@ -2075,6 +2150,12 @@ exports.recordAeatTestResult = onCall(
       transaction.update(submissionRef, {
         status,
         attempts: FieldValue.increment(1),
+        nextAttemptAt:
+          status === "retry_pending"
+            ? Timestamp.fromDate(
+                getNextRetryDate(Number(submission.attempts || 0) + 1),
+              )
+            : null,
         aeatResponse: sanitizedResponse,
         lastError:
           status === "rejected" || status === "retry_pending"
@@ -2094,6 +2175,17 @@ exports.recordAeatTestResult = onCall(
         aeatResponseCode: sanitizedResponse.code,
         aeatCsv: sanitizedResponse.csv,
         aeatProcessedAt: now,
+      });
+      appendVerifactuEvent(transaction, companyId, {
+        type: "aeat_test_result_recorded",
+        actorId: request.auth.uid,
+        invoiceId: submission.invoiceId,
+        invoiceNumber: submission.invoiceNumber,
+        fiscalRecordId: submission.fiscalRecordId,
+        submissionId,
+        channel: submission.channel,
+        details: { status, responseCode: sanitizedResponse.code },
+        createdAt: now,
       });
       return { submissionId, status };
     });
@@ -2206,6 +2298,15 @@ exports.cancelInvoiceFiscalRecord = onCall(
         createdAt: Timestamp.fromDate(generationDate),
       };
       transaction.create(cancellationRef, cancellationRecord);
+      appendVerifactuEvent(transaction, companyId, {
+        type: "invoice_record_cancelled",
+        actorId: request.auth.uid,
+        invoiceId,
+        invoiceNumber: invoice.invoiceNumber,
+        fiscalRecordId: cancellationRef.id,
+        details: { reason },
+        createdAt: Timestamp.fromDate(generationDate),
+      });
       const aeatProfile = normalizeAeatConnectionProfile(
         settings.aeatConnection || {},
       );
@@ -2379,6 +2480,15 @@ exports.subsanateInvoiceFiscalRecord = onCall(
         createdAt: Timestamp.fromDate(generationDate),
       };
       transaction.create(subsanationRef, subsanationRecord);
+      appendVerifactuEvent(transaction, companyId, {
+        type: "invoice_record_subsanated",
+        actorId: request.auth.uid,
+        invoiceId,
+        invoiceNumber: invoice.invoiceNumber,
+        fiscalRecordId: subsanationRef.id,
+        details: { reason },
+        createdAt: Timestamp.fromDate(generationDate),
+      });
       const aeatProfile = normalizeAeatConnectionProfile(
         settings.aeatConnection || {},
       );

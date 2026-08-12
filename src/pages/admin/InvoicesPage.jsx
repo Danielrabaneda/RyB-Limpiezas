@@ -36,6 +36,7 @@ import {
   calculateSepaCreditorId,
   validateIBAN,
 } from "../../services/sepaGenerator";
+import VerifactuPanel from "../../components/admin/VerifactuPanel";
 
 const parseLocaleFloat = (val) => {
   if (val === undefined || val === null || val === "") return 0;
@@ -3064,6 +3065,13 @@ export default function InvoicesPage() {
               </button>
             </div>
           </form>
+          <VerifactuPanel
+            companyId={companyId}
+            invoices={invoices}
+            billingSettings={billingSettings}
+            onSettingsChanged={loadInitialData}
+            onInvoicesChanged={loadInvoices}
+          />
         </div>
       ) : (
         /* Invoices Table View */

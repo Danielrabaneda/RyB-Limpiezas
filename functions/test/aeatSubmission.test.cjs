@@ -6,6 +6,8 @@ const {
   buildSubmissionManifest,
   getInitialSubmissionStatus,
   normalizeAeatConnectionProfile,
+  getRetryDelayMs,
+  getNextRetryDate,
 } = require("../lib/aeatSubmission");
 
 const fiscalRecord = {
@@ -98,4 +100,14 @@ test("el manifiesto enlaza la cola con la huella fiscal inmutable", () => {
   assert.equal(manifest.fiscalHash, "DEF");
   assert.equal(manifest.channel, "local_connector");
   assert.equal(manifest.productionEnabled, false);
+});
+
+test("los reintentos usan espera exponencial limitada", () => {
+  assert.equal(getRetryDelayMs(0), 60_000);
+  assert.equal(getRetryDelayMs(3), 480_000);
+  assert.equal(getRetryDelayMs(20), 24 * 60 * 60 * 1000);
+  assert.equal(
+    getNextRetryDate(1, new Date("2026-01-01T00:00:00.000Z")).toISOString(),
+    "2026-01-01T00:02:00.000Z",
+  );
 });

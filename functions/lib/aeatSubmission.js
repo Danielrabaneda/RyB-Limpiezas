@@ -13,6 +13,16 @@ const AEAT_JOB_STATUSES = new Set([
   "rejected",
   "retry_pending",
 ]);
+const MAX_SUBMISSION_ATTEMPTS = 8;
+
+function getRetryDelayMs(attempts = 0) {
+  const safeAttempts = Math.max(0, Math.min(30, Number(attempts) || 0));
+  return Math.min(24 * 60 * 60 * 1000, 60 * 1000 * 2 ** safeAttempts);
+}
+
+function getNextRetryDate(attempts = 0, now = new Date()) {
+  return new Date(now.getTime() + getRetryDelayMs(attempts));
+}
 
 function escapeXml(value) {
   return String(value ?? "")
@@ -148,6 +158,7 @@ function buildSubmissionManifest({
   fiscalRecord,
   profile,
 }) {
+  const fiscalHash = fiscalRecord.chain?.hash || "";
   return {
     format: "ryb-aeat-transport-package",
     version: 1,
@@ -157,7 +168,8 @@ function buildSubmissionManifest({
     invoiceNumber: fiscalRecord.invoiceNumber,
     recordType: fiscalRecord.recordType,
     issuerNif: fiscalRecord.issuerNif,
-    fiscalHash: fiscalRecord.chain?.hash || "",
+    fiscalHash,
+    idempotencyKey: `${companyId}:${fiscalRecordId}:${fiscalHash}`,
     channel: profile.channel,
     environment: profile.environment,
     productionEnabled: false,
@@ -168,9 +180,12 @@ function buildSubmissionManifest({
 module.exports = {
   AEAT_CHANNELS,
   AEAT_JOB_STATUSES,
+  MAX_SUBMISSION_ATTEMPTS,
   buildAeatSubmissionDraftXml,
   buildSubmissionManifest,
   escapeXml,
   getInitialSubmissionStatus,
+  getNextRetryDate,
+  getRetryDelayMs,
   normalizeAeatConnectionProfile,
 };
