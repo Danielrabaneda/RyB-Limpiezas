@@ -32,12 +32,17 @@ import RescheduleModal from "./RescheduleModal";
 import { query, where, getDocs } from "firebase/firestore";
 import { db } from "../config/firebase";
 import { tenantCollection } from "../utils/tenantFirestore";
+import {
+  uniqueByStableId,
+  uniqueOperators,
+} from "../utils/collectionDeduplication";
 import PrintableCalendar from "./PrintableCalendar";
 import ServiceItem from "./ServiceItem";
 import jsPDF from "jspdf";
 
 export default function PlanningCalendar({
   userId = null,
+  legacyUserId = null,
   isAdmin = false,
   operarios = [],
 }) {
@@ -73,7 +78,7 @@ export default function PlanningCalendar({
   useEffect(() => {
     if (!companyId) return;
     loadMonthData();
-  }, [currentMonth, userId, companyId]);
+  }, [currentMonth, userId, legacyUserId, companyId]);
 
   useEffect(() => {
     // Load communities and tasks for reference
@@ -110,16 +115,26 @@ export default function PlanningCalendar({
       await checkAndRolloverGarages(companyId);
       const start = startOfMonth(currentMonth);
       const end = endOfMonth(currentMonth);
-      const filters = userId ? { userId } : {};
+      const calendarUserIds = [userId, legacyUserId].filter(Boolean);
 
-      const [svcs, absSnap] = await Promise.all([
-        getScheduledServicesRange(companyId, start, end, filters),
+      const [serviceResults, absSnap] = await Promise.all([
+        calendarUserIds.length > 0
+          ? Promise.all(
+              calendarUserIds.map((calendarUserId) =>
+                getScheduledServicesRange(companyId, start, end, {
+                  userId: calendarUserId,
+                }),
+              ),
+            )
+          : getScheduledServicesRange(companyId, start, end).then((items) => [items]),
         getDocs(
           query(tenantCollection(db, companyId, "absences"), where("status", "==", "approved")),
         ),
       ]);
 
-      setMonthServices(svcs);
+      // A moved/transferred service may arrive through more than one refresh
+      // path. It is still one Firestore document and must render only once.
+      setMonthServices(uniqueByStableId(serviceResults.flat()));
       setAbsences(absSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
     } catch (err) {
       console.error(err);
@@ -571,8 +586,9 @@ export default function PlanningCalendar({
   };
 
   const selectedDayServices = getServicesForDay(selectedDate);
+  const getCommunity = (id) => communities.find((c) => c.id === id);
   const getCommunityName = (id) =>
-    communities.find((c) => c.id === id)?.name || "Comunidad...";
+    getCommunity(id)?.name || "Comunidad...";
 
   const renderCellGroupedContent = (daySvcs) => {
     if (!isAdmin || operarios.length === 0) {
@@ -660,8 +676,9 @@ export default function PlanningCalendar({
 
   // Group by operario (Admin view only)
   const groupedByOperario = {};
+  const distinctOperarios = uniqueOperators(operarios);
   if (isAdmin) {
-    operarios.forEach((op) => {
+    distinctOperarios.forEach((op) => {
       const operatorIds = getOperatorIds(op);
       groupedByOperario[op.uid] = {
         name: op.name,
@@ -1082,7 +1099,7 @@ export default function PlanningCalendar({
           <div className="flex-1 flex flex-col gap-4 px-6 pt-4">
             {isAdmin ? (
               /* ADMIN VIEW: Group by Operario */
-              operarios.map((op) => {
+              distinctOperarios.map((op) => {
                 const opSvcs = groupedByOperario[op.uid]?.services || [];
                 if (opSvcs.length === 0) return null;
 
@@ -1176,6 +1193,7 @@ export default function PlanningCalendar({
                         <ServiceItem
                           key={s.id}
                           service={s}
+                          community={getCommunity(s.communityId)}
                           communityName={getCommunityName(s.communityId)}
                           allTasks={allTasks}
                           onTransfer={() =>
@@ -1210,6 +1228,7 @@ export default function PlanningCalendar({
                     <ServiceItem
                       key={s.id}
                       service={s}
+                      community={getCommunity(s.communityId)}
                       communityName={getCommunityName(s.communityId)}
                       allTasks={allTasks}
                       onTransfer={() =>

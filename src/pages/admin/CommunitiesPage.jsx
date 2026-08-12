@@ -74,6 +74,7 @@ function CommunitiesContent() {
   const {
     communityTasks,
     setCommunityTasks,
+    taskSaving,
     showTaskModal,
     setShowTaskModal,
     editingTask,
@@ -422,6 +423,7 @@ function CommunitiesContent() {
         taskForm={taskForm}
         setTaskForm={setTaskForm}
         handleSaveTask={handleSaveTask}
+        savingTask={taskSaving}
         operarios={operarios}
         communityTasks={communityTasks}
         WEEKDAYS={WEEKDAYS}

@@ -1,6 +1,10 @@
 import React from "react";
 import { format } from "date-fns";
 import { getDistance } from "../../utils/geolocation";
+import {
+  canNavigateToCommunity,
+  openCommunityNavigation,
+} from "../../utils/navigation";
 
 export default function TodayServiceCard({
   svc,
@@ -210,6 +214,27 @@ export default function TodayServiceCard({
             style={{ display: "flex", flexDirection: "column", gap: "2px" }}
           >
             <span>{svc.community?.address || ""}</span>
+            {canNavigateToCommunity(svc.community) && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-xs"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  openCommunityNavigation(svc.community);
+                }}
+                style={{
+                  alignSelf: "flex-start",
+                  marginTop: "4px",
+                  color: "var(--color-primary)",
+                  border: "1px solid var(--color-primary)",
+                  fontSize: "11px",
+                  padding: "4px 8px",
+                }}
+                aria-label={`Cómo llegar a ${svc.community?.name || "la comunidad"}`}
+              >
+                🧭 Cómo llegar
+              </button>
+            )}
             {userLocation &&
               svc.community?.location &&
               svc.status !== "completed" &&
@@ -379,7 +404,7 @@ export default function TodayServiceCard({
           </button>
         )}
       </div>
-      {!canAccess && (
+      {!canAccess && !["completed", "missed"].includes(svc.status) && (
         <div className="text-xs font-bold text-danger mt-3">
           ⚠️ Jornada no iniciada
         </div>

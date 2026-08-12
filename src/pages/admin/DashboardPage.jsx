@@ -9,7 +9,6 @@ import { getCheckInsRange } from "../../services/checkInService";
 import {
   generateServicesForDays,
   generateServicesForRange,
-  cleanupDuplicateScheduledServices,
   checkAndRolloverGarages,
 } from "../../services/scheduleService";
 import { startOfDay, endOfDay, subDays, format } from "date-fns";
@@ -17,6 +16,8 @@ import { es } from "date-fns/locale";
 import PlanningCalendar from "../../components/PlanningCalendar";
 import TransferRequestsPanel from "../../components/admin/TransferRequestsPanel";
 import GPSSuggestionsPanel from "../../components/admin/GPSSuggestionsPanel";
+import MissingCoordinatesPanel from "../../components/admin/MissingCoordinatesPanel";
+import { getCommunityCoordinates } from "../../utils/navigation";
 import {
   collection,
   query,
@@ -46,6 +47,8 @@ export default function DashboardPage() {
     activeCheckIns: 0,
   });
   const [operarios, setOperarios] = useState([]);
+  const [communitiesWithoutCoordinates, setCommunitiesWithoutCoordinates] =
+    useState([]);
   const [loading, setLoading] = useState(true);
   const [pendingTransfers, setPendingTransfers] = useState(0);
   const [pendingGPS, setPendingGPS] = useState(0);
@@ -240,6 +243,11 @@ export default function DashboardPage() {
 
       setActiveOpsNames(names);
       setOperarios(ops);
+      setCommunitiesWithoutCoordinates(
+        communitiesList.filter(
+          (community) => !getCommunityCoordinates(community),
+        ),
+      );
     } catch (err) {
       console.error("Error loading dashboard:", err);
     } finally {
@@ -553,6 +561,16 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      <MissingCoordinatesPanel
+        companyId={companyId}
+        communities={communitiesWithoutCoordinates}
+        onCoordinatesSaved={(communityId) =>
+          setCommunitiesWithoutCoordinates((current) =>
+            current.filter((community) => community.id !== communityId),
+          )
+        }
+      />
+
       {/* Acciones Rápidas */}
       <h3 className="section-title mb-4">⚡ Acciones Rápidas</h3>
       <div className="grid grid-3 gap-3 mb-8">
@@ -567,7 +585,7 @@ export default function DashboardPage() {
           </span>
         </button>
         <button
-          onClick={() => navigate("/admin/reports")}
+          onClick={() => navigate("/admin/informes")}
           className="btn btn-ghost p-4 flex flex-col items-center gap-2 border border-slate-100 hover:border-primary hover:bg-white shadow-sm"
           style={{ height: "auto", background: "white" }}
         >
@@ -587,7 +605,7 @@ export default function DashboardPage() {
           </span>
         </button>
         <button
-          onClick={() => navigate("/admin/communities")}
+          onClick={() => navigate("/admin/comunidades")}
           className="btn btn-ghost p-4 flex flex-col items-center gap-2 border border-slate-100 hover:border-primary hover:bg-white shadow-sm"
           style={{ height: "auto", background: "white" }}
         >
@@ -607,30 +625,13 @@ export default function DashboardPage() {
           </span>
         </button>
         <button
-          onClick={async () => {
-            if (
-              !window.confirm(
-                "¿Eliminar servicios duplicados de la base de datos? Esta operación no se puede deshacer.",
-              )
-            )
-              return;
-            try {
-              const n = await cleanupDuplicateScheduledServices(companyId);
-              alert(`✅ Limpieza completada. ${n} duplicado(s) eliminado(s).`);
-              loadDashboard();
-            } catch (err) {
-              alert("❌ Error durante la limpieza: " + err.message);
-            }
-          }}
-          className="btn btn-ghost p-4 flex flex-col items-center gap-2 border border-slate-100 hover:border-red-200 hover:bg-red-50 shadow-sm"
+          onClick={() => navigate("/admin/servicios-pendientes")}
+          className="btn btn-ghost p-4 flex flex-col items-center gap-2 border border-slate-100 hover:border-primary hover:bg-white shadow-sm"
           style={{ height: "auto", background: "white" }}
         >
-          <span style={{ fontSize: "1.5rem" }}>🧹</span>
-          <span
-            className="text-xs font-bold uppercase tracking-wider"
-            style={{ color: "#dc2626" }}
-          >
-            Limpiar Dup.
+          <span style={{ fontSize: "1.5rem" }}>⏰</span>
+          <span className="text-xs font-bold uppercase tracking-wider">
+            Servicios pendientes
           </span>
         </button>
       </div>

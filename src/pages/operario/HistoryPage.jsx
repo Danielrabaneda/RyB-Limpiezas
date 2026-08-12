@@ -34,7 +34,7 @@ export default function HistoryPage() {
   const { companyId } = useTenant();
   const [currentWeek, setCurrentWeek] = useState(new Date());
   const [currentMonth, setCurrentMonth] = useState(new Date());
-  const [activeTab, setActiveTab] = useState("calendar"); // 'calendar', 'services', 'workdays', 'mileage'
+  const [activeTab, setActiveTab] = useState("services"); // 'calendar', 'services', 'workdays', 'mileage'
 
   const [services, setServices] = useState([]);
   const [workdays, setWorkdays] = useState([]);
@@ -65,6 +65,7 @@ export default function HistoryPage() {
         companyId,
         userProfile.uid,
         currentWeek,
+        userProfile.legacyUid ? [userProfile.legacyUid] : [],
       );
       const cache = {};
       const taskCache = {};
@@ -132,8 +133,15 @@ export default function HistoryPage() {
     try {
       const start = startOfWeek(currentWeek, { weekStartsOn: 1 });
       const end = endOfWeek(currentWeek, { weekStartsOn: 1 });
-      const data = await getWorkdaysForOperario(companyId, userProfile.uid, start, end);
-      setWorkdays(data);
+      const userIds = [userProfile.uid, userProfile.legacyUid].filter(Boolean);
+      const results = await Promise.all(
+        userIds.map((userId) =>
+          getWorkdaysForOperario(companyId, userId, start, end),
+        ),
+      );
+      const uniqueWorkdays = new Map();
+      results.flat().forEach((workday) => uniqueWorkdays.set(workday.id, workday));
+      setWorkdays(Array.from(uniqueWorkdays.values()));
     } catch (err) {
       console.error(err);
     } finally {
@@ -394,7 +402,10 @@ export default function HistoryPage() {
 
       {activeTab === "calendar" && (
         <div className="mb-6">
-          <PlanningCalendar userId={userProfile.uid} />
+          <PlanningCalendar
+            userId={userProfile.uid}
+            legacyUserId={userProfile.legacyUid || null}
+          />
         </div>
       )}
 

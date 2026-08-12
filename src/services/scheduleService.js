@@ -1,22 +1,36 @@
 import {
   collection,
   doc,
-  addDoc,
   updateDoc,
   getDocs,
   getDoc,
   deleteDoc,
   query,
   where,
+  limit,
   orderBy,
   serverTimestamp,
   Timestamp,
   writeBatch,
+  runTransaction,
   arrayUnion,
 } from "firebase/firestore";
 import { db } from "../config/firebase";
 import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
-import { getPreservedScheduleKeys } from "../utils/schedulePreservation";
+import {
+  findSupersededOriginalServiceIds,
+  getPreservedScheduleKeys,
+} from "../utils/schedulePreservation";
+import {
+  buildScheduleIdentityMigrationPlan,
+  getScheduleOccurrenceDocumentId,
+  getScheduleOccurrenceIdentity,
+} from "../utils/scheduleIdentity";
+import { uniqueByStableId } from "../utils/collectionDeduplication";
+import {
+  getGarageCadenceAnchorDate,
+  getGarageFrequencyMonths,
+} from "../utils/garageCadence";
 import {
   startOfDay,
   endOfDay,
@@ -42,28 +56,211 @@ import {
 } from "date-fns";
 
 // ==================== SCHEDULED SERVICES ====================
+function occurrenceFields(identity) {
+  return {
+    occurrenceId: identity.occurrenceId,
+    occurrenceOriginalAssignedUserId: identity.originalAssignedUserId,
+    occurrenceOriginalDate: Timestamp.fromDate(identity.originalDate),
+  };
+}
+
+export async function ensureScheduledServiceOccurrence(companyId, serviceId) {
+  return runTransaction(db, async (transaction) => {
+    const serviceRef = tenantDoc(
+      db,
+      companyId,
+      "scheduledServices",
+      serviceId,
+    );
+    const serviceSnap = await transaction.get(serviceRef);
+    if (!serviceSnap.exists()) throw new Error("Servicio no encontrado");
+
+    const serviceData = serviceSnap.data();
+    const identity = getScheduleOccurrenceIdentity(serviceData);
+    if (!identity) {
+      throw new Error("No se pudo identificar de forma única este servicio.");
+    }
+
+    transaction.update(serviceRef, occurrenceFields(identity));
+    return { duplicate: false, identity, serviceData };
+  });
+}
+
+export async function migrateScheduleOccurrenceIdentities(
+  companyId,
+  { force = false } = {},
+) {
+  const markerRef = tenantDoc(
+    db,
+    companyId,
+    "settings",
+    "scheduleIdentityV1",
+  );
+  const markerSnap = await getDoc(markerRef);
+  if (!force && markerSnap.exists() && markerSnap.data().completed === true) {
+    return { migratedCount: 0, deletedCount: 0, alreadyCompleted: true };
+  }
+
+  const servicesSnap = await getDocs(
+    tenantCollection(db, companyId, "scheduledServices"),
+  );
+  const services = servicesSnap.docs.map((document) => ({
+    id: document.id,
+    ref: document.ref,
+    ...document.data(),
+  }));
+  const plan = buildScheduleIdentityMigrationPlan(services);
+  let migratedCount = 0;
+  let hiddenDuplicateCount = 0;
+  let retainedHistoricalDuplicates = 0;
+  let batch = writeBatch(db);
+  let batchCount = 0;
+
+  const flushBatch = async () => {
+    if (batchCount === 0) return;
+    await batch.commit();
+    batch = writeBatch(db);
+    batchCount = 0;
+  };
+
+  for (const entry of plan) {
+    const { identity, canonical } = entry;
+    const canonicalRef = tenantDoc(
+      db,
+      companyId,
+      "scheduledServices",
+      canonical.id,
+    );
+    batch.update(canonicalRef, occurrenceFields(identity));
+    batchCount++;
+    migratedCount++;
+
+    for (const duplicateId of entry.pendingDuplicateIds) {
+      batch.update(
+        tenantDoc(db, companyId, "scheduledServices", duplicateId),
+        {
+          duplicateOf: canonical.id,
+          legacyOccurrenceId: identity.occurrenceId,
+          hiddenDuplicate: true,
+          updatedAt: serverTimestamp(),
+        },
+      );
+      batchCount++;
+      hiddenDuplicateCount++;
+      if (batchCount >= 450) await flushBatch();
+    }
+
+    for (const duplicateId of entry.retainedHistoricalDuplicateIds) {
+      batch.update(
+        tenantDoc(db, companyId, "scheduledServices", duplicateId),
+        {
+          duplicateOf: canonical.id,
+          legacyOccurrenceId: identity.occurrenceId,
+          updatedAt: serverTimestamp(),
+        },
+      );
+      batchCount++;
+      retainedHistoricalDuplicates++;
+      if (batchCount >= 450) await flushBatch();
+    }
+
+    if (batchCount >= 450) await flushBatch();
+  }
+
+  await flushBatch();
+  const markerBatch = writeBatch(db);
+  markerBatch.set(
+    markerRef,
+    {
+      completed: true,
+      version: 1,
+      migratedCount,
+      deletedCount: 0,
+      hiddenDuplicateCount,
+      retainedHistoricalDuplicates,
+      completedAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
+  await markerBatch.commit();
+
+  return {
+    migratedCount,
+    deletedCount: 0,
+    hiddenDuplicateCount,
+    retainedHistoricalDuplicates,
+    alreadyCompleted: false,
+  };
+}
+
 export async function createScheduledService(companyId, data) {
   let scheduledDate = data.scheduledDate;
   if (!(scheduledDate instanceof Timestamp)) {
     scheduledDate = Timestamp.fromDate(new Date(scheduledDate));
   }
-
-  const ref = await addDoc(tenantCollection(db, companyId, "scheduledServices"), {
-    communityId: data.communityId,
-    communityTaskId: data.communityTaskId,
-    taskName: data.taskName || "",
-    assignedUserId: data.assignedUserId,
+  const identity = getScheduleOccurrenceIdentity({
+    ...data,
     scheduledDate,
-    flexibleWeek: data.flexibleWeek || false,
-    isUrgent: data.isUrgent || false,
-    displayMode: data.displayMode === "embedded" ? "embedded" : "standalone",
-    hostTaskIds: Array.isArray(data.hostTaskIds) ? data.hostTaskIds : [],
-    carryUntilCompleted: data.carryUntilCompleted !== false,
-    finalFallback: data.finalFallback || "standalone",
-    status: "pending",
-    createdAt: serverTimestamp(),
   });
-  return { id: ref.id, ...data };
+  if (!identity) {
+    throw new Error("No se pudo crear la identidad única del servicio.");
+  }
+
+  const existingOccurrenceSnap = await getDocs(
+    query(
+      tenantCollection(db, companyId, "scheduledServices"),
+      where("occurrenceId", "==", identity.occurrenceId),
+      limit(1),
+    ),
+  );
+  if (!existingOccurrenceSnap.empty) {
+    const existing = existingOccurrenceSnap.docs[0];
+    return { id: existing.id, ...existing.data(), created: false };
+  }
+
+  return runTransaction(db, async (transaction) => {
+    const serviceId = getScheduleOccurrenceDocumentId(identity.occurrenceId);
+    const serviceRef = tenantDoc(
+      db,
+      companyId,
+      "scheduledServices",
+      serviceId,
+    );
+    const serviceSnap = await transaction.get(serviceRef);
+
+    if (serviceSnap.exists()) {
+      if (!serviceSnap.data().occurrenceId) {
+        transaction.update(serviceRef, occurrenceFields(identity));
+      }
+      return {
+        id: serviceId,
+        ...serviceSnap.data(),
+        created: false,
+      };
+    }
+
+    const serviceData = {
+      communityId: data.communityId,
+      communityTaskId: data.communityTaskId,
+      taskName: data.taskName || "",
+      assignedUserId: data.assignedUserId,
+      scheduledDate,
+      flexibleWeek: data.flexibleWeek || false,
+      isUrgent: data.isUrgent || false,
+      displayMode: data.displayMode === "embedded" ? "embedded" : "standalone",
+      hostTaskIds: Array.isArray(data.hostTaskIds) ? data.hostTaskIds : [],
+      carryUntilCompleted: data.carryUntilCompleted !== false,
+      finalFallback: data.finalFallback || "standalone",
+      status: "pending",
+      ...(data.isGarage !== undefined ? { isGarage: data.isGarage } : {}),
+      ...(data.isRollover !== undefined ? { isRollover: data.isRollover } : {}),
+      ...(data.rolledOverFrom ? { rolledOverFrom: data.rolledOverFrom } : {}),
+      ...occurrenceFields(identity),
+      createdAt: serverTimestamp(),
+    };
+    transaction.set(serviceRef, serviceData);
+    return { id: serviceId, ...data, occurrenceId: identity.occurrenceId, created: true };
+  });
 }
 
 export async function deleteFutureServicesForTask(companyId, taskId) {
@@ -262,11 +459,21 @@ export async function getScheduledServicesForDate(
             where("assignedUserId", "==", titularId),
           );
           const snapTitular = await getDocs(qTitular);
-          return snapTitular.docs.map((d) => ({
-            id: d.id,
-            ...d.data(),
-            isCompanion: true,
-          }));
+          return snapTitular.docs
+            .map((d) => ({
+              id: d.id,
+              ...d.data(),
+              isCompanion: true,
+            }))
+            .filter(
+              (service) =>
+                service.status !== "completed" ||
+                userIds.some(
+                  (candidateId) =>
+                    service.participantIds?.includes(candidateId) ||
+                    service.companionIds?.includes(candidateId),
+                ),
+            );
         });
         const queryResults = await Promise.all(titularQueries);
         for (const res of queryResults) {
@@ -339,21 +546,10 @@ export async function getScheduledServicesForDate(
         svc.status === "pending" &&
         isSameWeek(svcDateRaw, date, { weekStartsOn: 1 });
 
-      // Edge case: services completed/started today even if scheduled for another day
-      let wasModifiedToday = false;
-      if (svc.updatedAt) {
-        const updatedDate = svc.updatedAt.toDate
-          ? svc.updatedAt.toDate()
-          : new Date(svc.updatedAt);
-        wasModifiedToday = isSameDay(updatedDate, date);
-      }
-
-      const isModifiedToday = wasModifiedToday;
       const isInProgress = svc.status === "in_progress";
 
       if (isToday) return true;
       if (isInProgress) return true; // Always show active services
-      if (isModifiedToday && svc.status === "completed") return true;
       if (isFlexiblePending) return true;
 
       return false;
@@ -374,14 +570,19 @@ export async function getScheduledServicesForDate(
     console.log(
       `[Schedule] Found ${allFetched.length} raw docs, ${filtered.length} matched for ${format(date, "yyyy-MM-dd")}`,
     );
-    return filtered;
+    return uniqueByStableId(filtered);
   } catch (error) {
     console.error(`[Schedule] Error in getScheduledServicesForDate:`, error);
     return [];
   }
 }
 
-export async function getScheduledServicesForWeek(companyId, userId, date) {
+export async function getScheduledServicesForWeek(
+  companyId,
+  userId,
+  date,
+  alternateUserIds = [],
+) {
   const weekStart = startOfWeek(date, { weekStartsOn: 1 });
   const weekEnd = endOfWeek(date, { weekStartsOn: 1 });
   const startRange = startOfDay(weekStart).getTime();
@@ -389,30 +590,44 @@ export async function getScheduledServicesForWeek(companyId, userId, date) {
 
   try {
     // Fetch everything for these relevant users without date filters to avoid index errors
-    const qOwn = query(
-      tenantCollection(db, companyId, "scheduledServices"),
-      where("assignedUserId", "==", userId),
+    const relevantUserIds = [...new Set([userId, ...alternateUserIds])].filter(
+      Boolean,
     );
-    const qCompanion = query(
-      tenantCollection(db, companyId, "scheduledServices"),
-      where("companionIds", "array-contains", userId),
-    );
-    const qParticipant = query(
-      tenantCollection(db, companyId, "scheduledServices"),
-      where("participantIds", "array-contains", userId),
-    );
-    const qWorkdays = query(
-      tenantCollection(db, companyId, "workdays"),
-      where("currentCompanionId", "==", userId),
-      where("status", "==", "active"),
-    );
-
-    const fetches = await Promise.allSettled([
-      getDocs(qOwn),
-      getDocs(qCompanion),
-      getDocs(qParticipant),
-      getDocs(qWorkdays),
+    const queryDescriptors = relevantUserIds.flatMap((relevantUserId) => [
+      {
+        type: "own",
+        query: query(
+          tenantCollection(db, companyId, "scheduledServices"),
+          where("assignedUserId", "==", relevantUserId),
+        ),
+      },
+      {
+        type: "companion",
+        query: query(
+          tenantCollection(db, companyId, "scheduledServices"),
+          where("companionIds", "array-contains", relevantUserId),
+        ),
+      },
+      {
+        type: "participant",
+        query: query(
+          tenantCollection(db, companyId, "scheduledServices"),
+          where("participantIds", "array-contains", relevantUserId),
+        ),
+      },
+      {
+        type: "workday",
+        query: query(
+          tenantCollection(db, companyId, "workdays"),
+          where("currentCompanionId", "==", relevantUserId),
+          where("status", "==", "active"),
+        ),
+      },
     ]);
+
+    const fetches = await Promise.allSettled(
+      queryDescriptors.map(({ query: serviceQuery }) => getDocs(serviceQuery)),
+    );
     fetches.forEach((result, index) => {
       if (result.status === "rejected") {
         console.warn(
@@ -421,37 +636,47 @@ export async function getScheduledServicesForWeek(companyId, userId, date) {
         );
       }
     });
-    const snapOwn =
-      fetches[0].status === "fulfilled" ? fetches[0].value : { docs: [] };
-    const snapCompanion =
-      fetches[1].status === "fulfilled" ? fetches[1].value : { docs: [] };
-    const snapParticipant =
-      fetches[2].status === "fulfilled" ? fetches[2].value : { docs: [] };
-    const snapWorkdays =
-      fetches[3].status === "fulfilled"
-        ? fetches[3].value
-        : { docs: [], empty: true };
-
     const resultsMap = new Map();
-    const completedParticipantDocs = snapParticipant.docs.filter(
-      (docSnap) => docSnap.data().status === "completed",
-    );
-    const allFetched = [
-      ...snapOwn.docs,
-      ...snapCompanion.docs,
-      ...completedParticipantDocs,
-    ];
+    const allFetched = [];
+    const workdayDocs = [];
+    fetches.forEach((result, index) => {
+      if (result.status !== "fulfilled") return;
+      const { type } = queryDescriptors[index];
+      if (type === "workday") {
+        workdayDocs.push(...result.value.docs);
+      } else if (type === "participant") {
+        allFetched.push(
+          ...result.value.docs.filter(
+            (docSnap) => docSnap.data().status === "completed",
+          ),
+        );
+      } else {
+        allFetched.push(...result.value.docs);
+      }
+    });
 
     // Add titulars from active workdays
-    if (!snapWorkdays.empty) {
-      for (const wdDoc of snapWorkdays.docs) {
+    if (workdayDocs.length > 0) {
+      for (const wdDoc of workdayDocs) {
         const titularId = wdDoc.data().userId;
         const qTitular = query(
           tenantCollection(db, companyId, "scheduledServices"),
           where("assignedUserId", "==", titularId),
         );
         const snapTitular = await getDocs(qTitular);
-        allFetched.push(...snapTitular.docs);
+        allFetched.push(
+          ...snapTitular.docs.filter((serviceDoc) => {
+            const service = serviceDoc.data();
+            return (
+              service.status !== "completed" ||
+              relevantUserIds.some(
+                (candidateId) =>
+                  service.participantIds?.includes(candidateId) ||
+                  service.companionIds?.includes(candidateId),
+              )
+            );
+          }),
+        );
       }
     }
 
@@ -513,7 +738,7 @@ export async function getScheduledServicesForWeek(companyId, userId, date) {
       ).getTime();
       return timeA - timeB;
     });
-    return allServices;
+    return uniqueByStableId(allServices);
   } catch (error) {
     console.error("Error in getScheduledServicesForWeek:", error);
     // Fallback to basic query if complex fails or for simplicity
@@ -527,7 +752,9 @@ export async function getScheduledServicesForWeek(companyId, userId, date) {
       orderBy("scheduledDate"),
     );
     const snap = await getDocs(q);
-    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    return uniqueByStableId(
+      snap.docs.map((d) => ({ id: d.id, ...d.data() })),
+    );
   }
 }
 
@@ -612,7 +839,7 @@ export async function getScheduledServicesRange(
     results = results.filter((r) => r.status === filters.status);
   }
 
-  return results;
+  return uniqueByStableId(results);
 }
 
 export async function updateScheduledServiceStatus(companyId, id, status) {
@@ -656,16 +883,7 @@ export async function handleGarageCompletion(
     const taskData = taskSnap.data();
 
     // 2. Determine frequency in months
-    const freqMap = {
-      monthly: 1,
-      bimonthly: 2,
-      trimonthly: 3,
-      quadrimonthly: 4,
-      semiannual: 6,
-      eightmonthly: 8,
-      annual: 12,
-    };
-    const monthsToAdd = freqMap[taskData.frequencyType] || 2; // Default to 2 months if not found
+    const monthsToAdd = getGarageFrequencyMonths(taskData) || 2;
 
     const nextDate = addMonths(completionDate, monthsToAdd);
 
@@ -673,6 +891,7 @@ export async function handleGarageCompletion(
     const completionDateStr = format(completionDate, "yyyy-MM-dd");
     await updateDoc(taskRef, {
       startDate: completionDateStr,
+      garageCadenceAnchorDate: completionDateStr,
       updatedAt: serverTimestamp(),
     });
     console.log(
@@ -850,7 +1069,7 @@ export async function passTaskToNextService(
     }
 
     // Crear la nueva tarea para la próxima fecha
-    await addDoc(tenantCollection(db, companyId, "scheduledServices"), {
+    await createScheduledService(companyId, {
       communityId: scheduledService.communityId,
       communityTaskId: scheduledService.communityTaskId,
       taskName: scheduledService.taskName || "",
@@ -858,8 +1077,6 @@ export async function passTaskToNextService(
       scheduledDate: nextDate,
       flexibleWeek: scheduledService.flexibleWeek || false,
       isUrgent: scheduledService.isUrgent || false,
-      status: "pending",
-      createdAt: serverTimestamp(),
       isRollover: true, // Para identificar que fue pasada automáticamente
       rolledOverFrom: scheduledService.id,
     });
@@ -926,7 +1143,7 @@ export async function checkAndRolloverGarages(companyId) {
       const nextDateTimestamp = Timestamp.fromDate(nextDate);
 
       // Create new service for the rolled-over date
-      await addDoc(tenantCollection(db, companyId, "scheduledServices"), {
+      await createScheduledService(companyId, {
         communityId: svc.communityId,
         communityTaskId: svc.communityTaskId,
         taskName: svc.taskName || "",
@@ -935,8 +1152,6 @@ export async function checkAndRolloverGarages(companyId) {
         flexibleWeek: svc.flexibleWeek || false,
         isUrgent: svc.isUrgent || false,
         isGarage: svc.isGarage || true,
-        status: "pending",
-        createdAt: serverTimestamp(),
         isRollover: true,
         rolledOverFrom: svc.id,
       });
@@ -970,13 +1185,19 @@ export async function checkAndRolloverGarages(companyId) {
  */
 export async function cleanupDuplicateScheduledServices(companyId) {
   console.log("[Cleanup] Buscando servicios duplicados...");
+  const identityMigration = await migrateScheduleOccurrenceIdentities(companyId);
   const snap = await getDocs(tenantCollection(db, companyId, "scheduledServices"));
   const docs = snap.docs.map((d) => ({ id: d.id, ref: d.ref, ...d.data() }));
   console.log(`[Cleanup] Total documentos: ${docs.length}`);
 
+  // A monthly regeneration used to recreate the original occurrence after a
+  // service had been moved. Treat that pending original as a duplicate too.
+  const supersededIds = findSupersededOriginalServiceIds(docs);
+  const duplicateCandidates = docs.filter((svc) => !supersededIds.has(svc.id));
+
   // Group by unique key
   const groups = {};
-  for (const svc of docs) {
+  for (const svc of duplicateCandidates) {
     const dateObj = svc.scheduledDate?.toDate
       ? svc.scheduledDate.toDate()
       : new Date(svc.scheduledDate);
@@ -991,9 +1212,20 @@ export async function cleanupDuplicateScheduledServices(companyId) {
   );
   console.log(`[Cleanup] Grupos con duplicados: ${duplicateGroups.length}`);
 
-  let totalDeleted = 0;
+  let totalDeleted = identityMigration.deletedCount;
   let batch = writeBatch(db);
   let batchCount = 0;
+
+  for (const stale of docs.filter((svc) => supersededIds.has(svc.id))) {
+    batch.delete(stale.ref);
+    batchCount++;
+    totalDeleted++;
+    if (batchCount >= 490) {
+      await batch.commit();
+      batch = writeBatch(db);
+      batchCount = 0;
+    }
+  }
 
   for (const [key, svcs] of duplicateGroups) {
     // Sort: non-pending first (already worked), then by createdAt asc (oldest first)
@@ -1038,6 +1270,7 @@ export async function cleanupDuplicateScheduledServices(companyId) {
 
 export async function generateServicesForRange(companyId, startDate, endDate) {
   try {
+    await migrateScheduleOccurrenceIdentities(companyId);
     await checkAndRolloverGarages(companyId);
     const days = eachDayOfInterval({
       start: startOfDay(startDate),
@@ -1178,7 +1411,7 @@ export async function generateServicesForRange(companyId, startDate, endDate) {
           console.log(
             `[Schedule] Creando: ${task.taskName} (${dayStr}) -> ${target.userId}`,
           );
-          await createScheduledService(companyId, {
+          const creation = await createScheduledService(companyId, {
             communityId: task.communityId,
             communityTaskId: task.id,
             taskName: task.taskName,
@@ -1198,7 +1431,7 @@ export async function generateServicesForRange(companyId, startDate, endDate) {
           ) {
             openCarryKeys.add(carryKey);
           }
-          created++;
+          if (creation.created) created++;
         }
       }
     }
@@ -1221,6 +1454,7 @@ export async function generateServicesForTask(
   endDate = addDays(new Date(), 90),
 ) {
   try {
+    await migrateScheduleOccurrenceIdentities(companyId);
     const taskDoc = await getDoc(tenantDoc(db, companyId, "communityTasks", taskId));
     if (!taskDoc.exists() || !taskDoc.data().active) return 0;
 
@@ -1334,7 +1568,7 @@ export async function generateServicesForTask(
           continue;
         }
 
-        await createScheduledService(companyId, {
+        const creation = await createScheduledService(companyId, {
           communityId: task.communityId,
           communityTaskId: task.id,
           taskName: task.taskName,
@@ -1347,7 +1581,7 @@ export async function generateServicesForTask(
           carryUntilCompleted: task.carryUntilCompleted !== false,
           finalFallback: task.finalFallback || "standalone",
         });
-        createdCount++;
+        if (creation.created) createdCount++;
         existingKeys.add(key); // key already includes task.id
         if (
           task.displayMode === "embedded" &&
@@ -1384,6 +1618,7 @@ export async function generateServicesForDays(daysAhead = 14) {
  */
 export async function syncServicesForRange(companyId, startDate, endDate) {
   try {
+    await migrateScheduleOccurrenceIdentities(companyId);
     await checkAndRolloverGarages(companyId);
     const days = eachDayOfInterval({
       start: startOfDay(startDate),
@@ -1540,7 +1775,7 @@ export async function syncServicesForRange(companyId, startDate, endDate) {
       const key = `${ds.task.id}_${ds.targetUserId}_${dayStr}`;
 
       if (!keptKeys.has(key)) {
-        await createScheduledService(companyId, {
+        const creation = await createScheduledService(companyId, {
           communityId: ds.task.communityId,
           communityTaskId: ds.task.id,
           taskName: ds.task.taskName,
@@ -1550,7 +1785,7 @@ export async function syncServicesForRange(companyId, startDate, endDate) {
           isUrgent: ds.task.isUrgent || false,
         });
         keptKeys.add(key);
-        createdCount++;
+        if (creation.created) createdCount++;
       }
     }
 
@@ -1645,6 +1880,7 @@ export function shouldScheduleOnDay(task, date, options = {}) {
     "annual",
   ];
   const isPeriodic = periodicMultiMonth.includes(task.frequencyType);
+  const garageCadenceAnchor = getGarageCadenceAnchorDate(task);
 
   // Calculate anchor
   let anchorMonth = 0;
@@ -1660,6 +1896,11 @@ export function shouldScheduleOnDay(task, date, options = {}) {
   if (!isNaN(taskMonthOfYear)) {
     anchorMonth = taskMonthOfYear;
     anchorYear = taskStart ? getYear(taskStart) : getYear(taskCreationDate);
+  } else if (isPeriodic && garageCadenceAnchor) {
+    // Once a garage has been completed, its future cadence starts from the
+    // actual execution month instead of the former theoretical cycle.
+    anchorMonth = getMonth(garageCadenceAnchor);
+    anchorYear = getYear(garageCadenceAnchor);
   } else if (isPeriodic) {
     // Standard Cycle (SYC): Align with Ene, Mar, May...
     anchorMonth = 0;
@@ -1899,5 +2140,73 @@ export async function removeCompanionFromService(companyId, serviceId, companion
     companionIds,
     participantIds,
     companionLogs,
+  });
+}
+
+export async function editPendingScheduledService(
+  companyId,
+  id,
+  { taskName, assignedUserId, scheduledDate },
+) {
+  return runTransaction(db, async (transaction) => {
+    const serviceRef = tenantDoc(db, companyId, "scheduledServices", id);
+    const serviceSnap = await transaction.get(serviceRef);
+    if (!serviceSnap.exists()) throw new Error("Servicio no encontrado.");
+
+    const service = serviceSnap.data();
+    if (service.status && service.status !== "pending") {
+      throw new Error("Solo se pueden editar servicios pendientes.");
+    }
+
+    const identity = getScheduleOccurrenceIdentity(service);
+    if (!identity) {
+      throw new Error("No se pudo identificar de forma única este servicio.");
+    }
+
+    const cleanTaskName = String(taskName || service.taskName || "").trim();
+    if (!cleanTaskName) throw new Error("La tarea no puede quedar vacía.");
+
+    const nextDate = scheduledDate
+      ? startOfDay(
+          scheduledDate instanceof Date
+            ? scheduledDate
+            : new Date(`${scheduledDate}T12:00:00`),
+        )
+      : null;
+    if (nextDate && Number.isNaN(nextDate.getTime())) {
+      throw new Error("La fecha indicada no es válida.");
+    }
+
+    const currentDate = service.scheduledDate?.toDate
+      ? service.scheduledDate.toDate()
+      : new Date(service.scheduledDate);
+    const nextUserId = assignedUserId || service.assignedUserId;
+    const changes = {
+      ...occurrenceFields(identity),
+      taskName: cleanTaskName,
+      updatedAt: serverTimestamp(),
+    };
+
+    if (nextUserId) changes.assignedUserId = nextUserId;
+
+    if (nextUserId !== service.assignedUserId) {
+      changes.isTransferred = true;
+      changes.transferValidated = true;
+      changes.originalAssignedUserId =
+        service.occurrenceOriginalAssignedUserId ||
+        service.originalAssignedUserId ||
+        service.assignedUserId;
+    }
+
+    if (nextDate && !isSameDay(nextDate, currentDate)) {
+      changes.scheduledDate = Timestamp.fromDate(nextDate);
+      changes.originalDate = service.originalDate || service.scheduledDate;
+      changes.isRescheduled = true;
+      changes.rescheduleId = null;
+      changes.rescheduleValidated = true;
+    }
+
+    transaction.update(serviceRef, changes);
+    return { id, ...changes };
   });
 }

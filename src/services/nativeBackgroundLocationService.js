@@ -33,6 +33,16 @@ export async function openNativeLocationSettings() {
   await BackgroundLocation.openLocationSettings();
 }
 
+export async function openNativeAppSettings() {
+  if (!isNativeLocationAvailable()) return;
+  await BackgroundLocation.openAppSettings();
+}
+
+export async function openNativeBatterySettings() {
+  if (!isNativeLocationAvailable()) return;
+  await BackgroundLocation.openBatterySettings();
+}
+
 export async function getLatestNativeLocation() {
   if (!isNativeLocationAvailable()) return null;
   const { location = null } = await BackgroundLocation.getLatestLocation();

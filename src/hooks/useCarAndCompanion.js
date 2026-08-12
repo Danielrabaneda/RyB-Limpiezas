@@ -55,6 +55,8 @@ export function useCarAndCompanion(
   useEffect(() => {
     let watchId = null;
     let wakeLock = null;
+    let lastRecoveryAt = 0;
+    let restartWatch = () => {};
 
     const requestWakeLock = async () => {
       try {
@@ -83,6 +85,7 @@ export function useCarAndCompanion(
     const handleVisibilityChange = async () => {
       if (document.visibilityState === "visible" && activeWorkday?.carActive) {
         await requestWakeLock();
+        restartWatch(true);
       }
     };
 
@@ -97,7 +100,7 @@ export function useCarAndCompanion(
           accuracy: pos.coords.accuracy,
           speed: pos.coords.speed,
           provider: pos.nativeProvider || null,
-          timestamp: Date.now(),
+          timestamp: pos.timestamp || Date.now(),
         };
 
         try {
@@ -126,6 +129,9 @@ export function useCarAndCompanion(
               timeDiff >= 120000 && dist >= movementThreshold / 2;
             if (confirmedMovement || usefulHeartbeat) {
               existing.push(currentBreadcrumb);
+              if (existing.length > 1000) {
+                existing.splice(0, existing.length - 1000);
+              }
               localStorage.setItem(
                 "ryb_car_breadcrumbs",
                 JSON.stringify(existing),
@@ -147,21 +153,42 @@ export function useCarAndCompanion(
       };
 
       if ("geolocation" in navigator) {
-        watchId = navigator.geolocation.watchPosition(
-          processPosition,
-          (error) => console.warn("[GPS] watchPosition error:", error),
-          {
-            enableHighAccuracy: true,
-            timeout: 20000,
-            maximumAge: 30000,
-          },
-        );
+        restartWatch = (requestFresh = false) => {
+          if (document.visibilityState !== "visible") return;
+          const now = Date.now();
+          if (requestFresh && now - lastRecoveryAt < 1500) return;
+          if (requestFresh) lastRecoveryAt = now;
+          if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+          watchId = navigator.geolocation.watchPosition(
+            processPosition,
+            (error) => console.warn("[GPS] watchPosition error:", error),
+            {
+              enableHighAccuracy: true,
+              timeout: 20000,
+              maximumAge: 30000,
+            },
+          );
+          if (requestFresh) {
+            navigator.geolocation.getCurrentPosition(
+              processPosition,
+              (error) => console.warn("[GPS] recovery error:", error),
+              { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+            );
+          }
+        };
+        restartWatch();
+        window.addEventListener("focus", handleVisibilityChange);
+        window.addEventListener("pageshow", handleVisibilityChange);
+        window.addEventListener("online", handleVisibilityChange);
       }
     }
 
     return () => {
       releaseWakeLock();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleVisibilityChange);
+      window.removeEventListener("pageshow", handleVisibilityChange);
+      window.removeEventListener("online", handleVisibilityChange);
       if (watchId !== null && "geolocation" in navigator) {
         navigator.geolocation.clearWatch(watchId);
       }

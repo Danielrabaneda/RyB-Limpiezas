@@ -26,13 +26,13 @@ export function getPreservedScheduleKeys(service = {}) {
   const rescheduled =
     service.isRescheduled === true && service.rescheduleValidated !== false;
   const currentUser = service.assignedUserId;
-  const originalUser = transferred
-    ? service.originalAssignedUserId || currentUser
-    : currentUser;
+  const originalUser =
+    service.occurrenceOriginalAssignedUserId ||
+    (transferred ? service.originalAssignedUserId || currentUser : currentUser);
   const currentDate = service.scheduledDate;
-  const originalDate = rescheduled
-    ? service.originalDate || currentDate
-    : currentDate;
+  const originalDate =
+    service.occurrenceOriginalDate ||
+    (rescheduled ? service.originalDate || currentDate : currentDate);
 
   [
     serviceKey(service.communityTaskId, currentUser, currentDate),
@@ -44,4 +44,49 @@ export function getPreservedScheduleKeys(service = {}) {
   });
 
   return keys;
+}
+
+export function findSupersededOriginalServiceIds(services = []) {
+  const movedOriginals = new Map();
+
+  for (const service of services) {
+    const approvedMove =
+      service.isRescheduled === true &&
+      service.rescheduleValidated !== false &&
+      service.originalDate;
+    const approvedTransfer =
+      service.isTransferred === true && service.transferValidated !== false;
+    if (!approvedMove && !approvedTransfer) continue;
+
+    const originalUserId =
+      service.occurrenceOriginalAssignedUserId ||
+      (approvedTransfer
+        ? service.originalAssignedUserId || service.assignedUserId
+        : service.assignedUserId);
+    const originalDate =
+      service.occurrenceOriginalDate ||
+      (approvedMove ? service.originalDate : service.scheduledDate);
+    const originalKey = serviceKey(
+      service.communityTaskId,
+      originalUserId,
+      originalDate,
+    );
+    if (originalKey) movedOriginals.set(originalKey, service.id);
+  }
+
+  const supersededIds = new Set();
+  for (const service of services) {
+    if (service.status && service.status !== "pending") continue;
+    const currentKey = serviceKey(
+      service.communityTaskId,
+      service.assignedUserId,
+      service.scheduledDate,
+    );
+    const movedServiceId = currentKey ? movedOriginals.get(currentKey) : null;
+    if (movedServiceId && movedServiceId !== service.id) {
+      supersededIds.add(service.id);
+    }
+  }
+
+  return supersededIds;
 }

@@ -16,6 +16,7 @@ import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
 import { startOfDay, endOfDay, startOfWeek, endOfWeek } from "date-fns";
 import {
   deleteFutureServicesForTask,
+  ensureScheduledServiceOccurrence,
   generateServicesForTask,
 } from "./scheduleService";
 
@@ -26,11 +27,17 @@ export async function rescheduleService(
   companyId,
   { serviceId, newDate, requesterRole, userId }
 ) {
+  const occurrence = await ensureScheduledServiceOccurrence(
+    companyId,
+    serviceId,
+  );
+  if (occurrence.duplicate) {
+    throw new Error(
+      "Esta ficha es una copia duplicada. Actualiza la pantalla para usar la ficha original.",
+    );
+  }
   const serviceRef = tenantDoc(db, companyId, "scheduledServices", serviceId);
-  const serviceSnap = await getDoc(serviceRef);
-  if (!serviceSnap.exists()) throw new Error("Servicio no encontrado");
-
-  const serviceData = serviceSnap.data();
+  const serviceData = occurrence.serviceData;
   if (
     requesterRole !== "admin" &&
     serviceData.status !== "pending" &&
@@ -114,10 +121,16 @@ export async function transferService(
   }
 
   const serviceRef = tenantDoc(db, companyId, "scheduledServices", serviceId);
-  const serviceSnap = await getDoc(serviceRef);
-
-  if (!serviceSnap.exists()) throw new Error("Servicio no encontrado");
-  const serviceData = serviceSnap.data();
+  const occurrence = await ensureScheduledServiceOccurrence(
+    companyId,
+    serviceId,
+  );
+  if (occurrence.duplicate) {
+    throw new Error(
+      "Esta ficha es una copia duplicada. Actualiza la pantalla para usar la ficha original.",
+    );
+  }
+  const serviceData = occurrence.serviceData;
 
   // Operarios solo pueden traspasar si el servicio está pendiente
   if (
@@ -157,7 +170,10 @@ export async function transferService(
     batch.update(serviceRef, {
       assignedUserId: toUserId,
       isTransferred: true,
-      originalAssignedUserId: fromUserId,
+      originalAssignedUserId:
+        serviceData.occurrenceOriginalAssignedUserId ||
+        serviceData.originalAssignedUserId ||
+        fromUserId,
       transferId: transferRef.id,
       transferValidated: true,
       updatedAt: serverTimestamp(),
@@ -237,6 +253,17 @@ export async function transferDay(
     );
   }
 
+  const identities = await Promise.all(
+    pendingServices.map((service) =>
+      ensureScheduledServiceOccurrence(companyId, service.id),
+    ),
+  );
+  if (identities.some((identity) => identity.duplicate)) {
+    throw new Error(
+      "Hay una ficha duplicada en este día. Actualiza la pantalla antes de traspasarlo.",
+    );
+  }
+
   const transferRef = doc(tenantCollection(db, companyId, "transfers"));
   const transferData = {
     date: Timestamp.fromDate(date),
@@ -266,7 +293,10 @@ export async function transferDay(
         batch.update(d.ref, {
           assignedUserId: toUserId,
           isTransferred: true,
-          originalAssignedUserId: fromUserId,
+          originalAssignedUserId:
+            d.data().occurrenceOriginalAssignedUserId ||
+            d.data().originalAssignedUserId ||
+            fromUserId,
           transferId: transferRef.id,
           transferValidated: true,
           updatedAt: serverTimestamp(),
@@ -349,6 +379,17 @@ export async function transferWeek(
     );
   }
 
+  const identities = await Promise.all(
+    pendingServices.map((service) =>
+      ensureScheduledServiceOccurrence(companyId, service.id),
+    ),
+  );
+  if (identities.some((identity) => identity.duplicate)) {
+    throw new Error(
+      "Hay una ficha duplicada en esta semana. Actualiza la pantalla antes de traspasarla.",
+    );
+  }
+
   const transferRef = doc(tenantCollection(db, companyId, "transfers"));
   const transferData = {
     startDate: Timestamp.fromDate(weekStart),
@@ -379,7 +420,10 @@ export async function transferWeek(
         batch.update(d.ref, {
           assignedUserId: toUserId,
           isTransferred: true,
-          originalAssignedUserId: fromUserId,
+          originalAssignedUserId:
+            d.data().occurrenceOriginalAssignedUserId ||
+            d.data().originalAssignedUserId ||
+            fromUserId,
           transferId: transferRef.id,
           transferValidated: true,
           updatedAt: serverTimestamp(),
@@ -475,6 +519,14 @@ export async function approveTransfer(companyId, transferId) {
       where("rescheduleId", "==", transferId),
     );
     const servicesSnap = await getDocs(q);
+    const identities = await Promise.all(
+      servicesSnap.docs.map((service) =>
+        ensureScheduledServiceOccurrence(companyId, service.id),
+      ),
+    );
+    if (identities.some((identity) => identity.duplicate)) {
+      throw new Error("La solicitud contiene una ficha duplicada.");
+    }
     servicesSnap.forEach((d) => {
       const svcData = d.data();
       batch.update(d.ref, {
@@ -491,11 +543,23 @@ export async function approveTransfer(companyId, transferId) {
       where("transferId", "==", transferId),
     );
     const servicesSnap = await getDocs(q);
+    const identities = await Promise.all(
+      servicesSnap.docs.map((service) =>
+        ensureScheduledServiceOccurrence(companyId, service.id),
+      ),
+    );
+    if (identities.some((identity) => identity.duplicate)) {
+      throw new Error("La solicitud contiene una ficha duplicada.");
+    }
     servicesSnap.forEach((d) => {
+      const serviceData = d.data();
       batch.update(d.ref, {
         assignedUserId: data.toUserId,
         isTransferred: true,
-        originalAssignedUserId: data.fromUserId,
+        originalAssignedUserId:
+          serviceData.occurrenceOriginalAssignedUserId ||
+          serviceData.originalAssignedUserId ||
+          data.fromUserId,
         transferValidated: true,
       });
     });

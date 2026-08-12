@@ -18,6 +18,10 @@ import {
   getDate,
 } from "date-fns";
 import { es } from "date-fns/locale";
+import {
+  getGarageCadenceAnchorDate,
+  getGarageForecastTask,
+} from "../utils/garageCadence";
 
 export default function GarageYearlyView() {
   const { companyId } = useTenant();
@@ -81,10 +85,9 @@ export default function GarageYearlyView() {
   }
 
   function getMonthContent(task, monthDate) {
-    const monthServices = services.filter(
-      (s) =>
-        s.communityTaskId === task.id &&
-        isSameMonth(s.scheduledDate.toDate(), monthDate),
+    const taskServices = services.filter((s) => s.communityTaskId === task.id);
+    const monthServices = taskServices.filter((s) =>
+      isSameMonth(s.scheduledDate.toDate(), monthDate),
     );
 
     const completed = monthServices.filter((s) => s.status === "completed");
@@ -105,18 +108,28 @@ export default function GarageYearlyView() {
       );
     }
 
-    if (pending.length > 0) {
-      return <div className="forecast-dot-sm" title="Tarea programada"></div>;
-    }
-
     // Check for theoretical forecast (prevision) if no services exist in DB
     const mStart = startOfMonth(monthDate);
     const mEnd = endOfMonth(monthDate);
     const days = eachDayOfInterval({ start: mStart, end: mEnd });
+    const forecastTask = getGarageForecastTask(
+      task,
+      monthDate,
+      taskServices,
+    );
 
     const forecastDay = days.find((day) =>
-      shouldScheduleOnDay(task, day, { isForecasting: true }),
+      shouldScheduleOnDay(forecastTask, day, { isForecasting: true }),
     );
+
+    // Ignore a stale future service left on the old cadence. The next monthly
+    // refresh will now generate/move it using the rebased garage anchor.
+    if (
+      pending.length > 0 &&
+      (!getGarageCadenceAnchorDate(forecastTask) || forecastDay)
+    ) {
+      return <div className="forecast-dot-sm" title="Tarea programada"></div>;
+    }
 
     if (forecastDay) {
       return (

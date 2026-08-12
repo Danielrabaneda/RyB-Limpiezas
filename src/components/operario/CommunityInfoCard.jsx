@@ -1,4 +1,8 @@
 import React from "react";
+import {
+  canNavigateToCommunity,
+  openCommunityNavigation,
+} from "../../utils/navigation";
 
 export default function CommunityInfoCard({
   community,
@@ -89,6 +93,16 @@ export default function CommunityInfoCard({
           )}
         </div>
       </div>
+      {canNavigateToCommunity(community) && (
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm w-full mt-3"
+          onClick={() => openCommunityNavigation(community)}
+          aria-label={`Cómo llegar a ${community?.name || "la comunidad"}`}
+        >
+          🧭 Cómo llegar
+        </button>
+      )}
       {distanceInfo && (
         <div
           className={`mt-2 text-xs`}

@@ -6,8 +6,11 @@ import { useTenant } from "../../contexts/TenantContext";
 import {
   getNativeLocationStatus,
   isNativeLocationAvailable,
+  openNativeAppSettings,
+  openNativeBatterySettings,
   openNativeLocationSettings,
   requestNativeTrackingPermissions,
+  startNativeLocationTracking,
 } from "../../services/nativeBackgroundLocationService";
 
 export default function PermissionsCheck() {
@@ -18,6 +21,8 @@ export default function PermissionsCheck() {
   const [errorMessage, setErrorMessage] = useState("");
   const [infoMessage, setInfoMessage] = useState("");
   const [needsLocationSettings, setNeedsLocationSettings] = useState(false);
+  const [needsBackgroundSettings, setNeedsBackgroundSettings] = useState(false);
+  const [needsBatterySettings, setNeedsBatterySettings] = useState(false);
 
   // Detectar si es iOS en navegador (no instalado como PWA)
   const isIOS =
@@ -30,14 +35,30 @@ export default function PermissionsCheck() {
       navigator.standalone);
 
   useEffect(() => {
-    // Check session storage so we only show the popup if we haven't asked during this session
-    const permissionsChecked = sessionStorage.getItem("permissions_checked");
-    if (!permissionsChecked) {
-      setShowModal(true);
-    }
+    const checkNativeProtection = async () => {
+      const permissionsChecked = sessionStorage.getItem("permissions_checked");
+      if (!isNativeLocationAvailable()) {
+        if (!permissionsChecked) setShowModal(true);
+        return;
+      }
+      try {
+        const nativeStatus = await getNativeLocationStatus();
+        const needsProtection =
+          nativeStatus?.fineLocationPermissionGranted === false ||
+          nativeStatus?.locationServicesEnabled === false ||
+          nativeStatus?.backgroundPermissionGranted === false ||
+          nativeStatus?.batteryOptimizationDisabled === false ||
+          nativeStatus?.running === false;
+        if (!permissionsChecked || needsProtection) setShowModal(true);
+      } catch (error) {
+        console.warn("[Permissions] No se pudo comprobar la protección nativa:", error);
+        if (!permissionsChecked) setShowModal(true);
+      }
+    };
+    checkNativeProtection();
   }, []);
 
-  const requestPermissions = async () => {
+  const requestPermissions = async (openSettingsAutomatically = true) => {
     setStatus("loading");
     setErrorMessage("");
     setInfoMessage("");
@@ -50,11 +71,13 @@ export default function PermissionsCheck() {
         const nativeStatus = await getNativeLocationStatus();
         if (nativeStatus?.locationServicesEnabled === false) {
           setNeedsLocationSettings(true);
+          setNeedsBackgroundSettings(false);
+          setNeedsBatterySettings(false);
           setErrorMessage(
             "La ubicación del teléfono está desactivada. Actívala en los ajustes para continuar.",
           );
           setStatus("error");
-          await openNativeLocationSettings();
+          if (openSettingsAutomatically) await openNativeLocationSettings();
           return;
         }
 
@@ -67,6 +90,32 @@ export default function PermissionsCheck() {
           permissionError.code = 1;
           throw permissionError;
         }
+
+        const protectedStatus = await getNativeLocationStatus();
+        if (protectedStatus?.backgroundPermissionGranted === false) {
+          setNeedsBackgroundSettings(true);
+          setNeedsBatterySettings(false);
+          setErrorMessage(
+            "Para seguir funcionando con la pantalla apagada, abre Permisos > Ubicación y selecciona ‘Permitir siempre’.",
+          );
+          setStatus("error");
+          if (openSettingsAutomatically) await openNativeAppSettings();
+          return;
+        }
+
+        setNeedsBackgroundSettings(false);
+        if (protectedStatus?.batteryOptimizationDisabled === false) {
+          setNeedsBatterySettings(true);
+          setErrorMessage(
+            "Permite que LimpiaGest funcione sin restricciones de batería para evitar que Android detenga el GPS.",
+          );
+          setStatus("error");
+          if (openSettingsAutomatically) await openNativeBatterySettings();
+          return;
+        }
+
+        setNeedsBatterySettings(false);
+        await startNativeLocationTracking({ intervalMs: 30_000 });
       } else {
         await new Promise((resolve, reject) => {
           if (!navigator.geolocation) {
@@ -138,21 +187,35 @@ export default function PermissionsCheck() {
     await openNativeLocationSettings();
   };
 
+  const openBackgroundSettings = async () => {
+    setErrorMessage(
+      "En Permisos > Ubicación selecciona ‘Permitir siempre’ y vuelve a LimpiaGest.",
+    );
+    await openNativeAppSettings();
+  };
+
+  const openBatterySettings = async () => {
+    setErrorMessage(
+      "Acepta que LimpiaGest funcione sin restricciones de batería y vuelve a la aplicación.",
+    );
+    await openNativeBatterySettings();
+  };
+
   // Al regresar de los ajustes, continuar automáticamente si el usuario
   // ya ha activado la ubicación general del teléfono.
   useEffect(() => {
-    if (!showModal || !needsLocationSettings || !isNativeLocationAvailable()) {
+    if (
+      !showModal ||
+      (!needsLocationSettings && !needsBackgroundSettings && !needsBatterySettings) ||
+      !isNativeLocationAvailable()
+    ) {
       return undefined;
     }
 
     const retryWhenVisible = async () => {
       if (document.visibilityState !== "visible") return;
       try {
-        const nativeStatus = await getNativeLocationStatus();
-        if (nativeStatus?.locationServicesEnabled) {
-          setNeedsLocationSettings(false);
-          await requestPermissions();
-        }
+        await requestPermissions(false);
       } catch (error) {
         console.warn("[Permissions] No se pudo comprobar el ajuste GPS:", error);
       }
@@ -161,7 +224,12 @@ export default function PermissionsCheck() {
     document.addEventListener("visibilitychange", retryWhenVisible);
     return () =>
       document.removeEventListener("visibilitychange", retryWhenVisible);
-  }, [showModal, needsLocationSettings]);
+  }, [
+    showModal,
+    needsLocationSettings,
+    needsBackgroundSettings,
+    needsBatterySettings,
+  ]);
 
   const handleClose = () => {
     sessionStorage.setItem("permissions_checked", "true");
@@ -189,6 +257,14 @@ export default function PermissionsCheck() {
           </div>
         )}
 
+        {!isNativeLocationAvailable() && (
+          <div className="bg-amber-50 text-amber-900 text-xs p-3 rounded mb-4 text-left border border-amber-200">
+            🌐 <b>Seguimiento desde navegador:</b> funcionará mientras la web esté
+            activa y recuperará el GPS al volver. Con la pantalla apagada el móvil
+            puede suspenderlo; para seguimiento continuo usa la aplicación móvil.
+          </div>
+        )}
+
         {errorMessage && (
           <div className="bg-red-50 text-red-700 text-xs p-3 rounded mb-4 text-left border border-red-200">
             <strong>Atención:</strong> {errorMessage}
@@ -204,12 +280,22 @@ export default function PermissionsCheck() {
         <button
           className="btn btn-primary w-full py-3 text-base font-bold mb-3"
           onClick={
-            needsLocationSettings ? openLocationSettings : requestPermissions
+            needsLocationSettings
+              ? openLocationSettings
+              : needsBackgroundSettings
+                ? openBackgroundSettings
+                : needsBatterySettings
+                  ? openBatterySettings
+                  : () => requestPermissions()
           }
           disabled={status === "loading" || status === "granted"}
         >
           {needsLocationSettings
             ? "⚙️ Abrir ajustes de ubicación"
+            : needsBackgroundSettings
+              ? "⚙️ Permitir ubicación siempre"
+              : needsBatterySettings
+                ? "🔋 Quitar restricción de batería"
             : status === "loading"
             ? "⏳ Solicitando ubicación..."
             : status === "granted"

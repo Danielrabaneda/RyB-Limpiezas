@@ -1,10 +1,13 @@
 package com.ryblimpiezas.operarios;
 
 import android.Manifest;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.location.LocationManager;
+import android.net.Uri;
 import android.os.Build;
+import android.os.PowerManager;
 import android.provider.Settings;
 import androidx.core.content.ContextCompat;
 import androidx.core.location.LocationManagerCompat;
@@ -106,12 +109,22 @@ public class BackgroundLocationPlugin extends Plugin {
             (LocationManager) getContext().getSystemService(android.content.Context.LOCATION_SERVICE);
         JSObject result = new JSObject();
         result.put("running", BackgroundLocationService.isRunning(getContext()));
+        result.put("trackingEnabled", BackgroundLocationService.shouldRemainEnabled(getContext()));
+        result.put("fineLocationPermissionGranted",
+            ContextCompat.checkSelfPermission(getContext(), Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED);
         result.put("locationServicesEnabled",
             locationManager != null && LocationManagerCompat.isLocationEnabled(locationManager));
         result.put("backgroundPermissionGranted",
             Build.VERSION.SDK_INT < 29 ||
             ContextCompat.checkSelfPermission(getContext(), Manifest.permission.ACCESS_BACKGROUND_LOCATION)
                 == PackageManager.PERMISSION_GRANTED);
+        PowerManager powerManager =
+            (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
+        result.put("batteryOptimizationDisabled",
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.M
+                || (powerManager != null
+                    && powerManager.isIgnoringBatteryOptimizations(getContext().getPackageName())));
         result.put("pendingCount", BackgroundLocationService.getPendingCount(getContext()));
         call.resolve(result);
     }
@@ -121,6 +134,34 @@ public class BackgroundLocationPlugin extends Plugin {
         Intent intent = new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(intent);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void openAppSettings(PluginCall call) {
+        Intent intent = new Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:" + getContext().getPackageName())
+        );
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        getContext().startActivity(intent);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void openBatterySettings(PluginCall call) {
+        Intent intent = new Intent(
+            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+            Uri.parse("package:" + getContext().getPackageName())
+        );
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            getContext().startActivity(intent);
+        } catch (RuntimeException error) {
+            Intent fallback = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+            fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(fallback);
+        }
         call.resolve();
     }
 

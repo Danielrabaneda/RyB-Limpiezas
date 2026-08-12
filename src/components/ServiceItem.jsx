@@ -1,8 +1,13 @@
 import React from "react";
 import { format } from "date-fns";
+import {
+  canNavigateToCommunity,
+  openCommunityNavigation,
+} from "../utils/navigation";
 
 export default function ServiceItem({
   service,
+  community,
   communityName,
   isOp = false,
   onTransfer,
@@ -116,7 +121,7 @@ export default function ServiceItem({
         {getStatusBadge()}
       </div>
 
-      <div className="flex gap-2 mb-2">
+      <div className="flex flex-wrap gap-2 mb-2">
         {(!isCompleted || isAdmin) && (
           <button
             className="btn btn-ghost btn-xs flex-1"
@@ -147,6 +152,26 @@ export default function ServiceItem({
             }}
           >
             📅 Mover día
+          </button>
+        )}
+        {isAdmin && canNavigateToCommunity(community) && (
+          <button
+            type="button"
+            className="btn btn-ghost btn-xs flex-1"
+            onClick={(e) => {
+              e.stopPropagation();
+              openCommunityNavigation(community);
+            }}
+            style={{
+              color: "#047857",
+              border: "1px solid #10b981",
+              fontSize: "10px",
+              minWidth: "92px",
+            }}
+            aria-label={`Cómo llegar a ${community?.name || communityName || "la comunidad"}`}
+            title="Abrir la ubicación guardada"
+          >
+            🧭 Cómo llegar
           </button>
         )}
       </div>

@@ -8,6 +8,7 @@ export default function TaskFormModal({
   taskForm,
   setTaskForm,
   handleSaveTask,
+  savingTask = false,
   operarios,
   communityTasks,
   WEEKDAYS,
@@ -21,6 +22,7 @@ export default function TaskFormModal({
     <div
       className="modal-overlay"
       onClick={() => {
+        if (savingTask) return;
         setShowTaskModal(false);
         setEditingTask(null);
       }}
@@ -37,15 +39,25 @@ export default function TaskFormModal({
           <button
             className="btn btn-ghost btn-sm"
             onClick={() => {
+              if (savingTask) return;
               setShowTaskModal(false);
               setEditingTask(null);
             }}
+            disabled={savingTask}
+            aria-label={savingTask ? "Guardando tarea" : "Cerrar"}
           >
             ✕
           </button>
         </div>
-        <form onSubmit={handleSaveTask}>
-          <div className="modal-body">
+        <form onSubmit={handleSaveTask} aria-busy={savingTask}>
+          <div
+            className="modal-body"
+            style={{
+              pointerEvents: savingTask ? "none" : "auto",
+              opacity: savingTask ? 0.65 : 1,
+              transition: "opacity 0.2s ease",
+            }}
+          >
             <div className="form-group">
               <label className="form-label">Nombre de la tarea</label>
               <input
@@ -604,19 +616,63 @@ export default function TaskFormModal({
               </>
             )}
           </div>
+          {savingTask && (
+            <div
+              role="status"
+              aria-live="polite"
+              style={{
+                margin: "0 20px 12px",
+                padding: "12px 14px",
+                borderRadius: "12px",
+                background: "#eff6ff",
+                border: "1px solid #bfdbfe",
+                color: "#1d4ed8",
+                fontSize: "0.82rem",
+                fontWeight: 700,
+                textAlign: "center",
+              }}
+            >
+              ⏳ {editingTask
+                ? "Guardando cambios y actualizando servicios…"
+                : "Creando tarea y generando servicios…"}
+              <div
+                style={{
+                  marginTop: "3px",
+                  color: "#64748b",
+                  fontSize: "0.72rem",
+                  fontWeight: 500,
+                }}
+              >
+                Espera un momento; no es necesario volver a pulsar.
+              </div>
+            </div>
+          )}
           <div className="modal-footer">
             <button
               type="button"
               className="btn btn-secondary"
               onClick={() => {
+                if (savingTask) return;
                 setShowTaskModal(false);
                 setEditingTask(null);
               }}
+              disabled={savingTask}
             >
               Cancelar
             </button>
-            <button type="submit" className="btn btn-primary">
-              {editingTask ? "Guardar cambios" : "Crear tarea"}
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={savingTask}
+              aria-disabled={savingTask}
+            >
+              {savingTask
+                ? editingTask
+                  ? "⏳ Guardando…"
+                  : "⏳ Creando tarea…"
+                : editingTask
+                  ? "Guardar cambios"
+                  : "Crear tarea"}
             </button>
           </div>
         </form>

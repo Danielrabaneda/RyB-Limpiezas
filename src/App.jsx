@@ -87,6 +87,9 @@ const LandingPage = lazy(() => import("./pages/LandingPage"));
 const LoginPage = lazy(() => import("./pages/auth/LoginPage"));
 const RegisterPage = lazy(() => import("./pages/auth/RegisterPage"));
 const DashboardPage = lazy(() => import("./pages/admin/DashboardPage"));
+const PendingServicesPage = lazy(
+  () => import("./pages/admin/PendingServicesPage"),
+);
 const CommunitiesPage = lazy(() => import("./pages/admin/CommunitiesPage"));
 const OperariosPage = lazy(() => import("./pages/admin/OperariosPage"));
 const ReportsPage = lazy(() => import("./pages/admin/ReportsPage"));
@@ -130,6 +133,8 @@ const PoliticaCookiesPage = lazy(
 // Components
 import CookieBanner from "./components/CookieBanner";
 import PlatformLayout from "./components/layout/PlatformLayout";
+import { stopNativeLocationTracking } from "./services/nativeBackgroundLocationService";
+import WebTrackingStatus from "./components/operario/WebTrackingStatus";
 const GeolocationTracker = lazy(
   () => import("./components/operario/GeolocationTracker"),
 );
@@ -331,6 +336,7 @@ function AdminLayout() {
 
   const navItems = [
     { path: "/admin", icon: "📊", label: "Dashboard", exact: true },
+    { path: "/admin/servicios-pendientes", icon: "⏰", label: "Pendientes" },
     { path: "/admin/comunidades", icon: "🏢", label: "Comunidades" },
     { path: "/admin/operarios", icon: "👷", label: "Operarios" },
     { path: "/admin/control-horario", icon: "⏱️", label: "Control Horario" },
@@ -683,6 +689,9 @@ function OperarioLayout() {
   }, []);
 
   async function handleLogout() {
+    await stopNativeLocationTracking().catch((error) =>
+      console.warn("[Operario] No se pudo detener el GPS al cerrar sesión:", error),
+    );
     await logout();
     navigate("/login");
   }
@@ -773,6 +782,8 @@ function OperarioLayout() {
           )}
         </div>
       </header>
+
+      <WebTrackingStatus />
 
       <main className="operario-content">
         <Outlet />
@@ -892,6 +903,10 @@ export default function App() {
                   }
                 >
                   <Route index element={<DashboardPage />} />
+                  <Route
+                    path="servicios-pendientes"
+                    element={<PendingServicesPage />}
+                  />
                   <Route path="comunidades" element={<CommunitiesPage />} />
                   <Route path="operarios" element={<OperariosPage />} />
                   <Route

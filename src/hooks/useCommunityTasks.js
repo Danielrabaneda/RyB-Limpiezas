@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { format } from "date-fns";
 import {
   getCommunityTasks,
@@ -25,6 +25,8 @@ export default function useCommunityTasks({
 }) {
   const { companyId } = useTenant();
   const [communityTasks, setCommunityTasks] = useState([]);
+  const [taskSaving, setTaskSaving] = useState(false);
+  const taskSaveInFlightRef = useRef(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [editingTask, setEditingTask] = useState(null); // null = create mode, task = edit mode
   const [showAssignModal, setShowAssignModal] = useState(false);
@@ -144,7 +146,7 @@ export default function useCommunityTasks({
   const handleSaveTask = async (e) => {
     if (e) e.preventDefault();
     if (!selectedCommunity) return;
-    if (actionLoading) return;
+    if (taskSaveInFlightRef.current || actionLoading) return;
     const hostTaskIds = [
       ...new Set((taskForm.hostTaskIds || []).filter(Boolean)),
     ];
@@ -152,6 +154,8 @@ export default function useCommunityTasks({
       alert("Selecciona al menos una tarjeta principal para esta tarea.");
       return;
     }
+    taskSaveInFlightRef.current = true;
+    setTaskSaving(true);
     setActionLoading(true);
 
     const taskData = {
@@ -207,6 +211,8 @@ export default function useCommunityTasks({
     } catch (err) {
       alert("Error: " + err.message);
     } finally {
+      taskSaveInFlightRef.current = false;
+      setTaskSaving(false);
       setActionLoading(false);
     }
   };
@@ -320,6 +326,7 @@ export default function useCommunityTasks({
   return {
     communityTasks,
     setCommunityTasks,
+    taskSaving,
     showTaskModal,
     setShowTaskModal,
     editingTask,

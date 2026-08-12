@@ -15,8 +15,11 @@ export default function TodayServicesList({
   const activeServices = enrichedServices.filter((service) =>
     ["in_progress", "started"].includes(service.status),
   );
-  const completedServices = enrichedServices.filter((service) =>
-    ["completed", "missed"].includes(service.status),
+  const completedServices = enrichedServices.filter(
+    (service) => service.status === "completed",
+  );
+  const missedServices = enrichedServices.filter(
+    (service) => service.status === "missed",
   );
   const pendingServices = enrichedServices.filter(
     (service) =>
@@ -107,6 +110,15 @@ export default function TodayServicesList({
                 ✅ Finalizados hoy
               </div>
               {renderCards(completedServices)}
+            </section>
+          )}
+
+          {missedServices.length > 0 && (
+            <section>
+              <div className="text-sm font-bold text-red-500 mb-3">
+                ⚠️ No realizados hoy
+              </div>
+              {renderCards(missedServices)}
             </section>
           )}
         </div>

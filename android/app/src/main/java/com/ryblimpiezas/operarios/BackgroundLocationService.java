@@ -21,9 +21,11 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.provider.Settings;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.location.LocationManagerCompat;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -37,6 +39,8 @@ public class BackgroundLocationService extends Service implements LocationListen
     private static final int NOTIFICATION_ID = 4107;
     private static final String PREFS = "ryb_background_location";
     private static final String KEY_RUNNING = "running";
+    private static final String KEY_TRACKING_ENABLED = "tracking_enabled";
+    private static final String KEY_INTERVAL_MS = "interval_ms";
     private static final String KEY_LOCATIONS = "locations";
     private static final String KEY_LAST_LOCATION = "last_location";
     private static final String KEY_LAST_GPS_LOCATION = "last_gps_location";
@@ -58,10 +62,12 @@ public class BackgroundLocationService extends Service implements LocationListen
     private Handler geofenceHandler;
     private JSONObject lastGeofenceLocation;
     private PowerManager.WakeLock transitionWakeLock;
+    private Boolean lastGpsEnabled;
     private final Runnable geofenceTick = new Runnable() {
         @Override
         public void run() {
             long now = System.currentTimeMillis();
+            refreshGpsStateNotification();
             if (lastGeofenceLocation != null
                 && now - lastGeofenceLocation.optLong("timestamp", 0) <= MAX_LOCATION_AGE_MS) {
                 evaluateGeofences(lastGeofenceLocation, now);
@@ -95,9 +101,20 @@ public class BackgroundLocationService extends Service implements LocationListen
             return START_STICKY;
         }
 
-        intervalMs = intent != null ? intent.getLongExtra("intervalMs", 30_000) : 30_000;
+        if (intent == null && !shouldRemainEnabled(this)) {
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+
+        intervalMs = intent != null
+            ? intent.getLongExtra("intervalMs", getStoredIntervalMs(this))
+            : getStoredIntervalMs(this);
         startForeground(NOTIFICATION_ID, buildNotification());
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_RUNNING, true).apply();
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putBoolean(KEY_RUNNING, true)
+            .putBoolean(KEY_TRACKING_ENABLED, true)
+            .putLong(KEY_INTERVAL_MS, intervalMs)
+            .apply();
         appendDiagnostic(this, "tracking_started", null, "intervalMs=" + intervalMs);
         requestUpdates();
         return START_STICKY;
@@ -106,7 +123,10 @@ public class BackgroundLocationService extends Service implements LocationListen
     private void requestUpdates() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
             != PackageManager.PERMISSION_GRANTED) {
-            stopTracking();
+            serviceAlive = false;
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_RUNNING, false).apply();
+            stopForeground(STOP_FOREGROUND_REMOVE);
+            stopSelf();
             return;
         }
         try {
@@ -154,18 +174,44 @@ public class BackgroundLocationService extends Service implements LocationListen
             openIntent,
             PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT
         );
-        return new NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Jornada y ubicación activas")
-            .setContentText("RyB está detectando llegadas, salidas y kilómetros.")
+        boolean gpsEnabled = locationManager != null
+            && LocationManagerCompat.isLocationEnabled(locationManager);
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(gpsEnabled ? "LimpiaGest está activa" : "Activa el GPS para continuar")
+            .setContentText(gpsEnabled
+                ? "Detectando llegadas, salidas y kilómetros."
+                : "El servicio sigue activo, pero necesita la ubicación del teléfono.")
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW);
+        if (!gpsEnabled) {
+            Intent settingsIntent = new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS);
+            PendingIntent settingsPending = PendingIntent.getActivity(
+                this,
+                1,
+                settingsIntent,
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT
+            );
+            builder.addAction(0, "Activar GPS", settingsPending);
+        }
+        return builder;
     }
 
     private android.app.Notification buildNotification() {
         return notificationBuilder().build();
+    }
+
+    private void refreshGpsStateNotification() {
+        boolean gpsEnabled = locationManager != null
+            && LocationManagerCompat.isLocationEnabled(locationManager);
+        if (lastGpsEnabled != null && lastGpsEnabled == gpsEnabled) return;
+        lastGpsEnabled = gpsEnabled;
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager != null) manager.notify(NOTIFICATION_ID, buildNotification());
+        appendDiagnostic(this, gpsEnabled ? "gps_enabled" : "gps_disabled", null, null);
+        if (gpsEnabled) requestUpdates();
     }
 
     private void createNotificationChannel() {
@@ -430,7 +476,10 @@ public class BackgroundLocationService extends Service implements LocationListen
         serviceAlive = false;
         appendDiagnostic(this, "tracking_stopped", null, null);
         releaseTransitionWakeLock();
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_RUNNING, false).apply();
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putBoolean(KEY_RUNNING, false)
+            .putBoolean(KEY_TRACKING_ENABLED, false)
+            .apply();
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
     }
@@ -504,6 +553,16 @@ public class BackgroundLocationService extends Service implements LocationListen
 
     public static boolean isRunning(Context context) {
         return serviceAlive;
+    }
+
+    public static boolean shouldRemainEnabled(Context context) {
+        return context.getSharedPreferences(PREFS, MODE_PRIVATE)
+            .getBoolean(KEY_TRACKING_ENABLED, false);
+    }
+
+    public static long getStoredIntervalMs(Context context) {
+        return context.getSharedPreferences(PREFS, MODE_PRIVATE)
+            .getLong(KEY_INTERVAL_MS, 30_000);
     }
 
     public static int getPendingCount(Context context) {

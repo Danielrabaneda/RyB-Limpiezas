@@ -28,7 +28,6 @@ import {
   isNativeLocationAvailable,
   requestNativeTrackingPermissions,
   startNativeLocationTracking,
-  stopNativeLocationTracking,
 } from "../../services/nativeBackgroundLocationService";
 import {
   collection,
@@ -49,6 +48,7 @@ import {
 // ==================== CONSTANTES LOCALES ====================
 const COMMUNITY_CACHE_TTL = 10 * 60 * 1000; // Caché de comunidades: 10 min
 const LAST_POSITION_KEY = "tracker_last_position"; // Persistir última posición para recovery
+const LAST_WEB_FIX_KEY = "tracker_last_web_fix_at";
 
 // Helper para normalizar fecha/hora programada en Europe/Madrid
 function getScheduledDateTimeInMadrid(scheduledDate, timeStr) {
@@ -199,31 +199,25 @@ export default function GeolocationTracker() {
         setActiveWorkday(active || null);
         activeWorkdayRef.current = active || null;
         if (isNativeLocationAvailable()) {
-          if (active) {
-            requestNativeTrackingPermissions()
-              .then(() =>
-                startNativeLocationTracking({
-                  intervalMs: GPS_CONFIG.CHECK_INTERVAL_MS,
-                }),
-              )
-              .then((result) => {
-                if (result?.backgroundPermissionRequired) {
-                  console.warn(
-                    "[Tracker] Android requiere habilitar 'Permitir siempre' para máxima fiabilidad.",
-                  );
-                }
-                return nativeConfigRefreshRef.current?.(
-                  activeCheckInRef.current,
+          requestNativeTrackingPermissions()
+            .then(() =>
+              startNativeLocationTracking({
+                intervalMs: GPS_CONFIG.CHECK_INTERVAL_MS,
+              }),
+            )
+            .then((result) => {
+              if (result?.backgroundPermissionRequired) {
+                console.warn(
+                  "[Tracker] Android requiere habilitar 'Permitir siempre' para máxima fiabilidad.",
                 );
-              })
-              .catch((error) =>
-                console.error("[Tracker] No se pudo iniciar el GPS nativo:", error),
+              }
+              return nativeConfigRefreshRef.current?.(
+                activeCheckInRef.current,
               );
-          } else {
-            stopNativeLocationTracking().catch((error) =>
-              console.warn("[Tracker] No se pudo detener el GPS nativo:", error),
+            })
+            .catch((error) =>
+              console.error("[Tracker] No se pudo iniciar el GPS nativo:", error),
             );
-          }
         }
         console.log(
           "[Tracker] Estado de jornada actualizado:",
@@ -505,6 +499,17 @@ export default function GeolocationTracker() {
           ? new Date(position.timestamp)
           : new Date();
         lastWatchPositionTimeRef.current = Date.now();
+        if (!isNativeLocationAvailable()) {
+          localStorage.setItem(LAST_WEB_FIX_KEY, Date.now().toString());
+          window.dispatchEvent(
+            new CustomEvent("ryb-web-tracking-fix", {
+              detail: {
+                timestamp: Date.now(),
+                accuracy,
+              },
+            }),
+          );
+        }
 
         // 1D Kalman Filter to smooth out GPS noise
         let latitude = rawLat;
@@ -1387,38 +1392,14 @@ export default function GeolocationTracker() {
     };
 
     // ==================== MANEJAR VISIBILIDAD (RECOVERY) ====================
-    const handleVisibilityChange = async () => {
-      if (document.visibilityState === "visible") {
-        console.log("[Tracker] App volvió a primer plano — doble disparo GPS");
-        requestWakeLock();
-        servicesCachedAtRef.current = 0;
+    let freshRecoveryTimer = null;
+    let lastWebRecoveryAt = 0;
 
-        if (isNativeLocationAvailable()) {
-          await syncNativeAutomationEvents();
-          await drainNativeLocations(processPosition).catch((error) =>
-            console.warn("[Tracker] Error recuperando ubicaciones Android:", error),
-          );
-        } else {
-          navigator.geolocation.getCurrentPosition(processPosition, () => {}, {
-            enableHighAccuracy: true,
-            timeout: 5000,
-            maximumAge: 60000,
-          });
-        }
-
-        if (!isNativeLocationAvailable()) setTimeout(() => {
-          navigator.geolocation.getCurrentPosition(
-            processPosition,
-            (err) => console.warn("[Tracker] GPS fresh recovery error:", err),
-            { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
-          );
-        }, 1000);
+    const startWebWatch = () => {
+      if (isNativeLocationAvailable() || !navigator.geolocation) return;
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
       }
-    };
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-
-    // ==================== INICIAR TRACKING GPS ====================
-    if (!isNativeLocationAvailable()) {
       watchIdRef.current = navigator.geolocation.watchPosition(
         processPosition,
         (err) => console.error("Error GPS watchPosition:", err),
@@ -1428,7 +1409,58 @@ export default function GeolocationTracker() {
           timeout: 27000,
         },
       );
-    }
+    };
+
+    const recoverTracking = async () => {
+      if (document.visibilityState !== "visible") return;
+      requestWakeLock();
+      servicesCachedAtRef.current = 0;
+
+      if (isNativeLocationAvailable()) {
+        await syncNativeAutomationEvents();
+        await drainNativeLocations(processPosition).catch((error) =>
+          console.warn("[Tracker] Error recuperando ubicaciones Android:", error),
+        );
+        return;
+      }
+
+      // Chrome/Safari pueden invalidar silenciosamente un watchPosition al
+      // suspender la página. Al regresar se crea una escucha nueva y se piden
+      // primero una posición rápida y después otra fresca de alta precisión.
+      const now = Date.now();
+      if (now - lastWebRecoveryAt < 1500) return;
+      lastWebRecoveryAt = now;
+      console.log("[Tracker] Web volvió a primer plano — reactivando GPS");
+      startWebWatch();
+      navigator.geolocation.getCurrentPosition(processPosition, () => {}, {
+        enableHighAccuracy: true,
+        timeout: 5000,
+        maximumAge: 60000,
+      });
+      if (freshRecoveryTimer) window.clearTimeout(freshRecoveryTimer);
+      freshRecoveryTimer = window.setTimeout(() => {
+        navigator.geolocation.getCurrentPosition(
+          processPosition,
+          (err) => console.warn("[Tracker] GPS fresh recovery error:", err),
+          { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+        );
+      }, 1000);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") recoverTracking();
+    };
+    const handlePageShow = () => recoverTracking();
+    const handleFocus = () => recoverTracking();
+    const handleOnline = () => recoverTracking();
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pageshow", handlePageShow);
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("online", handleOnline);
+
+    // ==================== INICIAR TRACKING GPS ====================
+    startWebWatch();
 
     const fallbackInterval = setInterval(async () => {
       if (isNativeLocationAvailable()) {
@@ -1452,8 +1484,12 @@ export default function GeolocationTracker() {
     return () => {
       if (watchIdRef.current)
         navigator.geolocation.clearWatch(watchIdRef.current);
+      if (freshRecoveryTimer) window.clearTimeout(freshRecoveryTimer);
       clearInterval(fallbackInterval);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pageshow", handlePageShow);
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("online", handleOnline);
       releaseWakeLock();
       unsubscribeWorkday();
       unsubscribeCheckIn();
