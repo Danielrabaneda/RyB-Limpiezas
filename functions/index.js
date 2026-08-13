@@ -57,6 +57,7 @@ const { getAuth } = require("firebase-admin/auth");
 const { defineSecret } = require("firebase-functions/params");
 const nodemailer = require("nodemailer");
 const Stripe = require("stripe");
+const { createHash } = require("node:crypto");
 
 // Inicializar Firebase Admin
 initializeApp();
@@ -270,6 +271,37 @@ async function requireTenantAdmin(request) {
     );
   }
   return companyId;
+}
+
+async function requireActiveTenantEmployee(request) {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+  }
+
+  const companyId = String(request.auth.token.companyId || "").trim();
+  if (!companyId) {
+    throw new HttpsError(
+      "permission-denied",
+      "El usuario no tiene una empresa asociada.",
+    );
+  }
+
+  await assertTenantEnabled(companyId);
+  const userSnap = await db.collection("users").doc(request.auth.uid).get();
+  const user = userSnap.data();
+  if (
+    !userSnap.exists ||
+    user.active !== true ||
+    user.companyId !== companyId ||
+    !["admin", "operario"].includes(user.role)
+  ) {
+    throw new HttpsError(
+      "permission-denied",
+      "La cuenta está inactiva o ya no pertenece a esta empresa.",
+    );
+  }
+
+  return { companyId, user };
 }
 
 function buildAeatSubmissionDocument({
@@ -3490,6 +3522,154 @@ exports.completeTenantRegistration = onCall(
   },
 );
 
+async function callerCanManageServiceCompanion({
+  companyId,
+  serviceData,
+  callerUid,
+  companionId,
+  callerRole,
+  operation,
+}) {
+  if (callerRole === "admin" || serviceData.assignedUserId === callerUid) {
+    return true;
+  }
+
+  if (operation === "remove" && companionId === callerUid) {
+    return true;
+  }
+
+  if (operation !== "add" || companionId !== callerUid) {
+    return false;
+  }
+
+  if (
+    (serviceData.companionIds || []).includes(callerUid) ||
+    (serviceData.participantIds || []).includes(callerUid)
+  ) {
+    return true;
+  }
+
+  const activeWorkdays = await db
+    .collection(`companies/${companyId}/workdays`)
+    .where("userId", "==", serviceData.assignedUserId)
+    .where("status", "==", "active")
+    .limit(5)
+    .get();
+  return activeWorkdays.docs.some(
+    (workday) => workday.data().currentCompanionId === callerUid,
+  );
+}
+
+exports.addServiceCompanion = onCall(
+  { region: "europe-west1", memory: "256MiB", timeoutSeconds: 60 },
+  async (request) => {
+    const { companyId, user } = await requireActiveTenantEmployee(request);
+    const serviceId = String(request.data?.serviceId || "").trim();
+    const companionId = String(request.data?.companionId || "").trim();
+    if (
+      !/^[a-zA-Z0-9_-]{1,128}$/.test(serviceId) ||
+      !/^[a-zA-Z0-9_-]{1,128}$/.test(companionId)
+    ) {
+      throw new HttpsError("invalid-argument", "Servicio o acompañante no válido.");
+    }
+
+    const [serviceSnap, companionSnap] = await Promise.all([
+      db.collection(`companies/${companyId}/scheduledServices`).doc(serviceId).get(),
+      db.collection("users").doc(companionId).get(),
+    ]);
+    if (!serviceSnap.exists) {
+      throw new HttpsError("not-found", "Servicio no encontrado.");
+    }
+    const companion = companionSnap.data();
+    if (
+      !companionSnap.exists ||
+      companion.companyId !== companyId ||
+      companion.active !== true ||
+      !["admin", "operario"].includes(companion.role)
+    ) {
+      throw new HttpsError("invalid-argument", "El acompañante no está activo en esta empresa.");
+    }
+
+    const serviceData = serviceSnap.data();
+    const authorized = await callerCanManageServiceCompanion({
+      companyId,
+      serviceData,
+      callerUid: request.auth.uid,
+      companionId,
+      callerRole: user.role,
+      operation: "add",
+    });
+    if (!authorized) {
+      throw new HttpsError("permission-denied", "No puedes modificar los acompañantes de este servicio.");
+    }
+
+    const companionIds = [...new Set([...(serviceData.companionIds || []), companionId])];
+    const participantIds = [...new Set([...(serviceData.participantIds || []), companionId])];
+    const companionLogs = [...(serviceData.companionLogs || [])];
+    if (!companionLogs.some((log) => log.userId === companionId && !log.leftAt)) {
+      companionLogs.push({ userId: companionId, joinedAt: new Date().toISOString() });
+    }
+    await serviceSnap.ref.update({
+      companionIds,
+      participantIds,
+      companionLogs,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    return { success: true };
+  },
+);
+
+exports.removeServiceCompanion = onCall(
+  { region: "europe-west1", memory: "256MiB", timeoutSeconds: 60 },
+  async (request) => {
+    const { companyId, user } = await requireActiveTenantEmployee(request);
+    const serviceId = String(request.data?.serviceId || "").trim();
+    const companionId = String(request.data?.companionId || "").trim();
+    if (
+      !/^[a-zA-Z0-9_-]{1,128}$/.test(serviceId) ||
+      !/^[a-zA-Z0-9_-]{1,128}$/.test(companionId)
+    ) {
+      throw new HttpsError("invalid-argument", "Servicio o acompañante no válido.");
+    }
+
+    const serviceRef = db.collection(`companies/${companyId}/scheduledServices`).doc(serviceId);
+    const serviceSnap = await serviceRef.get();
+    if (!serviceSnap.exists) {
+      throw new HttpsError("not-found", "Servicio no encontrado.");
+    }
+    const serviceData = serviceSnap.data();
+    const authorized = await callerCanManageServiceCompanion({
+      companyId,
+      serviceData,
+      callerUid: request.auth.uid,
+      companionId,
+      callerRole: user.role,
+      operation: "remove",
+    });
+    if (!authorized) {
+      throw new HttpsError("permission-denied", "No puedes modificar los acompañantes de este servicio.");
+    }
+
+    const companionIds = (serviceData.companionIds || []).filter((id) => id !== companionId);
+    const participantIds = [...(serviceData.participantIds || [])];
+    if (serviceData.status === "completed" && !participantIds.includes(companionId)) {
+      participantIds.push(companionId);
+    }
+    const companionLogs = (serviceData.companionLogs || []).map((log) =>
+      log.userId === companionId && !log.leftAt
+        ? { ...log, leftAt: new Date().toISOString() }
+        : log,
+    );
+    await serviceRef.update({
+      companionIds,
+      participantIds,
+      companionLogs,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    return { success: true };
+  },
+);
+
 exports.onTenantAccessCodeWritten = onDocumentWritten(
   "companies/{companyId}/accessCodes/{code}",
   async (event) => {
@@ -3583,6 +3763,106 @@ exports.createTenantCommunity = onCall(
     cleanData.createdBy = caller.uid;
     const ref = await db.collection(`companies/${companyId}/communities`).add(cleanData);
     return { id: ref.id };
+  },
+);
+
+const COMPANY_REQUEST_WINDOW_MS = 15 * 60 * 1000;
+const COMPANY_REQUEST_MAX_PER_WINDOW = 3;
+
+function normalizeCompanyRequestText(value, maximumLength) {
+  return String(value || "")
+    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maximumLength);
+}
+
+exports.submitCompanyRequest = onCall(
+  {
+    region: "europe-west1",
+    memory: "256MiB",
+    timeoutSeconds: 30,
+    maxInstances: 10,
+  },
+  async (request) => {
+    if (request.auth) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Las solicitudes públicas deben enviarse sin una sesión iniciada.",
+      );
+    }
+
+    const companyName = normalizeCompanyRequestText(request.data?.companyName, 199);
+    const contactName = normalizeCompanyRequestText(request.data?.contactName, 199);
+    const email = normalizeCompanyRequestText(request.data?.email, 199).toLowerCase();
+    const phone = normalizeCompanyRequestText(request.data?.phone, 49);
+    const operariosCount = normalizeCompanyRequestText(request.data?.operariosCount, 30);
+    const plan = normalizeCompanyRequestText(request.data?.plan, 30);
+    const message = normalizeCompanyRequestText(request.data?.message, 1500);
+    const website = normalizeCompanyRequestText(request.data?.website, 200);
+
+    // Campo invisible para bots. Los navegadores legítimos siempre lo envían vacío.
+    if (website) {
+      return { accepted: true };
+    }
+    if (!companyName || !contactName || !email || !phone) {
+      throw new HttpsError("invalid-argument", "Completa los campos obligatorios.");
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new HttpsError("invalid-argument", "El correo electrónico no es válido.");
+    }
+    if (!/^[+0-9() .-]{6,49}$/.test(phone)) {
+      throw new HttpsError("invalid-argument", "El teléfono no es válido.");
+    }
+    if (plan && !["autonomo", "starter", "professional", "business", "enterprise"].includes(plan)) {
+      throw new HttpsError("invalid-argument", "El plan seleccionado no es válido.");
+    }
+
+    const rawAddress =
+      request.rawRequest?.headers?.["x-forwarded-for"] ||
+      request.rawRequest?.ip ||
+      "unknown";
+    const address = String(rawAddress).split(",")[0].trim();
+    const rateLimitKey = createHash("sha256")
+      .update(address)
+      .digest("hex");
+    const rateLimitRef = db.collection("companyRequestRateLimits").doc(rateLimitKey);
+    const requestRef = db.collection("companyRequests").doc();
+    const now = Timestamp.now();
+
+    await db.runTransaction(async (transaction) => {
+      const rateLimitSnap = await transaction.get(rateLimitRef);
+      const rateLimit = rateLimitSnap.exists ? rateLimitSnap.data() : null;
+      const windowStartedAt = rateLimit?.windowStartedAt?.toMillis?.() || 0;
+      const sameWindow = now.toMillis() - windowStartedAt < COMPANY_REQUEST_WINDOW_MS;
+      const count = sameWindow ? Number(rateLimit?.count || 0) : 0;
+      if (count >= COMPANY_REQUEST_MAX_PER_WINDOW) {
+        throw new HttpsError(
+          "resource-exhausted",
+          "Has enviado varias solicitudes. Espera unos minutos antes de intentarlo de nuevo.",
+        );
+      }
+
+      transaction.set(rateLimitRef, {
+        count: count + 1,
+        windowStartedAt: sameWindow ? rateLimit.windowStartedAt : now,
+        expiresAt: Timestamp.fromMillis(now.toMillis() + COMPANY_REQUEST_WINDOW_MS * 2),
+      });
+      transaction.create(requestRef, {
+        companyName,
+        contactName,
+        email,
+        phone,
+        operariosCount,
+        plan,
+        message,
+        status: "pending",
+        source: "landing",
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    });
+
+    return { accepted: true };
   },
 );
 
@@ -4067,22 +4347,8 @@ exports.secureCheckIn = onCall(
     timeoutSeconds: 60,
   },
   async (request) => {
+    const { companyId } = await requireActiveTenantEmployee(request);
     const { auth } = request;
-    if (!auth) {
-      throw new HttpsError(
-        "unauthenticated",
-        "El usuario debe estar autenticado.",
-      );
-    }
-
-    const companyId = auth.token.companyId;
-    if (!companyId) {
-      throw new HttpsError(
-        "permission-denied",
-        "El usuario debe pertenecer a una organización (companyId faltante).",
-      );
-    }
-    await assertTenantEnabled(companyId);
 
     const {
       userId,
@@ -4491,22 +4757,8 @@ exports.secureCheckOut = onCall(
     timeoutSeconds: 60,
   },
   async (request) => {
+    const { companyId } = await requireActiveTenantEmployee(request);
     const { auth } = request;
-    if (!auth) {
-      throw new HttpsError(
-        "unauthenticated",
-        "El usuario debe estar autenticado.",
-      );
-    }
-
-    const companyId = auth.token.companyId;
-    if (!companyId) {
-      throw new HttpsError(
-        "permission-denied",
-        "El usuario debe pertenecer a una organización (companyId faltante).",
-      );
-    }
-    await assertTenantEnabled(companyId);
 
     const {
       checkInId,
@@ -4771,26 +5023,12 @@ exports.secureCheckOut = onCall(
 exports.secureDeleteCheckIn = onCall(
   { region: "europe-west1", memory: "256MiB", timeoutSeconds: 60 },
   async (request) => {
+    const { companyId } = await requireActiveTenantEmployee(request);
     const { auth } = request;
-    if (!auth) {
-      throw new HttpsError(
-        "unauthenticated",
-        "El usuario debe estar autenticado.",
-      );
-    }
     const { checkInId } = request.data || {};
     if (!checkInId || typeof checkInId !== "string") {
       throw new HttpsError("invalid-argument", "checkInId es obligatorio.");
     }
-    const companyId = auth.token.companyId;
-    if (!companyId) {
-      throw new HttpsError(
-        "permission-denied",
-        "El usuario debe pertenecer a una organización (companyId faltante).",
-      );
-    }
-    await assertTenantEnabled(companyId);
-
     await db.runTransaction(async (transaction) => {
       const checkInRef = db.collection(`companies/${companyId}/checkIns`).doc(checkInId);
       const checkInSnap = await transaction.get(checkInRef);

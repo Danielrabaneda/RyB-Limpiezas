@@ -35,6 +35,137 @@ service cloud.firestore {
       return isAdmin() && isActiveUser();
     }
 
+    function userBelongsToTenant(userId, companyId) {
+      let user = get(/databases/$(database)/documents/users/$(userId)).data;
+      return exists(/databases/$(database)/documents/users/$(userId))
+        && user.companyId == companyId
+        && user.active == true;
+    }
+
+    function canTransferDirectly(companyId) {
+      let user = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && user.companyId == companyId
+        && user.active == true
+        && user.allowDirectTransfers == true;
+    }
+
+    function isScheduledParticipant(data) {
+      return data.assignedUserId == request.auth.uid
+        || ('companionIds' in data && request.auth.uid in data.companionIds)
+        || ('participantIds' in data && request.auth.uid in data.participantIds);
+    }
+
+    function isPendingService(data) {
+      return !('status' in data) || data.status == 'pending';
+    }
+
+    function validParticipantStatusUpdate() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return changed.hasOnly(['status', 'updatedAt'])
+        && request.resource.data.status in ['pending', 'in_progress', 'completed', 'missed']
+        && (
+          request.resource.data.status == resource.data.status
+          || (resource.data.status == 'pending'
+            && request.resource.data.status in ['in_progress', 'completed', 'missed'])
+          || (resource.data.status == 'in_progress'
+            && request.resource.data.status in ['completed', 'missed'])
+        );
+    }
+
+    function validEmployeeTransferCreate(companyId) {
+      let data = request.resource.data;
+      let approvedByPolicy = data.status == 'pending'
+        || (data.status == 'approved' && canTransferDirectly(companyId));
+      return data.keys().hasAll(['type', 'status', 'createdAt'])
+        && data.type in ['date_change', 'single', 'day', 'week']
+        && data.status in ['pending', 'approved']
+        && approvedByPolicy
+        && (
+          (
+            data.type == 'date_change'
+            && data.keys().hasAll(['serviceId', 'userId', 'newDate', 'oldDate'])
+            && data.userId == request.auth.uid
+          )
+          ||
+          (
+            data.type in ['single', 'day', 'week']
+            && data.keys().hasAll(['fromUserId', 'toUserId'])
+            && data.fromUserId == request.auth.uid
+            && data.toUserId is string
+            && userBelongsToTenant(data.toUserId, companyId)
+          )
+        );
+    }
+
+    function validPendingScheduleTransfer(companyId) {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      let transferId = request.resource.data.transferId;
+      return isPendingService(resource.data)
+        && resource.data.assignedUserId == request.auth.uid
+        && changed.hasOnly(['transferId', 'transferValidated', 'updatedAt'])
+        && request.resource.data.assignedUserId == resource.data.assignedUserId
+        && request.resource.data.transferValidated == false
+        && transferId is string
+        && existsAfter(/databases/$(database)/documents/companies/$(companyId)/transfers/$(transferId))
+        && getAfter(/databases/$(database)/documents/companies/$(companyId)/transfers/$(transferId)).data.fromUserId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/companies/$(companyId)/transfers/$(transferId)).data.status == 'pending';
+    }
+
+    function validDirectScheduleTransfer(companyId) {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      let transferId = request.resource.data.transferId;
+      return canTransferDirectly(companyId)
+        && isPendingService(resource.data)
+        && resource.data.assignedUserId == request.auth.uid
+        && changed.hasOnly([
+          'assignedUserId',
+          'isTransferred',
+          'originalAssignedUserId',
+          'transferId',
+          'transferValidated',
+          'updatedAt'
+        ])
+        && request.resource.data.transferValidated == true
+        && transferId is string
+        && existsAfter(/databases/$(database)/documents/companies/$(companyId)/transfers/$(transferId))
+        && getAfter(/databases/$(database)/documents/companies/$(companyId)/transfers/$(transferId)).data.fromUserId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/companies/$(companyId)/transfers/$(transferId)).data.toUserId == request.resource.data.assignedUserId
+        && getAfter(/databases/$(database)/documents/companies/$(companyId)/transfers/$(transferId)).data.status == 'approved'
+        && userBelongsToTenant(request.resource.data.assignedUserId, companyId);
+    }
+
+    function validPendingReschedule(companyId) {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      let rescheduleId = request.resource.data.rescheduleId;
+      return isPendingService(resource.data)
+        && resource.data.assignedUserId == request.auth.uid
+        && changed.hasOnly(['rescheduleId', 'rescheduleValidated', 'updatedAt'])
+        && request.resource.data.rescheduleValidated == false
+        && rescheduleId is string
+        && existsAfter(/databases/$(database)/documents/companies/$(companyId)/transfers/$(rescheduleId))
+        && getAfter(/databases/$(database)/documents/companies/$(companyId)/transfers/$(rescheduleId)).data.type == 'date_change'
+        && getAfter(/databases/$(database)/documents/companies/$(companyId)/transfers/$(rescheduleId)).data.userId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/companies/$(companyId)/transfers/$(rescheduleId)).data.status == 'pending';
+    }
+
+    function validDirectReschedule(companyId) {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return canTransferDirectly(companyId)
+        && isPendingService(resource.data)
+        && resource.data.assignedUserId == request.auth.uid
+        && changed.hasOnly([
+          'scheduledDate',
+          'originalDate',
+          'isRescheduled',
+          'rescheduleId',
+          'rescheduleValidated',
+          'updatedAt'
+        ])
+        && request.resource.data.assignedUserId == resource.data.assignedUserId
+        && request.resource.data.rescheduleValidated == true;
+    }
+
     function hasTenant() {
       return isAuthenticated() && request.auth.token.companyId != null;
     }
@@ -86,13 +217,9 @@ service cloud.firestore {
     // COMPANY REQUESTS (Landing Page leads)
     // -------------------------------------------------------------------------
     match /companyRequests/{requestId} {
-      allow create: if request.resource.data.keys().hasAll(['companyName', 'contactName', 'email', 'phone']) 
-                    && request.resource.data.keys().size() <= 10
-                    && request.resource.data.companyName is string && request.resource.data.companyName.size() < 200
-                    && request.resource.data.contactName is string && request.resource.data.contactName.size() < 200
-                    && request.resource.data.email is string && request.resource.data.email.size() < 200
-                    && request.resource.data.phone is string && request.resource.data.phone.size() < 50;
-      allow read, update, delete: if false; 
+      // Las solicitudes públicas pasan por submitCompanyRequest para aplicar
+      // validación y límites de frecuencia en servidor.
+      allow read, create, update, delete: if false;
     }
 
     // -------------------------------------------------------------------------
@@ -181,7 +308,31 @@ service cloud.firestore {
 
       // scheduledServices
       match /scheduledServices/{id} {
-        allow read, update: if isTenant(companyId) && isEmployeeActive();
+        allow read: if isTenant(companyId) && isEmployeeActive();
+        allow update: if isTenant(companyId) && (
+          isAdminActive()
+          || (
+            isEmployeeActive()
+            && (
+              (
+                isScheduledParticipant(resource.data)
+                && (
+                  validParticipantStatusUpdate()
+                  || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['generalNotes', 'generalPhotoUrls', 'updatedAt'])
+                  || request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                    'occurrenceId',
+                    'occurrenceOriginalAssignedUserId',
+                    'occurrenceOriginalDate'
+                  ])
+                )
+              )
+              || validPendingScheduleTransfer(companyId)
+              || validDirectScheduleTransfer(companyId)
+              || validPendingReschedule(companyId)
+              || validDirectReschedule(companyId)
+            )
+          )
+        );
         allow create, delete: if isTenant(companyId) && isAdminActive();
       }
 
@@ -195,8 +346,61 @@ service cloud.firestore {
       // workdays
       match /workdays/{id} {
         allow read: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && (isOwner(resource.data.userId) || resource.data.currentCompanionId == request.auth.uid)));
-        allow create: if isTenant(companyId) && isEmployeeActive() && isOwner(request.resource.data.userId);
-        allow update: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId)));
+        allow create: if isTenant(companyId)
+          && isEmployeeActive()
+          && isOwner(request.resource.data.userId)
+          && request.resource.data.status == 'active'
+          && request.resource.data.startTime == request.time
+          && request.resource.data.endTime == null
+          && request.resource.data.totalMinutes == 0
+          && request.resource.data.currentCompanionId == null;
+        allow update: if isTenant(companyId) && (
+          isAdminActive()
+          || (
+            isEmployeeActive()
+            && isOwner(resource.data.userId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'endTime',
+              'totalMinutes',
+              'status',
+              'currentCompanionId',
+              'carActive',
+              'carActiveSince',
+              'carSessions',
+              'retroactiveClosed',
+              'originalEndTime',
+              'autoClosed',
+              'closedReason',
+              'originalSuggestedTime',
+              'updatedAt'
+            ])
+            && request.resource.data.userId == resource.data.userId
+            && request.resource.data.date == resource.data.date
+            && request.resource.data.startTime == resource.data.startTime
+            && request.resource.data.status in ['active', 'completed']
+            && request.resource.data.totalMinutes is number
+            && request.resource.data.totalMinutes >= 0
+            && request.resource.data.totalMinutes <= 1440
+            && (
+              request.resource.data.endTime == null
+              || (
+                request.resource.data.endTime is timestamp
+                && request.resource.data.endTime >= resource.data.startTime
+                && request.resource.data.endTime <= request.time
+              )
+            )
+            && (
+              request.resource.data.currentCompanionId == null
+              || userBelongsToTenant(request.resource.data.currentCompanionId, companyId)
+            )
+          )
+          || (
+            isEmployeeActive()
+            && resource.data.currentCompanionId == request.auth.uid
+            && request.resource.data.currentCompanionId == null
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['currentCompanionId'])
+          )
+        );
         allow delete: if isTenant(companyId) && isAdminActive();
       }
 
@@ -230,16 +434,53 @@ service cloud.firestore {
       // dailyMileage
       match /dailyMileage/{id} {
         allow read: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId)));
-        allow create: if isTenant(companyId) && isEmployeeActive() && isOwner(request.resource.data.userId);
-        allow update: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId)));
+        allow create: if isTenant(companyId)
+          && isEmployeeActive()
+          && isOwner(request.resource.data.userId)
+          && request.resource.data.totalKm is number
+          && request.resource.data.totalKm >= 0
+          && request.resource.data.totalKm <= 2000
+          && request.resource.data.type in ['auto', 'manual'];
+        allow update: if isTenant(companyId) && (
+          isAdminActive()
+          || (
+            isEmployeeActive()
+            && isOwner(resource.data.userId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'userName',
+              'totalKm',
+              'totalTramos',
+              'tramosSospechosos',
+              'tramos',
+              'calculadoEn',
+              'version',
+              'type'
+            ])
+            && request.resource.data.userId == resource.data.userId
+            && request.resource.data.date == resource.data.date
+            && request.resource.data.totalKm is number
+            && request.resource.data.totalKm >= 0
+            && request.resource.data.totalKm <= 2000
+            && request.resource.data.type in ['auto', 'manual']
+          )
+        );
         allow delete: if isTenant(companyId) && isAdminActive();
       }
 
       // materialRequests
       match /materialRequests/{id} {
         allow read: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId)));
-        allow create: if isTenant(companyId) && isEmployeeActive() && isOwner(request.resource.data.userId);
-        allow update: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId)));
+        allow create: if isTenant(companyId)
+          && isEmployeeActive()
+          && isOwner(request.resource.data.userId)
+          && request.resource.data.keys().hasAll(['userId', 'productId', 'productName', 'quantity', 'status', 'createdAt'])
+          && request.resource.data.status == 'pending'
+          && request.resource.data.quantity is number
+          && request.resource.data.quantity > 0
+          && request.resource.data.quantity <= 10000
+          && request.resource.data.productId is string
+          && exists(/databases/$(database)/documents/companies/$(companyId)/products/$(request.resource.data.productId));
+        allow update: if isTenant(companyId) && isAdminActive();
         allow delete: if isTenant(companyId) && isAdminActive();
       }
 
@@ -252,19 +493,10 @@ service cloud.firestore {
                       resource.data.userId == request.auth.uid
                     )));
         
-        allow create: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && 
-                      (
-                        request.resource.data.fromUserId == request.auth.uid || 
-                        request.resource.data.toUserId == request.auth.uid || 
-                        request.resource.data.userId == request.auth.uid
-                      )));
+        allow create: if isTenant(companyId)
+          && (isAdminActive() || (isEmployeeActive() && validEmployeeTransferCreate(companyId)));
         
-        allow update: if isTenant(companyId) && (isAdminActive() || 
-                    (isEmployeeActive() && (
-                      resource.data.fromUserId == request.auth.uid || 
-                      resource.data.toUserId == request.auth.uid || 
-                      resource.data.userId == request.auth.uid
-                    )));
+        allow update: if isTenant(companyId) && isAdminActive();
         
         allow delete: if isTenant(companyId) && isAdminActive();
       }
@@ -273,8 +505,17 @@ service cloud.firestore {
       match /systemNotifications/{id} {
         allow read: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId)));
         allow create: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && isOwner(request.resource.data.userId)));
-        allow update: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId)));
-        allow delete: if isTenant(companyId) && isAdminActive();
+        allow update: if isTenant(companyId) && (
+          isAdminActive()
+          || (
+            isEmployeeActive()
+            && isOwner(resource.data.userId)
+            && request.resource.data.userId == resource.data.userId
+            && request.resource.data.read == true
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read'])
+          )
+        );
+        allow delete: if isTenant(companyId) && (isAdminActive() || (isEmployeeActive() && isOwner(resource.data.userId)));
       }
 
       // taskExecutions

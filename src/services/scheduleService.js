@@ -16,6 +16,8 @@ import {
   arrayUnion,
 } from "firebase/firestore";
 import { db } from "../config/firebase";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "../config/firebase";
 import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
 import {
   findSupersededOriginalServiceIds,
@@ -2075,72 +2077,13 @@ export function shouldScheduleOnDay(task, date, options = {}) {
 
 // ==================== COMPANIONS ====================
 export async function addCompanionToService(companyId, serviceId, companionId) {
-  const serviceRef = tenantDoc(db, companyId, "scheduledServices", serviceId);
-  const snap = await getDoc(serviceRef);
-  if (!snap.exists()) throw new Error("Servicio no encontrado");
-
-  const data = snap.data();
-  const companionIds = data.companionIds || [];
-  const participantIds = data.participantIds || [];
-  const companionLogs = data.companionLogs || [];
-
-  if (!companionIds.includes(companionId)) {
-    companionIds.push(companionId);
-  }
-  if (!participantIds.includes(companionId)) {
-    participantIds.push(companionId);
-  }
-
-  // Agregar al log si no hay un log abierto
-  const openLog = companionLogs.find(
-    (log) => log.userId === companionId && !log.leftAt,
-  );
-  if (!openLog) {
-    companionLogs.push({
-      userId: companionId,
-      joinedAt: new Date().toISOString(),
-    });
-  }
-
-  await updateDoc(serviceRef, {
-    companionIds,
-    participantIds,
-    companionLogs,
-  });
+  const addCompanion = httpsCallable(functions, "addServiceCompanion");
+  await addCompanion({ serviceId, companionId });
 }
 
 export async function removeCompanionFromService(companyId, serviceId, companionId) {
-  const serviceRef = tenantDoc(db, companyId, "scheduledServices", serviceId);
-  const snap = await getDoc(serviceRef);
-  if (!snap.exists()) throw new Error("Servicio no encontrado");
-
-  const data = snap.data();
-  const companionIds = (data.companionIds || []).filter(
-    (id) => id !== companionId,
-  );
-  const participantIds = data.participantIds || [];
-  // Backfill old completed services before removing their temporary access.
-  if (
-    data.status === "completed" &&
-    !participantIds.includes(companionId)
-  ) {
-    participantIds.push(companionId);
-  }
-  const companionLogs = data.companionLogs || [];
-
-  // Cerrar openLog
-  const openLog = companionLogs.find(
-    (log) => log.userId === companionId && !log.leftAt,
-  );
-  if (openLog) {
-    openLog.leftAt = new Date().toISOString();
-  }
-
-  await updateDoc(serviceRef, {
-    companionIds,
-    participantIds,
-    companionLogs,
-  });
+  const removeCompanion = httpsCallable(functions, "removeServiceCompanion");
+  await removeCompanion({ serviceId, companionId });
 }
 
 export async function editPendingScheduledService(

@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
-import { db } from "../config/firebase";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "../config/firebase";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DATA
@@ -249,6 +249,7 @@ function RequestModal({ isOpen, onClose, defaultPlan = "" }) {
     operariosCount: "",
     plan: defaultPlan,
     message: "",
+    website: "",
   });
   const [status, setStatus] = useState("idle"); // idle | loading | success | error
   const [errorMsg, setErrorMsg] = useState("");
@@ -272,11 +273,8 @@ function RequestModal({ isOpen, onClose, defaultPlan = "" }) {
     setStatus("loading");
     setErrorMsg("");
     try {
-      await addDoc(collection(db, "companyRequests"), {
-        ...form,
-        status: "pending",
-        createdAt: serverTimestamp(),
-      });
+      const submitCompanyRequest = httpsCallable(functions, "submitCompanyRequest");
+      await submitCompanyRequest(form);
       setStatus("success");
     } catch (err) {
       console.error("Error saving request:", err);
@@ -394,6 +392,20 @@ function RequestModal({ isOpen, onClose, defaultPlan = "" }) {
               onSubmit={handleSubmit}
               style={{ display: "flex", flexDirection: "column", gap: "14px" }}
             >
+              <div
+                aria-hidden="true"
+                style={{ position: "absolute", left: "-10000px", width: 1, height: 1, overflow: "hidden" }}
+              >
+                <label htmlFor="request-website">Sitio web</label>
+                <input
+                  id="request-website"
+                  name="website"
+                  value={form.website}
+                  onChange={handleChange}
+                  tabIndex="-1"
+                  autoComplete="off"
+                />
+              </div>
               <div className="form-row" style={{ display: "flex", gap: "12px" }}>
                 <div className="form-group" style={{ flex: 1, margin: 0 }}>
                   <label className="form-label">Empresa *</label>
@@ -433,13 +445,14 @@ function RequestModal({ isOpen, onClose, defaultPlan = "" }) {
                   />
                 </div>
                 <div className="form-group" style={{ flex: 1, margin: 0 }}>
-                  <label className="form-label">Teléfono</label>
+                  <label className="form-label">Teléfono *</label>
                   <input
                     className="form-input"
                     type="tel"
                     name="phone"
                     value={form.phone}
                     onChange={handleChange}
+                    required
                     placeholder="600 000 000"
                   />
                 </div>

@@ -73,7 +73,7 @@ service firebase.storage {
     // Legacy logos (root folder)
     match /logos/{fileName} {
       allow read: if true;
-      allow write: if isAuthenticated() && request.auth.token.role == 'admin' && request.auth.token.active == true;
+      allow write: if false;
     }
 
     // Legacy evidence (root folder)
