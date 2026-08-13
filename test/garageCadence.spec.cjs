@@ -4,14 +4,18 @@ describe("Garage cadence", function () {
   let getGarageCadenceAnchorDate;
   let getGarageForecastTask;
   let getGarageFrequencyMonths;
+  let getNextGarageCadenceDate;
   let isGarageCadenceMonth;
+  let isGarageServiceBeforeNextCadence;
 
   before(async function () {
     ({
       getGarageCadenceAnchorDate,
       getGarageForecastTask,
       getGarageFrequencyMonths,
+      getNextGarageCadenceDate,
       isGarageCadenceMonth,
+      isGarageServiceBeforeNextCadence,
     } = await import("../src/utils/garageCadence.js"));
   });
 
@@ -46,6 +50,32 @@ describe("Garage cadence", function () {
     };
     assert.equal(isGarageCadenceMonth(task, new Date(2026, 9, 1)), false);
     assert.equal(isGarageCadenceMonth(task, new Date(2026, 10, 1)), true);
+  });
+
+  it("rejects a weekly rollover before the next quarterly garage date", function () {
+    const task = {
+      frequencyType: "trimonthly",
+      garageCadenceAnchorDate: "2026-08-07",
+    };
+
+    assert.equal(
+      getNextGarageCadenceDate(task).getTime(),
+      new Date(2026, 10, 7).getTime(),
+    );
+    assert.equal(
+      isGarageServiceBeforeNextCadence(
+        { scheduledDate: new Date(2026, 7, 10) },
+        task,
+      ),
+      true,
+    );
+    assert.equal(
+      isGarageServiceBeforeNextCadence(
+        { scheduledDate: new Date(2026, 10, 7) },
+        task,
+      ),
+      false,
+    );
   });
 
   it("does not rewrite the historical forecast before completion", function () {

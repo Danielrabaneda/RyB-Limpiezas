@@ -1,3 +1,5 @@
+import { addMonths } from "date-fns";
+
 const FREQUENCY_MONTHS = {
   monthly: 1,
   bimonthly: 2,
@@ -30,6 +32,22 @@ export function getGarageFrequencyMonths(task = {}) {
 
 export function getGarageCadenceAnchorDate(task = {}) {
   return asDate(task.garageCadenceAnchorDate);
+}
+
+export function getNextGarageCadenceDate(task = {}) {
+  const anchor = getGarageCadenceAnchorDate(task);
+  const frequency = getGarageFrequencyMonths(task);
+  if (!anchor || !frequency) return null;
+
+  return addMonths(anchor, frequency);
+}
+
+export function isGarageServiceBeforeNextCadence(service = {}, task = {}) {
+  const scheduledDate = asDate(service.scheduledDate);
+  const nextDate = getNextGarageCadenceDate(task);
+  if (!scheduledDate || !nextDate) return false;
+
+  return scheduledDate.getTime() < nextDate.getTime();
 }
 
 export function isGarageCadenceMonth(task = {}, date) {

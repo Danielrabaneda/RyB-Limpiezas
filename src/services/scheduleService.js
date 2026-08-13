@@ -32,6 +32,7 @@ import { uniqueByStableId } from "../utils/collectionDeduplication";
 import {
   getGarageCadenceAnchorDate,
   getGarageFrequencyMonths,
+  isGarageServiceBeforeNextCadence,
 } from "../utils/garageCadence";
 import {
   startOfDay,
@@ -900,7 +901,9 @@ export async function handleGarageCompletion(
       `[GarageRollover] Actualizada fecha de inicio de la tarea ${serviceData.communityTaskId} a: ${completionDateStr}`,
     );
 
-    // 4. Look for the next pending scheduledService for this task (scheduledDate > completionDate)
+    // 4. Rebase every pending occurrence of this garage from the real
+    // completion. Anything before the next cadence date belongs to the old
+    // calendar and must never be rolled over to the following Monday.
     const qNext = query(
       tenantCollection(db, companyId, "scheduledServices"),
       where("communityTaskId", "==", serviceData.communityTaskId),
@@ -909,15 +912,35 @@ export async function handleGarageCompletion(
     const nextSnap = await getDocs(qNext);
 
     if (!nextSnap.empty) {
-      const nextServices = nextSnap.docs
+      const pendingServices = nextSnap.docs
         .map((d) => ({ id: d.id, ref: d.ref, ...d.data() }))
-        .filter((s) => {
-          if (!s.scheduledDate) return false;
-          const sDate = s.scheduledDate.toDate
-            ? s.scheduledDate.toDate()
-            : new Date(s.scheduledDate);
-          return startOfDay(sDate) > startOfDay(completionDate);
-        })
+        .filter((service) => service.id !== serviceId);
+      const staleServices = pendingServices.filter((service) => {
+        if (!service.scheduledDate) return true;
+        const scheduledDate = service.scheduledDate.toDate
+          ? service.scheduledDate.toDate()
+          : new Date(service.scheduledDate);
+        return (
+          Number.isNaN(scheduledDate.getTime()) ||
+          startOfDay(scheduledDate) < startOfDay(nextDate)
+        );
+      });
+
+      if (staleServices.length > 0) {
+        const staleBatch = writeBatch(db);
+        staleServices.forEach((service) => {
+          staleBatch.update(service.ref, {
+            status: "missed",
+            garageCadenceSuperseded: true,
+            supersededByServiceId: serviceId,
+            updatedAt: serverTimestamp(),
+          });
+        });
+        await staleBatch.commit();
+      }
+
+      const nextServices = pendingServices
+        .filter((service) => !staleServices.some((stale) => stale.id === service.id))
         .sort((a, b) => {
           const dA = a.scheduledDate?.toDate
             ? a.scheduledDate.toDate()
@@ -941,6 +964,19 @@ export async function handleGarageCompletion(
           isRescheduled: true,
           updatedAt: serverTimestamp(),
         });
+
+        if (nextServices.length > 1) {
+          const obsoleteBatch = writeBatch(db);
+          nextServices.slice(1).forEach((service) => {
+            obsoleteBatch.update(service.ref, {
+              status: "missed",
+              garageCadenceSuperseded: true,
+              supersededByServiceId: serviceId,
+              updatedAt: serverTimestamp(),
+            });
+          });
+          await obsoleteBatch.commit();
+        }
       }
     }
   } catch (error) {
@@ -1109,19 +1145,17 @@ export async function checkAndRolloverGarages(companyId) {
       ...d.data(),
     }));
 
-    // Filter to garage cleanings only that are scheduled in the past
+    // Inspect every pending garage. A completed periodic cycle can leave an
+    // old forecast in the future, so limiting this check to past dates would
+    // allow that stale card to survive until it is rolled over.
     const garageServices = pendingServices.filter((svc) => {
       if (!svc.scheduledDate) return false;
-      const svcDate = svc.scheduledDate.toDate
-        ? svc.scheduledDate.toDate()
-        : new Date(svc.scheduledDate);
-      const isPast = startOfDay(svcDate) < todayStart;
       const lowerName = (svc.taskName || "").toLowerCase();
       const isGarage =
         svc.isGarage ||
         lowerName.includes("garaje") ||
         lowerName.includes("garage");
-      return isPast && isGarage;
+      return isGarage;
     });
 
     if (garageServices.length === 0) return 0;
@@ -1131,10 +1165,39 @@ export async function checkAndRolloverGarages(companyId) {
     );
 
     let rolledOverCount = 0;
+    const taskCache = new Map();
     for (const svc of garageServices) {
       const origDate = svc.scheduledDate?.toDate
         ? svc.scheduledDate.toDate()
         : new Date(svc.scheduledDate);
+
+      let taskData = null;
+      if (svc.communityTaskId) {
+        if (!taskCache.has(svc.communityTaskId)) {
+          const taskSnap = await getDoc(
+            tenantDoc(db, companyId, "communityTasks", svc.communityTaskId),
+          );
+          taskCache.set(
+            svc.communityTaskId,
+            taskSnap.exists() ? taskSnap.data() : null,
+          );
+        }
+        taskData = taskCache.get(svc.communityTaskId);
+      }
+
+      if (taskData && isGarageServiceBeforeNextCadence(svc, taskData)) {
+        await updateDoc(svc.ref, {
+          status: "missed",
+          garageCadenceSuperseded: true,
+          updatedAt: serverTimestamp(),
+        });
+        console.log(
+          `[Schedule] Descartado garaje obsoleto "${svc.taskName}" del ${format(origDate, "yyyy-MM-dd")}: existe una nueva cadencia tras su última ejecución.`,
+        );
+        continue;
+      }
+
+      if (startOfDay(origDate) >= todayStart) continue;
 
       // Calculate the Monday of the next week recursively until it is today or in the future
       let nextDate = origDate;
