@@ -181,6 +181,14 @@
         { "fieldPath": "companionIds", "arrayConfig": "CONTAINS" },
         { "fieldPath": "scheduledDate", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "companies",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "subscriptionStatus", "order": "ASCENDING" },
+        { "fieldPath": "dataDeletionAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [

@@ -329,6 +329,24 @@ export default function SettingsPage() {
                 {" · "}Plan: <strong>{company?.plan || "sin asignar"}</strong>
                 {" · "}Acceso: <strong>{companyEnabled ? "activo" : "bloqueado"}</strong>
               </p>
+              {company?.subscriptionStatus === "trialing" && (
+                <div
+                  className="mb-4"
+                  style={{
+                    padding: "12px 14px",
+                    borderRadius: "10px",
+                    color: "#92400e",
+                    background: "#fffbeb",
+                    border: "1px solid #fde68a",
+                    fontSize: ".86rem",
+                  }}
+                >
+                  La prueba termina el <strong>{company.trialEndsAt?.toDate?.().toLocaleDateString("es-ES") || "día 30"}</strong>.
+                  {company.dataDeletionAt && (
+                    <> Si no contratas, los datos se eliminarán el <strong>{company.dataDeletionAt.toDate?.().toLocaleDateString("es-ES")}</strong>.</>
+                  )}
+                </div>
+              )}
               <div className="flex gap-3 flex-wrap items-end">
                 <div className="form-group" style={{ minWidth: "220px", margin: 0 }}>
                   <label className="form-label">Plan</label>

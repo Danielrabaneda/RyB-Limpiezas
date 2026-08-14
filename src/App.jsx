@@ -279,7 +279,7 @@ function AdminLayout() {
   const [pendingValidations, setPendingValidations] = useState(0);
   const [pendingGPS, setPendingGPS] = useState(0);
   const [pendingOrders, setPendingOrders] = useState(0);
-  const { companyId } = useTenant();
+  const { companyId, company } = useTenant();
 
   useEffect(() => {
     if (!companyId) return;
@@ -614,6 +614,47 @@ function AdminLayout() {
           </div>
         </header>
         <main className="admin-content">
+          {companyId !== "rayba" && company?.subscriptionStatus === "trialing" && (
+            <div
+              role="status"
+              className="mb-5"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "16px",
+                flexWrap: "wrap",
+                padding: "14px 18px",
+                borderRadius: "14px",
+                color: "#0f172a",
+                background:
+                  (company.trialEndsAt?.toMillis?.() || 0) <= Date.now()
+                    ? "#fef3c7"
+                    : "linear-gradient(135deg,#dbeafe,#e0f2fe)",
+                border: "1px solid rgba(37,99,235,.18)",
+              }}
+            >
+              <div>
+                <strong>
+                  {(company.trialEndsAt?.toMillis?.() || 0) <= Date.now()
+                    ? "Tu prueba de 30 días ha terminado"
+                    : `${Math.max(1, Math.ceil(((company.trialEndsAt?.toMillis?.() || Date.now()) - Date.now()) / 86400000))} días de prueba disponibles`}
+                </strong>
+                <div style={{ marginTop: "3px", color: "#475569", fontSize: ".82rem" }}>
+                  {(company.trialEndsAt?.toMillis?.() || 0) <= Date.now()
+                    ? `Contrata un plan antes del ${company.dataDeletionAt?.toDate?.().toLocaleDateString("es-ES") || "fin del periodo de recuperación"} para conservar los datos.`
+                    : "Tienes acceso completo y puedes contratar cuando quieras, sin esperar al último día."}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => navigate("/admin/ajustes")}
+              >
+                Ver planes y contratar
+              </button>
+            </div>
+          )}
           <Outlet />
         </main>
       </div>

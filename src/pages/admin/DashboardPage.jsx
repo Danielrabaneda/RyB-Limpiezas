@@ -24,6 +24,7 @@ import {
   where,
   onSnapshot,
   getDocs,
+  limit,
 } from "firebase/firestore";
 import { db } from "../../config/firebase";
 import { tenantCollection } from "../../utils/tenantFirestore";
@@ -33,9 +34,103 @@ import {
   getNotificationRecipientIds,
 } from "../../utils/notificationRequest";
 
+function TrialOnboarding({ companyId, company, stats, navigate }) {
+  const storageKey = `limpiagest-onboarding-collapsed-${companyId}`;
+  const [collapsed, setCollapsed] = useState(
+    () => window.localStorage.getItem(storageKey) === "true",
+  );
+
+  if (company?.subscriptionStatus !== "trialing") return null;
+
+  const steps = [
+    { label: "Crear empresa", done: true, path: "/admin/ajustes" },
+    { label: "Añadir operarios", done: stats.operarios > 0, path: "/admin/operarios" },
+    { label: "Añadir clientes o comunidades", done: stats.communities > 0, path: "/admin/comunidades" },
+    { label: "Crear el primer servicio", done: stats.hasAnyService, path: "/admin/comunidades" },
+    { label: "Configurar facturación", done: !!company.stripeCustomerId, path: "/admin/ajustes" },
+  ];
+  const completed = steps.filter((step) => step.done).length;
+
+  const updateCollapsed = (nextValue) => {
+    setCollapsed(nextValue);
+    window.localStorage.setItem(storageKey, String(nextValue));
+  };
+
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        className="btn btn-secondary mb-5"
+        onClick={() => updateCollapsed(false)}
+      >
+        Abrir configuración inicial · {completed}/5
+      </button>
+    );
+  }
+
+  return (
+    <section
+      className="mb-6"
+      aria-labelledby="trial-onboarding-title"
+      style={{
+        padding: "20px",
+        borderRadius: "18px",
+        color: "#e2e8f0",
+        background: "linear-gradient(135deg,#0f172a,#172554)",
+        boxShadow: "0 16px 40px rgba(15,23,42,.18)",
+      }}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+        <div>
+          <div style={{ color: "#7dd3fc", fontSize: ".72rem", fontWeight: 800, letterSpacing: ".08em" }}>
+            CONFIGURACIÓN GUIADA · {completed}/5
+          </div>
+          <h3 id="trial-onboarding-title" style={{ margin: "5px 0 0", color: "white", fontSize: "1.18rem" }}>
+            Prepara tu primera operación
+          </h3>
+        </div>
+        <button
+          type="button"
+          onClick={() => updateCollapsed(true)}
+          style={{ border: 0, color: "#cbd5e1", background: "transparent", cursor: "pointer" }}
+        >
+          Ocultar por ahora
+        </button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: "10px" }}>
+        {steps.map((step, index) => (
+          <button
+            key={step.label}
+            type="button"
+            onClick={() => navigate(step.path)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              minHeight: "54px",
+              padding: "10px 12px",
+              borderRadius: "12px",
+              border: step.done ? "1px solid rgba(74,222,128,.35)" : "1px solid rgba(148,163,184,.22)",
+              color: "white",
+              background: step.done ? "rgba(22,163,74,.16)" : "rgba(255,255,255,.06)",
+              textAlign: "left",
+              cursor: "pointer",
+            }}
+          >
+            <span aria-hidden="true" style={{ color: step.done ? "#4ade80" : "#7dd3fc", fontWeight: 800 }}>
+              {step.done ? "✓" : String(index + 1).padStart(2, "0")}
+            </span>
+            <span>{step.label}</span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export default function DashboardPage() {
   const { userProfile } = useAuth();
-  const { companyId } = useTenant();
+  const { companyId, company } = useTenant();
   const navigate = useNavigate();
   const [refreshKey, setRefreshKey] = useState(0);
   const [stats, setStats] = useState({
@@ -45,6 +140,7 @@ export default function DashboardPage() {
     pendingServices: 0,
     completedToday: 0,
     activeCheckIns: 0,
+    hasAnyService: false,
   });
   const [operarios, setOperarios] = useState([]);
   const [communitiesWithoutCoordinates, setCommunitiesWithoutCoordinates] =
@@ -115,11 +211,13 @@ export default function DashboardPage() {
         ops,
         todayServices,
         checkIns,
+        firstServiceSnapshot,
       ] = await Promise.all([
         getCommunities(companyId),
         getOperarios(companyId),
         getScheduledServicesRange(companyId, new Date(), new Date()),
         getCheckInsRange(companyId, new Date(), new Date()),
+        getDocs(query(tenantCollection(db, companyId, "scheduledServices"), limit(1))),
       ]);
 
       // Las estadísticas de jornada son complementarias. Un índice pendiente
@@ -239,6 +337,7 @@ export default function DashboardPage() {
         pendingServices: pending,
         completedToday: completed,
         activeCheckIns: activeCount,
+        hasAnyService: !firstServiceSnapshot.empty,
       });
 
       setActiveOpsNames(names);
@@ -329,6 +428,12 @@ export default function DashboardPage() {
 
   return (
     <div className="animate-fadeIn">
+      <TrialOnboarding
+        companyId={companyId}
+        company={company}
+        stats={stats}
+        navigate={navigate}
+      />
       {/* Mobile-friendly banner for Admins to switch to Operario view */}
       <div
         className="mb-6 p-4 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"

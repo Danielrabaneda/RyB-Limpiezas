@@ -26,6 +26,10 @@ const {
   resolveInvoiceType,
 } = require("./lib/invoiceEmission");
 const {
+  buildTrialLifecycle,
+  isTrialReadyForDeletion,
+} = require("./lib/trialLifecycle");
+const {
   AEAT_JOB_STATUSES,
   MAX_SUBMISSION_ATTEMPTS,
   buildAeatSubmissionDraftXml,
@@ -57,7 +61,7 @@ const { getAuth } = require("firebase-admin/auth");
 const { defineSecret } = require("firebase-functions/params");
 const nodemailer = require("nodemailer");
 const Stripe = require("stripe");
-const { createHash } = require("node:crypto");
+const { createHash, randomBytes } = require("node:crypto");
 
 // Inicializar Firebase Admin
 initializeApp();
@@ -3768,6 +3772,8 @@ exports.createTenantCommunity = onCall(
 
 const COMPANY_REQUEST_WINDOW_MS = 15 * 60 * 1000;
 const COMPANY_REQUEST_MAX_PER_WINDOW = 3;
+const COMPANY_TRIAL_WINDOW_MS = 60 * 60 * 1000;
+const COMPANY_TRIAL_MAX_PER_WINDOW = 5;
 
 function normalizeCompanyRequestText(value, maximumLength) {
   return String(value || "")
@@ -3776,6 +3782,231 @@ function normalizeCompanyRequestText(value, maximumLength) {
     .trim()
     .slice(0, maximumLength);
 }
+
+async function findAvailableCompanyId(companyName) {
+  const base = normalizeCompanyId(companyName);
+  const candidates = [base];
+  for (let index = 0; index < 5; index += 1) {
+    candidates.push(
+      `${base.slice(0, 39)}-${randomBytes(4).toString("hex")}`,
+    );
+  }
+  for (const candidate of candidates) {
+    const snapshot = await db.collection("companies").doc(candidate).get();
+    if (!snapshot.exists) return candidate;
+  }
+  throw new HttpsError(
+    "resource-exhausted",
+    "No se pudo reservar un identificador para la empresa. Inténtalo de nuevo.",
+  );
+}
+
+exports.registerCompanyTrial = onCall(
+  {
+    region: "europe-west1",
+    memory: "256MiB",
+    timeoutSeconds: 60,
+    maxInstances: 10,
+  },
+  async (request) => {
+    if (request.auth) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Cierra la sesión actual antes de crear una empresa nueva.",
+      );
+    }
+
+    const companyName = normalizeCompanyRequestText(request.data?.companyName, 120);
+    const contactName = normalizeCompanyRequestText(request.data?.contactName, 120);
+    const email = normalizeCompanyRequestText(request.data?.email, 199).toLowerCase();
+    const phone = normalizeCompanyRequestText(request.data?.phone, 49);
+    const operariosCount = normalizeCompanyRequestText(request.data?.operariosCount, 30);
+    const message = normalizeCompanyRequestText(request.data?.message, 1000);
+    const website = normalizeCompanyRequestText(request.data?.website, 200);
+    const password = String(request.data?.password || "");
+    const privacyAccepted = request.data?.privacyAccepted === true;
+    const plan = normalizePlan(request.data?.plan || "starter");
+
+    if (website) return { accepted: false };
+    if (!companyName || !contactName || !email || !password || !privacyAccepted) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Completa los campos obligatorios y acepta la política de privacidad.",
+      );
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new HttpsError("invalid-argument", "El correo electrónico no es válido.");
+    }
+    if (phone && !/^[+0-9() .-]{6,49}$/.test(phone)) {
+      throw new HttpsError("invalid-argument", "El teléfono no es válido.");
+    }
+    if (password.length < 10 || password.length > 128) {
+      throw new HttpsError(
+        "invalid-argument",
+        "La contraseña debe tener entre 10 y 128 caracteres.",
+      );
+    }
+    if (plan === "enterprise") {
+      throw new HttpsError(
+        "invalid-argument",
+        "El plan Enterprise requiere una configuración personalizada.",
+      );
+    }
+
+    const rawAddress =
+      request.rawRequest?.headers?.["x-forwarded-for"] ||
+      request.rawRequest?.ip ||
+      "unknown";
+    const address = String(rawAddress).split(",")[0].trim();
+    const rateLimitKey = createHash("sha256").update(address).digest("hex");
+    const rateLimitRef = db.collection("companyTrialRateLimits").doc(rateLimitKey);
+    const now = Timestamp.now();
+
+    await db.runTransaction(async (transaction) => {
+      const rateLimitSnap = await transaction.get(rateLimitRef);
+      const rateLimit = rateLimitSnap.exists ? rateLimitSnap.data() : null;
+      const windowStartedAt = rateLimit?.windowStartedAt?.toMillis?.() || 0;
+      const sameWindow = now.toMillis() - windowStartedAt < COMPANY_TRIAL_WINDOW_MS;
+      const count = sameWindow ? Number(rateLimit?.count || 0) : 0;
+      if (count >= COMPANY_TRIAL_MAX_PER_WINDOW) {
+        throw new HttpsError(
+          "resource-exhausted",
+          "Se han creado varias cuentas desde esta conexión. Espera una hora para volver a intentarlo.",
+        );
+      }
+      transaction.set(rateLimitRef, {
+        count: count + 1,
+        windowStartedAt: sameWindow ? rateLimit.windowStartedAt : now,
+        expiresAt: Timestamp.fromMillis(now.toMillis() + COMPANY_TRIAL_WINDOW_MS * 2),
+      });
+    });
+
+    const companyId = await findAvailableCompanyId(companyName);
+    const invitationCode = normalizeAccessCode(
+      `LG-${randomBytes(6).toString("hex")}`,
+    );
+    const lifecycle = buildTrialLifecycle(now.toMillis());
+    const trialEndsAt = Timestamp.fromMillis(lifecycle.trialEndsAtMs);
+    const dataDeletionAt = Timestamp.fromMillis(lifecycle.dataDeletionAtMs);
+    const registrationRef = db.collection("companyRequests").doc();
+    let createdUser = null;
+    let provisioningCommitted = false;
+
+    try {
+      createdUser = await auth.createUser({
+        email,
+        password,
+        displayName: contactName,
+      });
+      await db.runTransaction(async (transaction) => {
+        const companyRef = db.collection("companies").doc(companyId);
+        const codeIndexRef = db.collection("accessCodeIndex").doc(invitationCode);
+        const [companySnap, codeSnap] = await Promise.all([
+          transaction.get(companyRef),
+          transaction.get(codeIndexRef),
+        ]);
+        if (companySnap.exists || codeSnap.exists) {
+          throw new HttpsError(
+            "already-exists",
+            "El identificador de empresa ya está ocupado.",
+          );
+        }
+
+        transaction.create(companyRef, {
+          name: companyName,
+          status: "active",
+          subscriptionStatus: "trialing",
+          plan,
+          trialEndsAt,
+          dataDeletionAt,
+          stripeCustomerId: null,
+          ownerUid: createdUser.uid,
+          onboardingVersion: 1,
+          onboardingCompleted: false,
+          createdAt: FieldValue.serverTimestamp(),
+          createdBy: createdUser.uid,
+        });
+        transaction.create(db.collection("users").doc(createdUser.uid), {
+          uid: createdUser.uid,
+          name: contactName,
+          email,
+          phone,
+          role: "admin",
+          active: true,
+          companyId,
+          isOwner: true,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+        transaction.create(db.doc(`companies/${companyId}/settings/global`), {
+          companyName,
+          invitationCode,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+        transaction.create(db.doc(`companies/${companyId}/accessCodes/${invitationCode}`), {
+          active: true,
+          createdAt: FieldValue.serverTimestamp(),
+          createdBy: createdUser.uid,
+        });
+        transaction.create(codeIndexRef, { companyId, active: true });
+        transaction.create(registrationRef, {
+          companyName,
+          contactName,
+          email,
+          phone,
+          operariosCount,
+          plan,
+          message,
+          status: "active",
+          source: "self_service_trial",
+          provisionedCompanyId: companyId,
+          provisionedAdminUid: createdUser.uid,
+          privacyAcceptedAt: now,
+          privacyVersion: "2026-08",
+          createdAt: FieldValue.serverTimestamp(),
+        });
+      });
+      provisioningCommitted = true;
+      await auth
+        .setCustomUserClaims(createdUser.uid, {
+          role: "admin",
+          active: true,
+          companyId,
+          platformAdmin: false,
+        })
+        .catch((claimsError) =>
+          logger.error(
+            "Los claims del propietario se sincronizarán mediante el trigger",
+            claimsError,
+          ),
+        );
+      return {
+        companyId,
+        email,
+        trialEndsAt: new Date(lifecycle.trialEndsAtMs).toISOString(),
+        dataDeletionAt: new Date(lifecycle.dataDeletionAtMs).toISOString(),
+      };
+    } catch (error) {
+      if (createdUser && !provisioningCommitted) {
+        await auth.deleteUser(createdUser.uid).catch(() => {});
+      }
+      if (error instanceof HttpsError) throw error;
+      if (error?.code === "auth/email-already-exists") {
+        throw new HttpsError(
+          "already-exists",
+          "Ya existe una cuenta con este correo. Inicia sesión o utiliza otro correo.",
+        );
+      }
+      if (error?.code === "auth/invalid-password") {
+        throw new HttpsError("invalid-argument", "La contraseña no es válida.");
+      }
+      logger.error("registerCompanyTrial failed", error);
+      throw new HttpsError(
+        "internal",
+        "No se pudo crear la empresa. Inténtalo de nuevo en unos minutos.",
+      );
+    }
+  },
+);
 
 exports.submitCompanyRequest = onCall(
   {
@@ -4072,7 +4303,9 @@ exports.provisionCompanyFromRequest = onCall(
         password: temporaryPassword,
         displayName: contactName,
       });
-      const trialEndsAt = Timestamp.fromMillis(Date.now() + 14 * 86400000);
+      const lifecycle = buildTrialLifecycle();
+      const trialEndsAt = Timestamp.fromMillis(lifecycle.trialEndsAtMs);
+      const dataDeletionAt = Timestamp.fromMillis(lifecycle.dataDeletionAtMs);
       await db.runTransaction(async (transaction) => {
         const companyRef = db.collection("companies").doc(companyId);
         const codeIndexRef = db.collection("accessCodeIndex").doc(invitationCode);
@@ -4089,6 +4322,7 @@ exports.provisionCompanyFromRequest = onCall(
           subscriptionStatus: "trialing",
           plan,
           trialEndsAt,
+          dataDeletionAt,
           stripeCustomerId: null,
           ownerUid: createdUser.uid,
           createdAt: FieldValue.serverTimestamp(),
@@ -4140,7 +4374,8 @@ exports.provisionCompanyFromRequest = onCall(
         adminUid: createdUser.uid,
         email,
         invitationCode,
-        trialEndsAt: new Date(Date.now() + 14 * 86400000).toISOString(),
+        trialEndsAt: new Date(lifecycle.trialEndsAtMs).toISOString(),
+        dataDeletionAt: new Date(lifecycle.dataDeletionAtMs).toISOString(),
       };
     } catch (error) {
       if (createdUser && !provisioningCommitted) {
@@ -4297,6 +4532,9 @@ exports.stripeWebhook = onRequest(
       lastStripeEventId: event.id,
     };
     if (subscription.metadata?.plan) update.plan = subscription.metadata.plan;
+    if (ACTIVE_SUBSCRIPTION_STATUSES.has(subscriptionStatus)) {
+      update.dataDeletionAt = FieldValue.delete();
+    }
     if (subscription.current_period_end) {
       update.currentPeriodEndsAt = Timestamp.fromMillis(subscription.current_period_end * 1000);
     }
@@ -4316,6 +4554,92 @@ exports.stripeWebhook = onRequest(
       });
     });
     response.status(200).json({ received: true });
+  },
+);
+
+async function deleteReferencesInBatches(references) {
+  for (let offset = 0; offset < references.length; offset += 400) {
+    const batch = db.batch();
+    for (const reference of references.slice(offset, offset + 400)) {
+      batch.delete(reference);
+    }
+    await batch.commit();
+  }
+}
+
+async function purgeExpiredTrialCompany(companyDocument) {
+  const companyId = companyDocument.id;
+  const freshSnapshot = await companyDocument.ref.get();
+  if (!freshSnapshot.exists || !isTrialReadyForDeletion(freshSnapshot.data())) {
+    return false;
+  }
+
+  const [usersSnapshot, accessCodesSnapshot, registrationsSnapshot] =
+    await Promise.all([
+      db.collection("users").where("companyId", "==", companyId).get(),
+      db.collection("accessCodeIndex").where("companyId", "==", companyId).get(),
+      db.collection("companyRequests")
+        .where("provisionedCompanyId", "==", companyId)
+        .get(),
+    ]);
+
+  await getStorage()
+    .bucket()
+    .deleteFiles({ prefix: `companies/${companyId}/` })
+    .catch((error) =>
+      logger.warn(`No se pudo limpiar todo el almacenamiento de ${companyId}`, error),
+    );
+
+  await deleteReferencesInBatches([
+    ...usersSnapshot.docs.map((item) => item.ref),
+    ...accessCodesSnapshot.docs.map((item) => item.ref),
+    ...registrationsSnapshot.docs.map((item) => item.ref),
+  ]);
+
+  const userIds = usersSnapshot.docs.map((item) => item.id);
+  for (let offset = 0; offset < userIds.length; offset += 1000) {
+    const result = await auth.deleteUsers(userIds.slice(offset, offset + 1000));
+    if (result.failureCount > 0) {
+      logger.warn(
+        `No se pudieron eliminar ${result.failureCount} usuarios de ${companyId}`,
+        result.errors,
+      );
+    }
+  }
+
+  await db.recursiveDelete(companyDocument.ref);
+  logger.info(`Prueba caducada eliminada: ${companyId}`);
+  return true;
+}
+
+exports.cleanupExpiredCompanyTrials = onSchedule(
+  {
+    schedule: "30 4 * * *",
+    timeZone: "Europe/Madrid",
+    region: "europe-west1",
+    memory: "512MiB",
+    timeoutSeconds: 540,
+    maxInstances: 1,
+  },
+  async () => {
+    const expiredSnapshot = await db
+      .collection("companies")
+      .where("subscriptionStatus", "==", "trialing")
+      .where("dataDeletionAt", "<=", Timestamp.now())
+      .limit(25)
+      .get();
+    let deleted = 0;
+    for (const companyDocument of expiredSnapshot.docs) {
+      try {
+        if (await purgeExpiredTrialCompany(companyDocument)) deleted += 1;
+      } catch (error) {
+        logger.error(
+          `No se pudo eliminar la prueba caducada ${companyDocument.id}`,
+          error,
+        );
+      }
+    }
+    logger.info(`Limpieza de pruebas finalizada. Empresas eliminadas: ${deleted}`);
   },
 );
 
