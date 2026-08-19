@@ -1,6 +1,19 @@
 # Estado de cierre de facturación y VeriFactu
 
-Actualizado: 12 de agosto de 2026.
+Actualizado: 19 de agosto de 2026.
+
+## Conexión del certificado
+
+- Implementado el asistente para que cada empresa conecte un archivo `.pfx` o `.p12` desde la plataforma.
+- El backend comprueba contraseña, clave privada, vigencia y coincidencia del NIF.
+- La credencial se custodia por empresa en Google Secret Manager; Firestore conserva únicamente metadatos no secretos.
+- La pantalla muestra la caducidad y permite desconectar y eliminar la credencial.
+- El conector Windows queda como alternativa para certificados no exportables.
+- El entorno continúa fijado en pruebas y no se realizan envíos automáticos.
+
+Para cerrar esta fase faltan la habilitación y permisos de Secret Manager, una
+prueba completa con un `.pfx/.p12` real y la implementación/homologación del
+envío SOAP mutuo contra la AEAT.
 
 ## Estado alcanzado
 

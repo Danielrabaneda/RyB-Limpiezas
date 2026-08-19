@@ -2,11 +2,13 @@ const AEAT_CHANNELS = new Set([
   "disabled",
   "delegated",
   "local_connector",
+  "cloud_certificate",
 ]);
 const AEAT_ENVIRONMENTS = new Set(["test"]);
 const AEAT_JOB_STATUSES = new Set([
   "awaiting_sender",
   "awaiting_local_connector",
+  "awaiting_cloud_sender",
   "processing",
   "accepted",
   "accepted_with_errors",
@@ -67,6 +69,7 @@ function normalizeAeatConnectionProfile(input = {}) {
 
 function getInitialSubmissionStatus(channel) {
   if (channel === "delegated") return "awaiting_sender";
+  if (channel === "cloud_certificate") return "awaiting_cloud_sender";
   if (channel === "local_connector") {
     return "awaiting_local_connector";
   }

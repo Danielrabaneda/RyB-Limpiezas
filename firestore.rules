@@ -622,6 +622,12 @@ service cloud.firestore {
         allow create, update, delete: if false;
       }
 
+      // Estado público del certificado; la credencial vive únicamente en Secret Manager.
+      match /verifactuConfig/{id} {
+        allow read: if isTenant(companyId) && isAdminActive();
+        allow create, update, delete: if false;
+      }
+
       // products
       match /products/{id} {
         allow read: if isTenant(companyId) && isEmployeeActive();

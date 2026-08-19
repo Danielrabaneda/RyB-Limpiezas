@@ -62,6 +62,12 @@ const { defineSecret } = require("firebase-functions/params");
 const nodemailer = require("nodemailer");
 const Stripe = require("stripe");
 const { createHash, randomBytes } = require("node:crypto");
+const { SecretManagerServiceClient } = require("@google-cloud/secret-manager");
+const {
+  MAX_PFX_BYTES,
+  buildTenantSecretId,
+  parseAndValidatePfx,
+} = require("./lib/aeatCertificate");
 
 // Inicializar Firebase Admin
 initializeApp();
@@ -70,6 +76,29 @@ const messaging = getMessaging();
 const auth = getAuth();
 const stripeSecretKey = defineSecret("STRIPE_SECRET_KEY");
 const stripeWebhookSecret = defineSecret("STRIPE_WEBHOOK_SECRET");
+const secretManager = new SecretManagerServiceClient();
+
+function getGoogleCloudProjectId() {
+  return process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT;
+}
+
+async function ensureTenantCertificateSecret(companyId) {
+  const projectId = getGoogleCloudProjectId();
+  if (!projectId) throw new Error("No se pudo identificar el proyecto de Google Cloud.");
+  const secretId = buildTenantSecretId(companyId);
+  const name = `projects/${projectId}/secrets/${secretId}`;
+  try {
+    await secretManager.getSecret({ name });
+  } catch (error) {
+    if (Number(error.code) !== 5) throw error;
+    await secretManager.createSecret({
+      parent: `projects/${projectId}`,
+      secretId,
+      secret: { replication: { automatic: {} } },
+    });
+  }
+  return name;
+}
 
 // ============================================================================
 // CONSTANTES
@@ -1919,7 +1948,7 @@ exports.configureAeatConnection = onCall(
   },
   async (request) => {
     const companyId = await requireTenantAdmin(request);
-    const profile = normalizeAeatConnectionProfile(request.data?.profile || {});
+    let profile = normalizeAeatConnectionProfile(request.data?.profile || {});
     const verifactuEnabled = request.data?.verifactuEnabled === true;
     if (
       profile.channel === "delegated" &&
@@ -1938,6 +1967,20 @@ exports.configureAeatConnection = onCall(
         "invalid-argument",
         "Indica un nombre para identificar el conector local.",
       );
+    }
+    if (profile.channel === "cloud_certificate") {
+      const certificateSnap = await db.doc(`companies/${companyId}/verifactuConfig/certificate`).get();
+      if (!certificateSnap.exists || certificateSnap.data()?.connected !== true) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Conecta primero el certificado digital de la empresa.",
+        );
+      }
+      profile = {
+        ...profile,
+        credentialsStored: true,
+        schemaValidationStatus: "official_test_xsd_ready",
+      };
     }
 
     const settingsRef = db
@@ -1965,6 +2008,129 @@ exports.configureAeatConnection = onCall(
       },
     });
     return { profile };
+  },
+);
+
+exports.getAeatCertificateStatus = onCall(
+  { region: "europe-west1", memory: "256MiB", timeoutSeconds: 30 },
+  async (request) => {
+    const companyId = await requireTenantAdmin(request);
+    const snap = await db.doc(`companies/${companyId}/verifactuConfig/certificate`).get();
+    if (!snap.exists || snap.data()?.connected !== true) return { connected: false };
+    const data = snap.data();
+    return {
+      connected: true,
+      commonName: data.commonName || "",
+      taxId: data.taxId || "",
+      issuer: data.issuer || "",
+      fingerprintSha256: data.fingerprintSha256 || "",
+      validFrom: data.validFrom || "",
+      validTo: data.validTo || "",
+      daysRemaining: data.daysRemaining || 0,
+      environment: data.environment || "test",
+    };
+  },
+);
+
+exports.connectAeatCertificate = onCall(
+  { region: "europe-west1", memory: "512MiB", timeoutSeconds: 60 },
+  async (request) => {
+    const companyId = await requireTenantAdmin(request);
+    const pfxBase64 = request.data?.pfxBase64;
+    const password = request.data?.password;
+    if (typeof pfxBase64 !== "string" || pfxBase64.length > Math.ceil(MAX_PFX_BYTES * 4 / 3) + 16) {
+      throw new HttpsError("invalid-argument", "El certificado supera el límite permitido.");
+    }
+
+    const settingsSnap = await db.doc(`companies/${companyId}/settings/billing`).get();
+    const expectedTaxId = settingsSnap.data()?.nif;
+    let parsed;
+    try {
+      parsed = parseAndValidatePfx({ pfxBase64, password, expectedTaxId });
+    } catch (error) {
+      throw new HttpsError("invalid-argument", error.message);
+    }
+
+    try {
+      const secretName = await ensureTenantCertificateSecret(companyId);
+      const secretPayload = Buffer.from(JSON.stringify({
+        pfxBase64: parsed.pfxBuffer.toString("base64"),
+        password,
+      }), "utf8");
+      const [version] = await secretManager.addSecretVersion({
+        parent: secretName,
+        payload: { data: secretPayload },
+      });
+      const metadata = {
+        ...parsed.metadata,
+        connected: true,
+        environment: "test",
+        secretVersion: version.name,
+        connectedAt: FieldValue.serverTimestamp(),
+        connectedBy: request.auth.uid,
+      };
+      await db.doc(`companies/${companyId}/verifactuConfig/certificate`).set(metadata);
+      await db.doc(`companies/${companyId}/settings/billing`).set({
+        aeatConnection: {
+          channel: "cloud_certificate",
+          environment: "test",
+          credentialsStored: true,
+          schemaValidationStatus: "official_test_xsd_ready",
+          productionEnabled: false,
+        },
+        aeatConnectionUpdatedAt: FieldValue.serverTimestamp(),
+        aeatConnectionUpdatedBy: request.auth.uid,
+      }, { merge: true });
+      await recordVerifactuEvent(companyId, {
+        type: "aeat_certificate_connected",
+        actorId: request.auth.uid,
+        details: {
+          taxId: parsed.metadata.taxId,
+          fingerprintSha256: parsed.metadata.fingerprintSha256,
+          validTo: parsed.metadata.validTo,
+        },
+      });
+      return { connected: true, ...parsed.metadata, environment: "test" };
+    } catch (error) {
+      logger.error("No se pudo custodiar el certificado AEAT", { companyId, error: error.message });
+      throw new HttpsError("internal", "El certificado es válido, pero no se pudo guardar de forma segura.");
+    }
+  },
+);
+
+exports.disconnectAeatCertificate = onCall(
+  { region: "europe-west1", memory: "256MiB", timeoutSeconds: 60 },
+  async (request) => {
+    const companyId = await requireTenantAdmin(request);
+    const projectId = getGoogleCloudProjectId();
+    const secretName = projectId
+      ? `projects/${projectId}/secrets/${buildTenantSecretId(companyId)}`
+      : null;
+    if (secretName) {
+      try {
+        await secretManager.deleteSecret({ name: secretName });
+      } catch (error) {
+        if (Number(error.code) !== 5) throw error;
+      }
+    }
+    await db.doc(`companies/${companyId}/verifactuConfig/certificate`).delete();
+    await db.doc(`companies/${companyId}/settings/billing`).set({
+      aeatConnection: {
+        channel: "disabled",
+        environment: "test",
+        credentialsStored: false,
+        productionEnabled: false,
+      },
+      verifactuEnabled: false,
+      verifactuMode: "disabled",
+      aeatConnectionUpdatedAt: FieldValue.serverTimestamp(),
+      aeatConnectionUpdatedBy: request.auth.uid,
+    }, { merge: true });
+    await recordVerifactuEvent(companyId, {
+      type: "aeat_certificate_disconnected",
+      actorId: request.auth.uid,
+    });
+    return { connected: false };
   },
 );
 

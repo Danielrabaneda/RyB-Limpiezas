@@ -135,6 +135,24 @@ export async function configureAeatConnection(profile, verifactuEnabled) {
   return result.data;
 }
 
+export async function getAeatCertificateStatus() {
+  const fn = httpsCallable(functions, "getAeatCertificateStatus");
+  const result = await fn({});
+  return result.data;
+}
+
+export async function connectAeatCertificate(pfxBase64, password) {
+  const fn = httpsCallable(functions, "connectAeatCertificate");
+  const result = await fn({ pfxBase64, password });
+  return result.data;
+}
+
+export async function disconnectAeatCertificate() {
+  const fn = httpsCallable(functions, "disconnectAeatCertificate");
+  const result = await fn({});
+  return result.data;
+}
+
 export async function getAeatSubmissions(companyId) {
   const q = query(
     tenantCollection(db, companyId, "aeatSubmissions"),

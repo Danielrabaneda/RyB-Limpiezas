@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   cancelInvoiceFiscalRecord,
+  connectAeatCertificate,
   configureAeatConnection,
+  disconnectAeatCertificate,
+  getAeatCertificateStatus,
   getAeatSubmissionPackage,
   getAeatSubmissions,
   getVerifactuEvents,
@@ -12,6 +15,7 @@ import {
 const STATUS_LABELS = {
   awaiting_sender: "Pendiente del asesor",
   awaiting_local_connector: "Pendiente del conector",
+  awaiting_cloud_sender: "Pendiente de envío seguro",
   processing: "Procesando",
   accepted: "Aceptado en pruebas",
   accepted_with_errors: "Aceptado con errores",
@@ -51,6 +55,9 @@ export default function VerifactuPanel({
   });
   const [submissions, setSubmissions] = useState([]);
   const [events, setEvents] = useState([]);
+  const [certificate, setCertificate] = useState({ connected: false });
+  const [certificateFile, setCertificateFile] = useState(null);
+  const [certificatePassword, setCertificatePassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -67,12 +74,17 @@ export default function VerifactuPanel({
 
   const refresh = async () => {
     if (!companyId) return;
-    const [nextSubmissions, nextEvents] = await Promise.all([
+    const [nextSubmissions, nextEvents, nextCertificate] = await Promise.all([
       getAeatSubmissions(companyId),
       getVerifactuEvents(companyId),
+      getAeatCertificateStatus(),
     ]);
     setSubmissions(nextSubmissions);
     setEvents(nextEvents);
+    setCertificate(nextCertificate);
+    if (nextCertificate.connected) {
+      setProfile((current) => ({ ...current, channel: "cloud_certificate" }));
+    }
   };
 
   useEffect(() => {
@@ -107,6 +119,32 @@ export default function VerifactuPanel({
       await prepareAeatSubmissions(eligibleInvoices.map(({ id }) => id));
       await onInvoicesChanged?.();
     }, "Paquetes de pruebas preparados.");
+
+  const connectCertificate = () =>
+    run(async () => {
+      if (!certificateFile) throw new Error("Selecciona el archivo .pfx o .p12.");
+      if (!certificatePassword) throw new Error("Escribe la contraseña del certificado.");
+      if (certificateFile.size > 512 * 1024) throw new Error("El archivo supera el límite de 512 KB.");
+      const bytes = new Uint8Array(await certificateFile.arrayBuffer());
+      let binary = "";
+      for (let offset = 0; offset < bytes.length; offset += 8192) {
+        binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
+      }
+      await connectAeatCertificate(btoa(binary), certificatePassword);
+      setCertificatePassword("");
+      setCertificateFile(null);
+      await onSettingsChanged?.();
+    }, "Certificado conectado y custodiado de forma segura.");
+
+  const disconnectCertificate = () => {
+    if (!window.confirm("¿Desconectar y eliminar de forma segura el certificado de esta empresa?")) return;
+    run(async () => {
+      await disconnectAeatCertificate();
+      setProfile((current) => ({ ...current, channel: "disabled" }));
+      setEnabled(false);
+      await onSettingsChanged?.();
+    }, "Certificado desconectado.");
+  };
 
   const downloadPackage = async (submissionId) => {
     setBusy(true);
@@ -178,6 +216,7 @@ export default function VerifactuPanel({
             }
           >
             <option value="disabled">Sin canal</option>
+            <option value="cloud_certificate">Certificado en la nube (recomendado)</option>
             <option value="delegated">Asesor / tercero autorizado</option>
             <option value="local_connector">Conector local</option>
           </select>
@@ -193,6 +232,39 @@ export default function VerifactuPanel({
           <input className="form-input" placeholder="Nombre del conector" value={profile.connectorName} onChange={(event) => setProfile({ ...profile, connectorName: event.target.value })} />
         )}
       </div>
+
+      {profile.channel === "cloud_certificate" && (
+        <div style={{ marginTop: 14, padding: 14, borderRadius: 8, background: "white", border: "1px solid #cbd5e1" }}>
+          <h4 style={{ marginTop: 0 }}>Certificado digital de la empresa</h4>
+          {certificate.connected ? (
+            <>
+              <p style={{ marginBottom: 6 }}><strong>Conectado:</strong> {certificate.commonName}</p>
+              <p style={{ margin: "4px 0", fontSize: 13 }}>NIF {certificate.taxId} · válido hasta {new Date(certificate.validTo).toLocaleDateString("es-ES")}</p>
+              <p style={{ margin: "4px 0", fontSize: 13, color: certificate.daysRemaining < 30 ? "#b45309" : "#15803d" }}>
+                Quedan {certificate.daysRemaining} días de validez. Te avisaremos antes de que caduque.
+              </p>
+              <button type="button" className="btn btn-outline" disabled={busy} onClick={disconnectCertificate}>Desconectar certificado</button>
+            </>
+          ) : (
+            <>
+              <p style={{ color: "#475569", fontSize: 13 }}>
+                Sube el archivo .pfx o .p12 y escribe su contraseña. Se comprobará el NIF y se guardará cifrado, separado de los datos de facturación.
+              </p>
+              <div className="grid grid-2 gap-4">
+                <label className="form-group">
+                  <span className="form-label">Archivo del certificado</span>
+                  <input className="form-input" type="file" accept=".pfx,.p12,application/x-pkcs12" onChange={(event) => setCertificateFile(event.target.files?.[0] || null)} />
+                </label>
+                <label className="form-group">
+                  <span className="form-label">Contraseña</span>
+                  <input className="form-input" type="password" autoComplete="new-password" value={certificatePassword} onChange={(event) => setCertificatePassword(event.target.value)} />
+                </label>
+              </div>
+              <button type="button" className="btn btn-primary" disabled={busy || !certificateFile || !certificatePassword} onClick={connectCertificate}>Comprobar y conectar</button>
+            </>
+          )}
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
         <button type="button" className="btn btn-primary" disabled={busy} onClick={saveConfiguration}>Guardar VeriFactu</button>
