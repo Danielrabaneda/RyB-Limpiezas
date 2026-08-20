@@ -66,7 +66,7 @@ $result = [ordered]@{
 
 if (-not $SkipNetwork) {
   $handler = [System.Net.Http.HttpClientHandler]::new()
-  $handler.ClientCertificates.Add($certificate)
+  [void]$handler.ClientCertificates.Add($certificate)
   $handler.CheckCertificateRevocationList = $true
   $client = [System.Net.Http.HttpClient]::new($handler)
   $client.Timeout = [TimeSpan]::FromSeconds(30)

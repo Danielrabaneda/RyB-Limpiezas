@@ -42,6 +42,7 @@ function Invoke-JsonPost([string]$Uri, [hashtable]$Body, [string]$Token = "") {
 
 function Find-CompanyCertificate([string]$ExpectedTaxId) {
   $now = Get-Date
+  $normalizedTaxId = ($ExpectedTaxId -replace "[^a-zA-Z0-9]", "").ToUpperInvariant()
   $candidates = @(
     Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue
     Get-ChildItem Cert:\LocalMachine\My -ErrorAction SilentlyContinue
@@ -49,17 +50,17 @@ function Find-CompanyCertificate([string]$ExpectedTaxId) {
     $_.HasPrivateKey -and
     $_.NotBefore -le $now -and
     $_.NotAfter -gt $now -and
-    $_.Subject -match [regex]::Escape($ExpectedTaxId)
+    (($_.Subject -replace "[^a-zA-Z0-9]", "").ToUpperInvariant()) -match [regex]::Escape($normalizedTaxId)
   } | Sort-Object NotAfter -Descending
   if ($candidates.Count -eq 0) {
-    throw "No encontramos un certificado vigente con clave privada para el NIF $ExpectedTaxId."
+    throw "No encontramos un certificado vigente con clave privada para el NIF $normalizedTaxId."
   }
   return $candidates[0]
 }
 
 function Test-AeatAccess($Certificate) {
   $handler = [Net.Http.HttpClientHandler]::new()
-  $handler.ClientCertificates.Add($Certificate)
+  [void]$handler.ClientCertificates.Add($Certificate)
   $handler.CheckCertificateRevocationList = $true
   $client = [Net.Http.HttpClient]::new($handler)
   $client.Timeout = [TimeSpan]::FromSeconds(30)
