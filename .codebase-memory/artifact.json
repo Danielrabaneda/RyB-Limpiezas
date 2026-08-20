@@ -1,11 +1,11 @@
 {
     "schema_version": 2,
-    "commit": "2623202015e2860a8f00467fb216f013485cdaa2",
-    "indexed_at": "2026-08-20T18:08:32Z",
+    "commit": "ce9ed343f90109a5d38ba3b8910a40b2d0c97222",
+    "indexed_at": "2026-08-20T18:08:41Z",
     "project": "C-Proyectos-RyB-app",
     "nodes": 2946,
     "edges": 8057,
     "original_size": 10027008,
-    "compressed_size": 2122569,
+    "compressed_size": 2122786,
     "compression_level": 3
 }
