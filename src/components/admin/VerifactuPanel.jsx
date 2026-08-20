@@ -4,6 +4,7 @@ import {
   connectAeatCertificate,
   configureAeatConnection,
   disconnectAeatCertificate,
+  disconnectLocalConnector,
   getAeatCertificateStatus,
   getLocalConnectorStatus,
   getAeatSubmissionPackage,
@@ -163,6 +164,17 @@ export default function VerifactuPanel({
       }));
     }, "Código preparado. Es válido durante 10 minutos.");
 
+  const removeLocalConnector = () => {
+    if (!window.confirm("¿Desconectar este ordenador? El conector dejará de poder acceder a la cola de esta empresa.")) return;
+    run(async () => {
+      await disconnectLocalConnector();
+      setPairing(null);
+      setProfile((current) => ({ ...current, channel: "disabled" }));
+      setEnabled(false);
+      await onSettingsChanged?.();
+    }, "Ordenador desconectado de LimpiaGest.");
+  };
+
   const downloadPackage = async (submissionId) => {
     setBusy(true);
     try {
@@ -283,13 +295,15 @@ export default function VerifactuPanel({
       {profile.channel === "local_connector" && (
         <div style={{ marginTop: 14, padding: 14, borderRadius: 8, background: "white", border: "1px solid #cbd5e1" }}>
           <h4 style={{ marginTop: 0 }}>Conectar este ordenador</h4>
-          {connectorStatus.online ? (
+          {connectorStatus.online && !pairing ? (
             <>
               <p style={{ marginBottom: 6, color: "#15803d" }}><strong>Conector activo:</strong> {connectorStatus.connectorName}</p>
               <p style={{ margin: "4px 0", fontSize: 13 }}>{connectorStatus.certificateSubject}</p>
               <p style={{ margin: "4px 0", fontSize: 13 }}>
                 Certificado válido hasta {new Date(connectorStatus.certificateValidTo).toLocaleDateString("es-ES")} · prueba AEAT {connectorStatus.aeatTestReachable ? "correcta" : "pendiente"}.
               </p>
+              <button type="button" className="btn btn-outline" disabled={busy} onClick={beginLocalPairing}>Cambiar de ordenador</button>
+              <button type="button" className="btn btn-outline" style={{ marginLeft: 8 }} disabled={busy} onClick={removeLocalConnector}>Desconectar</button>
             </>
           ) : (
             <>
@@ -308,8 +322,8 @@ export default function VerifactuPanel({
                   <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>Código válido durante 10 minutos</p>
                   <p style={{ margin: "6px 0", fontSize: 24, fontWeight: 700, letterSpacing: 3 }}>{pairing.pairingCode}</p>
                   <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>Identificador: {pairing.companyId}</p>
-                  <a className="btn btn-outline" style={{ display: "inline-block", marginTop: 10 }} href="https://raw.githubusercontent.com/Danielrabaneda/RyB-Limpiezas/fix/companion-ops-and-rules/connector/windows/Connect-LimpiaGest.ps1" download>
-                    Descargar conector para Windows
+                  <a className="btn btn-outline" style={{ display: "inline-block", marginTop: 10 }} href="/downloads/LimpiaGest-Conector-Windows.zip" download>
+                    Descargar instalador para Windows
                   </a>
                   <button type="button" className="btn btn-outline" style={{ marginLeft: 8 }} disabled={busy} onClick={refresh}>Ya lo he conectado</button>
                 </div>

@@ -33,6 +33,7 @@ const {
   AEAT_JOB_STATUSES,
   MAX_SUBMISSION_ATTEMPTS,
   buildAeatSubmissionDraftXml,
+  buildAeatOfficialSoapEnvelope,
   buildSubmissionManifest,
   getInitialSubmissionStatus,
   getNextRetryDate,
@@ -115,6 +116,19 @@ function parseConnectorBody(request) {
     return null;
   }
   return request.body;
+}
+
+async function authenticateLocalConnector(request, body) {
+  const companyId = String(body?.companyId || "").trim();
+  const token = String(request.get("authorization") || "").replace(/^Bearer\s+/i, "");
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(companyId) || !token) return null;
+  const ref = db.doc(`companies/${companyId}/verifactuConfig/localConnector`);
+  const snap = await ref.get();
+  const data = snap.data();
+  if (!snap.exists || !data.connectorTokenHash || data.connectorTokenHash !== hashConnectorCredential(token)) {
+    return null;
+  }
+  return { companyId, ref, data };
 }
 
 // ============================================================================
@@ -2202,6 +2216,37 @@ exports.getLocalConnectorStatus = onCall(
   },
 );
 
+exports.disconnectLocalConnector = onCall(
+  { region: "europe-west1", memory: "256MiB", timeoutSeconds: 30 },
+  async (request) => {
+    const companyId = await requireTenantAdmin(request);
+    await db.doc(`companies/${companyId}/verifactuConfig/localConnector`).set({
+      connectorTokenHash: FieldValue.delete(),
+      pairingCodeHash: FieldValue.delete(),
+      pairingUsed: true,
+      status: "disconnected",
+      disconnectedAt: FieldValue.serverTimestamp(),
+      disconnectedBy: request.auth.uid,
+    }, { merge: true });
+    await db.doc(`companies/${companyId}/settings/billing`).set({
+      aeatConnection: {
+        channel: "disabled",
+        environment: "test",
+        credentialsStored: false,
+        productionEnabled: false,
+      },
+      verifactuEnabled: false,
+      verifactuMode: "disabled",
+      aeatConnectionUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    await recordVerifactuEvent(companyId, {
+      type: "local_connector_disconnected",
+      actorId: request.auth.uid,
+    });
+    return { status: "disconnected" };
+  },
+);
+
 exports.localConnectorPair = onRequest(
   { region: "europe-west1", memory: "256MiB", timeoutSeconds: 30, cors: false },
   async (request, response) => {
@@ -2239,6 +2284,8 @@ exports.localConnectorPair = onRequest(
         expectedTaxId,
         environment: "test",
         heartbeatUrl: "https://europe-west1-ryb-limpiezas-app.cloudfunctions.net/localConnectorHeartbeat",
+        claimUrl: "https://europe-west1-ryb-limpiezas-app.cloudfunctions.net/localConnectorClaim",
+        resultUrl: "https://europe-west1-ryb-limpiezas-app.cloudfunctions.net/localConnectorResult",
       });
     } catch {
       return response.status(401).json({ error: "invalid_or_expired_pairing" });
@@ -2251,20 +2298,14 @@ exports.localConnectorHeartbeat = onRequest(
   async (request, response) => {
     if (request.method !== "POST") return response.status(405).json({ error: "method_not_allowed" });
     const body = parseConnectorBody(request);
-    const companyId = String(body?.companyId || "").trim();
-    const token = String(request.get("authorization") || "").replace(/^Bearer\s+/i, "");
-    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(companyId) || !token) {
+    const authenticated = await authenticateLocalConnector(request, body);
+    if (!authenticated) {
       return response.status(401).json({ error: "unauthorized" });
     }
-    const ref = db.doc(`companies/${companyId}/verifactuConfig/localConnector`);
-    const snap = await ref.get();
-    const data = snap.data();
-    if (!snap.exists || !data.connectorTokenHash ||
-        data.connectorTokenHash !== hashConnectorCredential(token)) {
-      return response.status(401).json({ error: "unauthorized" });
-    }
-    const certificateTaxId = String(body.certificateTaxId || "").trim().toUpperCase();
-    if (certificateTaxId !== data.expectedTaxId) {
+    const { companyId, ref, data } = authenticated;
+    const certificateTaxId = String(body.certificateTaxId || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const expectedTaxId = String(data.expectedTaxId || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (certificateTaxId !== expectedTaxId) {
       return response.status(409).json({ error: "certificate_tax_id_mismatch" });
     }
     const safeUpdate = {
@@ -2289,7 +2330,152 @@ exports.localConnectorHeartbeat = onRequest(
       },
       aeatConnectionUpdatedAt: FieldValue.serverTimestamp(),
     }, { merge: true });
-    return response.status(200).json({ ok: true, environment: "test", jobsAvailable: false });
+    return response.status(200).json({
+      ok: true,
+      environment: "test",
+      claimUrl: "https://europe-west1-ryb-limpiezas-app.cloudfunctions.net/localConnectorClaim",
+      resultUrl: "https://europe-west1-ryb-limpiezas-app.cloudfunctions.net/localConnectorResult",
+    });
+  },
+);
+
+exports.localConnectorClaim = onRequest(
+  { region: "europe-west1", memory: "256MiB", timeoutSeconds: 30, cors: false },
+  async (request, response) => {
+    if (request.method !== "POST") return response.status(405).json({ error: "method_not_allowed" });
+    const body = parseConnectorBody(request);
+    const authenticated = await authenticateLocalConnector(request, body);
+    if (!authenticated) return response.status(401).json({ error: "unauthorized" });
+    const { companyId } = authenticated;
+    const submissionsRef = db.collection(`companies/${companyId}/aeatSubmissions`);
+    const candidateSnaps = [];
+    for (const status of ["awaiting_local_connector", "retry_pending", "processing"]) {
+      const snap = await submissionsRef.where("status", "==", status).limit(10).get();
+      candidateSnaps.push(...snap.docs);
+    }
+    const now = Date.now();
+    const candidate = candidateSnaps
+      .filter((entry) => {
+        const data = entry.data();
+        if (data.status === "processing") {
+          return data.leaseUntil?.toMillis?.() < now;
+        }
+        return !data.nextAttemptAt || data.nextAttemptAt.toMillis() <= now;
+      })
+      .sort((a, b) => (a.data().createdAt?.toMillis?.() || 0) - (b.data().createdAt?.toMillis?.() || 0))[0];
+    if (!candidate) return response.status(200).json({ job: null, retryAfterSeconds: 30 });
+    const claimed = await db.runTransaction(async (transaction) => {
+      const fresh = await transaction.get(candidate.ref);
+      const data = fresh.data();
+      if (!fresh.exists || !["awaiting_local_connector", "retry_pending", "processing"].includes(data.status)) return null;
+      if (data.status === "processing" && (!data.leaseUntil || data.leaseUntil.toMillis() >= Date.now())) return null;
+      if (data.nextAttemptAt && data.nextAttemptAt.toMillis() > Date.now()) return null;
+      transaction.update(candidate.ref, {
+        status: "processing",
+        attempts: FieldValue.increment(1),
+        leaseUntil: Timestamp.fromMillis(Date.now() + 2 * 60 * 1000),
+        claimedAt: FieldValue.serverTimestamp(),
+      });
+      return data;
+    });
+    if (!claimed) return response.status(200).json({ job: null, retryAfterSeconds: 10 });
+    const [fiscalSnap, settingsSnap] = await Promise.all([
+      db.doc(`companies/${companyId}/fiscalRecords/${claimed.fiscalRecordId}`).get(),
+      db.doc(`companies/${companyId}/settings/billing`).get(),
+    ]);
+    if (!fiscalSnap.exists) {
+      await candidate.ref.update({ status: "rejected", lastError: "Registro fiscal no encontrado", processedAt: FieldValue.serverTimestamp() });
+      return response.status(500).json({ error: "missing_fiscal_record" });
+    }
+    const fiscalRecord = fiscalSnap.data();
+    let previousFiscalRecord = null;
+    if (fiscalRecord.chain?.previousFiscalRecordId) {
+      const previousSnap = await db.doc(`companies/${companyId}/fiscalRecords/${fiscalRecord.chain.previousFiscalRecordId}`).get();
+      previousFiscalRecord = previousSnap.exists ? previousSnap.data() : null;
+    }
+    const soapXml = buildAeatOfficialSoapEnvelope(
+      fiscalRecord,
+      { ...(settingsSnap.data() || {}), companyId },
+      previousFiscalRecord,
+    );
+    return response.status(200).json({
+      job: {
+        submissionId: candidate.id,
+        environment: "test",
+        endpoint: "https://prewww1.aeat.es/wlpl/TIKE-CONT/ws/SistemaFacturacion/VerifactuSOAP",
+        soapAction: "",
+        soapXml,
+      },
+    });
+  },
+);
+
+exports.localConnectorResult = onRequest(
+  { region: "europe-west1", memory: "256MiB", timeoutSeconds: 30, cors: false },
+  async (request, response) => {
+    if (request.method !== "POST") return response.status(405).json({ error: "method_not_allowed" });
+    const body = parseConnectorBody(request);
+    const authenticated = await authenticateLocalConnector(request, body);
+    if (!authenticated) return response.status(401).json({ error: "unauthorized" });
+    const { companyId } = authenticated;
+    const submissionId = String(body?.submissionId || "").trim();
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(submissionId)) return response.status(400).json({ error: "invalid_submission" });
+    const ref = db.doc(`companies/${companyId}/aeatSubmissions/${submissionId}`);
+    const result = await db.runTransaction(async (transaction) => {
+      const snap = await transaction.get(ref);
+      if (!snap.exists) return null;
+      const submission = snap.data();
+      if (submission.environment !== "test" || submission.productionEnabled === true) throw new Error("production_blocked");
+      const transportOk = body.transportOk === true;
+      const permanentFailure = body.permanentFailure === true;
+      const recordState = String(body.recordState || "").slice(0, 50);
+      const status = !transportOk
+        ? (permanentFailure ? "rejected" : "retry_pending")
+        : recordState === "Correcto"
+          ? "accepted"
+          : recordState === "AceptadoConErrores"
+            ? "accepted_with_errors"
+            : "rejected";
+      const nextAttemptAt = status === "retry_pending" && Number(submission.attempts || 0) < MAX_SUBMISSION_ATTEMPTS
+        ? Timestamp.fromDate(getNextRetryDate(Number(submission.attempts || 0)))
+        : null;
+      const finalStatus = status === "retry_pending" && !nextAttemptAt ? "rejected" : status;
+      const aeatResponse = {
+        csv: String(body.csv || "").slice(0, 100),
+        code: String(body.code || "").slice(0, 100),
+        message: String(body.message || "").slice(0, 1500),
+        shipmentState: String(body.shipmentState || "").slice(0, 50),
+        recordState,
+        waitSeconds: Math.max(0, Math.min(3600, Number(body.waitSeconds) || 0)),
+        httpStatus: Math.max(0, Math.min(999, Number(body.httpStatus) || 0)),
+      };
+      transaction.update(ref, {
+        status: finalStatus,
+        nextAttemptAt,
+        leaseUntil: null,
+        aeatResponse,
+        lastError: ["rejected", "retry_pending"].includes(finalStatus) ? aeatResponse.message : null,
+        processedAt: FieldValue.serverTimestamp(),
+        processedBy: "local_connector",
+      });
+      transaction.update(db.doc(`companies/${companyId}/invoices/${submission.invoiceId}`), {
+        aeatStatus: finalStatus,
+        aeatEnvironment: "test",
+        aeatProductionAccepted: false,
+        aeatResponseCode: aeatResponse.code,
+        aeatCsv: aeatResponse.csv,
+        aeatProcessedAt: FieldValue.serverTimestamp(),
+      });
+      return { status: finalStatus };
+    });
+    if (!result) return response.status(404).json({ error: "not_found" });
+    await recordVerifactuEvent(companyId, {
+      type: "aeat_connector_result_recorded",
+      actorId: "local_connector",
+      submissionId,
+      details: { status: result.status },
+    });
+    return response.status(200).json({ ok: true, ...result });
   },
 );
 

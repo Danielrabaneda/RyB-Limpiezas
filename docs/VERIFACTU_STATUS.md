@@ -1,87 +1,65 @@
 # Estado de cierre de facturación y VeriFactu
 
-Actualizado: 19 de agosto de 2026.
+Actualizado: 20 de agosto de 2026.
 
-## Conexión del certificado
+## Terminado y publicado
 
-- Implementado el asistente para que cada empresa conecte un archivo `.pfx` o `.p12` desde la plataforma.
-- El backend comprueba contraseña, clave privada, vigencia y coincidencia del NIF.
-- La credencial se custodia por empresa en Google Secret Manager; Firestore conserva únicamente metadatos no secretos.
-- La pantalla muestra la caducidad y permite desconectar y eliminar la credencial.
-- El conector Windows queda como alternativa para certificados no exportables.
-- El entorno continúa fijado en pruebas y no se realizan envíos automáticos.
+- Facturación fiscal transaccional: series, impuestos, huella SHA-256,
+  encadenamiento, altas, anulaciones y subsanaciones.
+- Cola por empresa con reclamación exclusiva, arrendamiento, idempotencia,
+  reintentos exponenciales y registro de resultados.
+- Sobre SOAP 1.1 oficial y validación previa contra los XSD publicados por la
+  AEAT para VeriFactu 1.0.
+- Conector Windows para certificados no exportables: detección automática por
+  NIF, uso de la clave privada dentro del almacén de Windows y acceso mutuo TLS.
+- Emparejamiento de un solo uso, token local protegido con DPAPI, latido,
+  desconexión y cambio de ordenador desde LimpiaGest.
+- Instalador de pruebas, inicio automático al entrar en Windows, desinstalador
+  y paquete descargable desde la propia plataforma.
+- Barreras del conector: solo admite el endpoint AEAT de pruebas y no transmite
+  XML que incumpla el esquema oficial.
+- Alternativa de carga `.pfx/.p12` custodiada por empresa en Secret Manager.
+- Aplicación y funciones publicadas en Firebase sobre Node.js 22.
+- Pruebas automáticas, compilación web, sintaxis PowerShell y validación XSD
+  superadas. El certificado B04843843 fue detectado y su acceso al WSDL de
+  pruebas quedó comprobado.
 
-### Alta para certificados protegidos por Windows
+El certificado y su clave privada nunca salen de Windows en el flujo del
+conector local. La plataforma recibe únicamente metadatos y resultados.
 
-- La pantalla ofrece `Usar el certificado de este ordenador` sin pedir huella,
-  almacén ni contraseña del certificado.
-- Se genera un código aleatorio de un solo uso que caduca en 10 minutos.
-- El conector empareja la empresa, detecta automáticamente el certificado por
-  NIF y envía únicamente metadatos y estado de conexión.
-- Su credencial local queda cifrada mediante DPAPI y ligada al usuario de
-  Windows; la clave privada nunca sale del almacén del sistema.
-- El conector comprueba el acceso al WSDL oficial de pruebas y mantiene un
-  latido cada minuto. Todavía no reclama ni envía facturas.
-- Antes del lanzamiento comercial debe empaquetarse y firmarse como instalador
-  de Windows para sustituir la descarga temporal del script de pruebas.
+## Bloqueo de seguridad actual
 
-Para cerrar esta fase faltan la habilitación y permisos de Secret Manager, una
-prueba completa con un `.pfx/.p12` real y la implementación/homologación del
-envío SOAP mutuo contra la AEAT.
+El entorno permanece fijado en `test`, `productionEnabled` no puede activarse
+desde la interfaz y el conector local solo acepta la URL AEAT de pruebas. No se
+ha emitido ninguna factura real ni se ha realizado la primera transmisión
+fiscal controlada.
 
-## Estado alcanzado
+## Las tres tareas finales pendientes
 
-La aplicación queda preparada para trabajar de forma segura en modo VeriFactu
-de pruebas. La activación de producción está bloqueada deliberadamente.
+### 1. Primera transmisión y validación externa en AEAT de pruebas
 
-Implementado:
+Con autorización expresa, crear un caso fiscal de prueba controlado y conservar
+las evidencias de alta, aceptación/rechazo, anulación, subsanación, reintento y
+cotejo QR. Requiere que el ordenador con el certificado esté encendido.
 
-- emisión fiscal exclusiva desde Cloud Functions;
-- numeración por series dentro de transacciones;
-- cálculo fiscal, huella SHA-256 y encadenamiento inmutable;
-- altas, anulaciones, subsanaciones y rectificativas;
-- paquetes de transporte versionados con clave de idempotencia;
-- cola por empresa, contador de intentos y espera exponencial;
-- estados de aceptación, rechazo y reintento;
-- panel administrativo para configuración, cola, descarga y operaciones;
-- bitácora operativa `verifactuEvents`, inmutable desde el cliente;
-- reglas de acceso para facturas, registros fiscales, cola y bitácora;
-- pruebas unitarias de cálculo, huella, XML, manifiesto y reintentos.
+### 2. Revisión legal y declaración responsable
 
-El XML que se descarga es un paquete estable de transporte para pruebas. No se
-presenta como un sobre SOAP aceptado por la AEAT: el conector final deberá
-transformarlo y validarlo contra el WSDL/XSD oficial sin alterar el registro
-fiscal ni su huella.
+Confirmar con asesoría los datos definitivos del productor de LimpiaGest,
+revisar la batería de evidencias y preparar, firmar y publicar la declaración
+responsable exigible antes de la comercialización.
 
-## Únicos bloqueos externos pendientes
+### 3. Distribución firmada y activación de producción
 
-### 1. Certificado electrónico y acceso AEAT
+Adquirir un certificado de firma de código, firmar el instalador Windows y
+realizar una revisión final independiente. Solo después deberá desarrollarse y
+desplegarse la habilitación explícita de producción.
 
-Pendiente recibir un certificado válido, su cadena y la autorización para usar
-el portal de pruebas. Las credenciales no deben guardarse en Firestore ni en el
-navegador; deberán residir en Secret Manager o en el conector local autorizado.
+## Cómo continuar
 
-### 2. Validación externa completa
-
-Pendiente ejecutar la batería de altas, anulaciones, subsanaciones, rechazos,
-reintentos y cotejo QR contra el portal externo de la AEAT. Hasta superar esta
-fase deben mantenerse `environment=test` y `productionEnabled=false`.
-
-### 3. Declaración responsable y activación de producción
-
-Pendiente completar los datos legales del productor, revisar la versión con un
-asesor competente, firmar y publicar la declaración responsable. La activación
-de producción deberá hacerse después mediante un cambio explícito, revisado y
-desplegado; no existe un interruptor de producción accesible desde la interfaz.
-
-## Continuación recomendada
-
-1. Incorporar certificado mediante secretos o conector local.
-2. Sustituir el contenedor de transporte por el SOAP oficial vigente y validar
-   cada mensaje contra los esquemas de la AEAT.
-3. Ejecutar y conservar las evidencias del portal de pruebas.
-4. Completar y firmar la declaración responsable.
-5. Habilitar producción en una versión posterior con revisión independiente.
+Retomar esta tarea con la autorización para ejecutar el primer caso fiscal de
+pruebas. No hace falta exportar el certificado: el conector utilizará el ya
+instalado en Windows. Hasta entonces puede apagarse el ordenador; solo deberá
+estar encendido cuando se vaya a transmitir o cuando deba procesar la cola.
 
 ## Puntos de entrada
 
@@ -90,6 +68,9 @@ desplegado; no existe un interruptor de producción accesible desde la interfaz.
 - `functions/index.js`
 - `functions/lib/invoiceEmission.js`
 - `functions/lib/aeatSubmission.js`
+- `connector/windows/Connect-LimpiaGest.ps1`
+- `connector/windows/Install-LimpiaGestConnector.ps1`
+- `connector/windows/Test-OfficialSoapSchema.ps1`
 - `functions/test/aeatSubmission.test.cjs`
 - `functions/test/invoiceEmission.test.cjs`
 - `firestore.rules`

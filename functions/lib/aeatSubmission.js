@@ -35,6 +35,132 @@ function escapeXml(value) {
     .replaceAll("'", "&apos;");
 }
 
+function normalizeTaxId(value) {
+  return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function formatAeatDate(value) {
+  if (typeof value === "string" && /^\d{2}-\d{2}-\d{4}$/.test(value)) return value;
+  const date = value?.toDate ? value.toDate() : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${String(date.getUTCDate()).padStart(2, "0")}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${date.getUTCFullYear()}`;
+}
+
+function buildOfficialTaxBreakdownXml(taxBreakdown = []) {
+  return taxBreakdown.map((entry) => {
+    const treatment = String(entry.taxTreatment || "taxable");
+    const classification = treatment === "exempt"
+      ? `<sf:OperacionExenta>${escapeXml(entry.exemptionCause || "E1")}</sf:OperacionExenta>`
+      : `<sf:CalificacionOperacion>${escapeXml(entry.nonSubjectCause || "S1")}</sf:CalificacionOperacion>`;
+    return [
+      "<sf:DetalleDesglose>",
+      "<sf:Impuesto>01</sf:Impuesto>",
+      "<sf:ClaveRegimen>01</sf:ClaveRegimen>",
+      classification,
+      treatment === "taxable" ? `<sf:TipoImpositivo>${Number(entry.taxRate || 0).toFixed(2)}</sf:TipoImpositivo>` : "",
+      `<sf:BaseImponibleOimporteNoSujeto>${Number(entry.taxableBase || 0).toFixed(2)}</sf:BaseImponibleOimporteNoSujeto>`,
+      treatment === "taxable" ? `<sf:CuotaRepercutida>${Number(entry.taxAmount || 0).toFixed(2)}</sf:CuotaRepercutida>` : "",
+      Number(entry.surchargeRate || 0) ? `<sf:TipoRecargoEquivalencia>${Number(entry.surchargeRate).toFixed(2)}</sf:TipoRecargoEquivalencia>` : "",
+      Number(entry.surchargeAmount || 0) ? `<sf:CuotaRecargoEquivalencia>${Number(entry.surchargeAmount).toFixed(2)}</sf:CuotaRecargoEquivalencia>` : "",
+      "</sf:DetalleDesglose>",
+    ].filter(Boolean).join("");
+  }).join("");
+}
+
+function buildOfficialChainXml(fiscalRecord, previousFiscalRecord) {
+  if (!previousFiscalRecord) return "<sf:PrimerRegistro>S</sf:PrimerRegistro>";
+  return [
+    "<sf:RegistroAnterior>",
+    `<sf:IDEmisorFactura>${escapeXml(normalizeTaxId(previousFiscalRecord.issuerNif))}</sf:IDEmisorFactura>`,
+    `<sf:NumSerieFactura>${escapeXml(previousFiscalRecord.invoiceNumber || "")}</sf:NumSerieFactura>`,
+    `<sf:FechaExpedicionFactura>${escapeXml(previousFiscalRecord.fechaExpedicionFactura || formatAeatDate(previousFiscalRecord.issueDate))}</sf:FechaExpedicionFactura>`,
+    `<sf:Huella>${escapeXml(previousFiscalRecord.chain?.hash || fiscalRecord.chain?.previousHash || "")}</sf:Huella>`,
+    "</sf:RegistroAnterior>",
+  ].join("");
+}
+
+function buildAeatOfficialSoapEnvelope(fiscalRecord, settings = {}, previousFiscalRecord = null) {
+  const issuerNif = normalizeTaxId(fiscalRecord.issuerNif || settings.nif);
+  const issuerName = String(settings.companyName || fiscalRecord.system?.producer || "").slice(0, 120);
+  const invoiceDate = fiscalRecord.fechaExpedicionFactura || formatAeatDate(fiscalRecord.issueDate);
+  const chainXml = buildOfficialChainXml(fiscalRecord, previousFiscalRecord);
+  const systemName = String(settings.softwareName || "LimpiaGest").slice(0, 30);
+  const producerName = String(settings.softwareProducerName || "LIMPIEZAS RAIBA SOCIEDAD LIMITADA").slice(0, 120);
+  const producerNif = normalizeTaxId(settings.softwareProducerNif || "B04843843");
+  const installation = String(fiscalRecord.companyId || settings.companyId || "tenant").slice(0, 100);
+  const systemXml = [
+    "<sf:SistemaInformatico>",
+    `<sf:NombreRazon>${escapeXml(producerName)}</sf:NombreRazon>`,
+    `<sf:NIF>${escapeXml(producerNif)}</sf:NIF>`,
+    `<sf:NombreSistemaInformatico>${escapeXml(systemName)}</sf:NombreSistemaInformatico>`,
+    "<sf:IdSistemaInformatico>LG</sf:IdSistemaInformatico>",
+    "<sf:Version>1.0.0</sf:Version>",
+    `<sf:NumeroInstalacion>${escapeXml(installation)}</sf:NumeroInstalacion>`,
+    "<sf:TipoUsoPosibleSoloVerifactu>S</sf:TipoUsoPosibleSoloVerifactu>",
+    "<sf:TipoUsoPosibleMultiOT>S</sf:TipoUsoPosibleMultiOT>",
+    "<sf:IndicadorMultiplesOT>N</sf:IndicadorMultiplesOT>",
+    "</sf:SistemaInformatico>",
+  ].join("");
+  let recordXml;
+  if (fiscalRecord.recordType === "anulacion") {
+    recordXml = [
+      "<sf:RegistroAnulacion>",
+      "<sf:IDVersion>1.0</sf:IDVersion>",
+      "<sf:IDFactura>",
+      `<sf:IDEmisorFacturaAnulada>${escapeXml(issuerNif)}</sf:IDEmisorFacturaAnulada>`,
+      `<sf:NumSerieFacturaAnulada>${escapeXml(fiscalRecord.invoiceNumber || "")}</sf:NumSerieFacturaAnulada>`,
+      `<sf:FechaExpedicionFacturaAnulada>${escapeXml(invoiceDate)}</sf:FechaExpedicionFacturaAnulada>`,
+      "</sf:IDFactura>",
+      `<sf:Encadenamiento>${chainXml}</sf:Encadenamiento>`,
+      systemXml,
+      `<sf:FechaHoraHusoGenRegistro>${escapeXml(fiscalRecord.fechaHoraHusoGenRegistro || "")}</sf:FechaHoraHusoGenRegistro>`,
+      "<sf:TipoHuella>01</sf:TipoHuella>",
+      `<sf:Huella>${escapeXml(fiscalRecord.chain?.hash || "")}</sf:Huella>`,
+      "</sf:RegistroAnulacion>",
+    ].join("");
+  } else {
+    const clientNif = normalizeTaxId(fiscalRecord.client?.taxId);
+    const recipients = clientNif ? [
+      "<sf:Destinatarios><sf:IDDestinatario>",
+      `<sf:NombreRazon>${escapeXml(String(fiscalRecord.client?.name || "").slice(0, 120))}</sf:NombreRazon>`,
+      `<sf:NIF>${escapeXml(clientNif)}</sf:NIF>`,
+      "</sf:IDDestinatario></sf:Destinatarios>",
+    ].join("") : "";
+    const description = (fiscalRecord.items || []).map((item) => item.description).filter(Boolean).join("; ").slice(0, 500) || "Prestación de servicios";
+    recordXml = [
+      "<sf:RegistroAlta>",
+      "<sf:IDVersion>1.0</sf:IDVersion>",
+      "<sf:IDFactura>",
+      `<sf:IDEmisorFactura>${escapeXml(issuerNif)}</sf:IDEmisorFactura>`,
+      `<sf:NumSerieFactura>${escapeXml(fiscalRecord.invoiceNumber || "")}</sf:NumSerieFactura>`,
+      `<sf:FechaExpedicionFactura>${escapeXml(invoiceDate)}</sf:FechaExpedicionFactura>`,
+      "</sf:IDFactura>",
+      `<sf:NombreRazonEmisor>${escapeXml(issuerName)}</sf:NombreRazonEmisor>`,
+      fiscalRecord.recordType === "subsanacion" ? "<sf:Subsanacion>S</sf:Subsanacion>" : "",
+      `<sf:TipoFactura>${escapeXml(fiscalRecord.invoiceType || "F1")}</sf:TipoFactura>`,
+      `<sf:DescripcionOperacion>${escapeXml(description)}</sf:DescripcionOperacion>`,
+      recipients,
+      `<sf:Desglose>${buildOfficialTaxBreakdownXml(fiscalRecord.taxBreakdown || [])}</sf:Desglose>`,
+      `<sf:CuotaTotal>${Number(fiscalRecord.taxAmount || 0).toFixed(2)}</sf:CuotaTotal>`,
+      `<sf:ImporteTotal>${Number(fiscalRecord.totalAmount || 0).toFixed(2)}</sf:ImporteTotal>`,
+      `<sf:Encadenamiento>${chainXml}</sf:Encadenamiento>`,
+      systemXml,
+      `<sf:FechaHoraHusoGenRegistro>${escapeXml(fiscalRecord.fechaHoraHusoGenRegistro || "")}</sf:FechaHoraHusoGenRegistro>`,
+      "<sf:TipoHuella>01</sf:TipoHuella>",
+      `<sf:Huella>${escapeXml(fiscalRecord.chain?.hash || "")}</sf:Huella>`,
+      "</sf:RegistroAlta>",
+    ].filter(Boolean).join("");
+  }
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:sfLR="https://www2.agenciatributaria.gob.es/static_files/common/internet/dep/aplicaciones/es/aeat/tike/cont/ws/SuministroLR.xsd" xmlns:sf="https://www2.agenciatributaria.gob.es/static_files/common/internet/dep/aplicaciones/es/aeat/tike/cont/ws/SuministroInformacion.xsd">',
+    "<soapenv:Header/><soapenv:Body><sfLR:RegFactuSistemaFacturacion>",
+    `<sfLR:Cabecera><sf:ObligadoEmision><sf:NombreRazon>${escapeXml(issuerName)}</sf:NombreRazon><sf:NIF>${escapeXml(issuerNif)}</sf:NIF></sf:ObligadoEmision></sfLR:Cabecera>`,
+    `<sfLR:RegistroFactura>${recordXml}</sfLR:RegistroFactura>`,
+    "</sfLR:RegFactuSistemaFacturacion></soapenv:Body></soapenv:Envelope>",
+  ].join("");
+}
+
 function normalizeAeatConnectionProfile(input = {}) {
   const channel = AEAT_CHANNELS.has(input.channel)
     ? input.channel
@@ -185,6 +311,7 @@ module.exports = {
   AEAT_JOB_STATUSES,
   MAX_SUBMISSION_ATTEMPTS,
   buildAeatSubmissionDraftXml,
+  buildAeatOfficialSoapEnvelope,
   buildSubmissionManifest,
   escapeXml,
   getInitialSubmissionStatus,

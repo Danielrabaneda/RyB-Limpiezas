@@ -1,11 +1,11 @@
 {
   "name": "ryb-limpiezas-functions",
   "description": "Cloud Functions para RyB Limpiezas App",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "main": "index.js",
   "engines": {
-    "node": "20"
+    "node": "22"
   },
   "scripts": {
     "serve": "firebase emulators:start --only functions",

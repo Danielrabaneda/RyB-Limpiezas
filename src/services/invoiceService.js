@@ -165,6 +165,12 @@ export async function getLocalConnectorStatus() {
   return result.data;
 }
 
+export async function disconnectLocalConnector() {
+  const fn = httpsCallable(functions, "disconnectLocalConnector");
+  const result = await fn({});
+  return result.data;
+}
+
 export async function getAeatSubmissions(companyId) {
   const q = query(
     tenantCollection(db, companyId, "aeatSubmissions"),

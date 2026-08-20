@@ -1,0 +1,14 @@
+LIMPIAGEST - CONECTOR VERIFACTU PARA WINDOWS (PRUEBAS)
+
+1. En LimpiaGest abre Facturacion > Ajustes Factura > VeriFactu.
+2. Elige "Usar el certificado de este ordenador".
+3. Pulsa "Conectar este ordenador".
+4. Haz doble clic en "Instalar LimpiaGest.cmd".
+5. Escribe el identificador de empresa y el codigo temporal mostrados.
+
+El certificado y su clave privada no salen de Windows. El conector se inicia
+automaticamente al entrar en Windows y solo utiliza el entorno AEAT de pruebas.
+Antes de cada envio comprueba el XML con los esquemas oficiales y rechaza
+cualquier direccion que no sea el servicio AEAT de pruebas autorizado.
+
+Para retirarlo, ejecuta Uninstall-LimpiaGestConnector.ps1 desde PowerShell.

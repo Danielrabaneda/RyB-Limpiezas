@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   buildAeatSubmissionDraftXml,
+  buildAeatOfficialSoapEnvelope,
   buildSubmissionManifest,
   getInitialSubmissionStatus,
   normalizeAeatConnectionProfile,
@@ -83,6 +84,31 @@ test("genera un paquete XML de pruebas estable y escapado", () => {
   assert.match(xml, /Comunidad &amp; Portal/);
   assert.match(xml, /<ryb:Huella>DEF<\/ryb:Huella>/);
   assert.doesNotMatch(xml, /NO-DEBE-GUARDARSE/);
+});
+
+test("genera el sobre SOAP 1.1 oficial sin habilitar producción", () => {
+  const current = {
+    ...fiscalRecord,
+    companyId: "rayba",
+    items: [{ description: "Limpieza & mantenimiento" }],
+    chain: { ...fiscalRecord.chain, hash: "D".repeat(64), previousHash: "A".repeat(64) },
+  };
+  const previous = {
+    issuerNif: "B04843843",
+    invoiceNumber: "A-2026-0000",
+    fechaExpedicionFactura: "25-07-2026",
+    chain: { hash: "A".repeat(64) },
+  };
+  const xml = buildAeatOfficialSoapEnvelope(current, {
+    companyName: "Limpiezas Rayba S.L",
+  }, previous);
+  assert.match(xml, /soapenv:Envelope/);
+  assert.match(xml, /sfLR:RegFactuSistemaFacturacion/);
+  assert.match(xml, /<sf:IDVersion>1.0<\/sf:IDVersion>/);
+  assert.match(xml, /<sf:CalificacionOperacion>S1<\/sf:CalificacionOperacion>/);
+  assert.match(xml, /Limpieza &amp; mantenimiento/);
+  assert.match(xml, /<sf:TipoHuella>01<\/sf:TipoHuella>/);
+  assert.doesNotMatch(xml, /www1\.agenciatributaria/);
 });
 
 test("el manifiesto enlaza la cola con la huella fiscal inmutable", () => {

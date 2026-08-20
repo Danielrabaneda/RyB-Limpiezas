@@ -8,7 +8,10 @@ param(
 $ErrorActionPreference = "Stop"
 $PairUrl = "https://europe-west1-ryb-limpiezas-app.cloudfunctions.net/localConnectorPair"
 $DefaultHeartbeatUrl = "https://europe-west1-ryb-limpiezas-app.cloudfunctions.net/localConnectorHeartbeat"
+$DefaultClaimUrl = "https://europe-west1-ryb-limpiezas-app.cloudfunctions.net/localConnectorClaim"
+$DefaultResultUrl = "https://europe-west1-ryb-limpiezas-app.cloudfunctions.net/localConnectorResult"
 $AeatWsdl = "https://prewww2.aeat.es/static_files/common/internet/dep/aplicaciones/es/aeat/tikeV1.0/cont/ws/SistemaFacturacion.wsdl"
+$AllowedAeatEndpoint = "https://prewww1.aeat.es/wlpl/TIKE-CONT/ws/SistemaFacturacion/VerifactuSOAP"
 $DataDirectory = Join-Path $env:LOCALAPPDATA "LimpiaGest\ConectorVeriFactu"
 $CredentialPath = Join-Path $DataDirectory ((($CompanyId -replace "[^a-zA-Z0-9_-]", "_") + ".json"))
 
@@ -83,6 +86,8 @@ if (Test-Path -LiteralPath $CredentialPath) {
     companyId = $saved.companyId
     expectedTaxId = $saved.expectedTaxId
     heartbeatUrl = $saved.heartbeatUrl
+    claimUrl = if ($saved.claimUrl) { $saved.claimUrl } else { $DefaultClaimUrl }
+    resultUrl = if ($saved.resultUrl) { $saved.resultUrl } else { $DefaultResultUrl }
     connectorToken = Unprotect-Text $saved.protectedToken
   }
 }
@@ -100,12 +105,16 @@ if (-not $credential) {
     companyId = $paired.companyId
     expectedTaxId = $paired.expectedTaxId
     heartbeatUrl = if ($paired.heartbeatUrl) { $paired.heartbeatUrl } else { $DefaultHeartbeatUrl }
+    claimUrl = if ($paired.claimUrl) { $paired.claimUrl } else { $DefaultClaimUrl }
+    resultUrl = if ($paired.resultUrl) { $paired.resultUrl } else { $DefaultResultUrl }
     connectorToken = $paired.connectorToken
   }
   @{
     companyId = $credential.companyId
     expectedTaxId = $credential.expectedTaxId
     heartbeatUrl = $credential.heartbeatUrl
+    claimUrl = $credential.claimUrl
+    resultUrl = $credential.resultUrl
     protectedToken = Protect-Text $credential.connectorToken
   } | ConvertTo-Json | Set-Content -LiteralPath $CredentialPath -Encoding UTF8
 }
@@ -123,9 +132,78 @@ $heartbeat = @{
   aeatTestReachable = $aeatReachable
 }
 
+function Get-XmlValue($Xml, [string]$LocalName) {
+  $node = $Xml.SelectSingleNode("//*[local-name()='$LocalName']")
+  if ($node) { return [string]$node.InnerText }
+  return ""
+}
+
+function Send-AeatJob($Job, $Certificate) {
+  if ([string]$Job.endpoint -ne $AllowedAeatEndpoint) {
+    return @{ transportOk = $false; httpStatus = 0; message = "Destino AEAT no permitido por el conector de pruebas." }
+  }
+  $schemaValidator = Join-Path $PSScriptRoot "Test-OfficialSoapSchema.ps1"
+  try {
+    & $schemaValidator -SoapXml ([string]$Job.soapXml) | Out-Null
+  } catch {
+    return @{ transportOk = $false; httpStatus = 0; permanentFailure = $true; message = "El registro no cumple el esquema oficial de AEAT: $($_.Exception.Message)" }
+  }
+  $handler = [Net.Http.HttpClientHandler]::new()
+  [void]$handler.ClientCertificates.Add($Certificate)
+  $handler.CheckCertificateRevocationList = $true
+  $client = [Net.Http.HttpClient]::new($handler)
+  $client.Timeout = [TimeSpan]::FromSeconds(60)
+  try {
+    $request = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::Post, [string]$Job.endpoint)
+    $request.Content = [Net.Http.StringContent]::new([string]$Job.soapXml, [Text.Encoding]::UTF8, "text/xml")
+    [void]$request.Headers.TryAddWithoutValidation("SOAPAction", '""')
+    $httpResponse = $client.SendAsync($request).GetAwaiter().GetResult()
+    $responseXml = $httpResponse.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+    if (-not $httpResponse.IsSuccessStatusCode) {
+      return @{
+        transportOk = $false
+        httpStatus = [int]$httpResponse.StatusCode
+        message = "AEAT respondió HTTP $([int]$httpResponse.StatusCode): $($responseXml.Substring(0, [Math]::Min(1000, $responseXml.Length)))"
+      }
+    }
+    [xml]$parsed = $responseXml
+    $fault = Get-XmlValue $parsed "faultstring"
+    if ($fault) {
+      return @{ transportOk = $false; httpStatus = 200; message = $fault }
+    }
+    return @{
+      transportOk = $true
+      httpStatus = 200
+      csv = Get-XmlValue $parsed "CSV"
+      shipmentState = Get-XmlValue $parsed "EstadoEnvio"
+      recordState = Get-XmlValue $parsed "EstadoRegistro"
+      code = Get-XmlValue $parsed "CodigoErrorRegistro"
+      message = Get-XmlValue $parsed "DescripcionErrorRegistro"
+      waitSeconds = Get-XmlValue $parsed "TiempoEsperaEnvio"
+    }
+  } catch {
+    return @{ transportOk = $false; httpStatus = 0; message = $_.Exception.Message }
+  } finally {
+    if ($request) { $request.Dispose() }
+    $client.Dispose()
+    $handler.Dispose()
+  }
+}
+
 do {
-  Invoke-JsonPost $credential.heartbeatUrl $heartbeat $credential.connectorToken | Out-Null
+  $heartbeatResponse = Invoke-JsonPost $credential.heartbeatUrl $heartbeat $credential.connectorToken
   Write-Host "Conectado a LimpiaGest · certificado válido hasta $($certificate.NotAfter.ToString('dd/MM/yyyy'))" -ForegroundColor Green
+  $claimUrl = if ($credential.claimUrl) { $credential.claimUrl } elseif ($heartbeatResponse.claimUrl) { $heartbeatResponse.claimUrl } else { $DefaultClaimUrl }
+  $resultUrl = if ($credential.resultUrl) { $credential.resultUrl } elseif ($heartbeatResponse.resultUrl) { $heartbeatResponse.resultUrl } else { $DefaultResultUrl }
+  $claim = Invoke-JsonPost $claimUrl @{ companyId = $credential.companyId } $credential.connectorToken
+  if ($claim.job) {
+    Write-Host "Enviando registro $($claim.job.submissionId) al entorno AEAT de pruebas..." -ForegroundColor Cyan
+    $aeatResult = Send-AeatJob $claim.job $certificate
+    $aeatResult.companyId = $credential.companyId
+    $aeatResult.submissionId = $claim.job.submissionId
+    $recorded = Invoke-JsonPost $resultUrl $aeatResult $credential.connectorToken
+    Write-Host "Resultado: $($recorded.status)" -ForegroundColor Green
+  }
   if ($Once) { break }
-  Start-Sleep -Seconds 60
+  Start-Sleep -Seconds 30
 } while ($true)
