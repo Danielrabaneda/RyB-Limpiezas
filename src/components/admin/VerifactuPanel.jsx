@@ -5,10 +5,12 @@ import {
   configureAeatConnection,
   disconnectAeatCertificate,
   getAeatCertificateStatus,
+  getLocalConnectorStatus,
   getAeatSubmissionPackage,
   getAeatSubmissions,
   getVerifactuEvents,
   prepareAeatSubmissions,
+  startLocalConnectorPairing,
   subsanateInvoiceFiscalRecord,
 } from "../../services/invoiceService";
 
@@ -58,6 +60,8 @@ export default function VerifactuPanel({
   const [certificate, setCertificate] = useState({ connected: false });
   const [certificateFile, setCertificateFile] = useState(null);
   const [certificatePassword, setCertificatePassword] = useState("");
+  const [connectorStatus, setConnectorStatus] = useState({ status: "not_connected" });
+  const [pairing, setPairing] = useState(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -74,14 +78,16 @@ export default function VerifactuPanel({
 
   const refresh = async () => {
     if (!companyId) return;
-    const [nextSubmissions, nextEvents, nextCertificate] = await Promise.all([
+    const [nextSubmissions, nextEvents, nextCertificate, nextConnector] = await Promise.all([
       getAeatSubmissions(companyId),
       getVerifactuEvents(companyId),
       getAeatCertificateStatus(),
+      getLocalConnectorStatus(),
     ]);
     setSubmissions(nextSubmissions);
     setEvents(nextEvents);
     setCertificate(nextCertificate);
+    setConnectorStatus(nextConnector);
     if (nextCertificate.connected) {
       setProfile((current) => ({ ...current, channel: "cloud_certificate" }));
     }
@@ -146,6 +152,17 @@ export default function VerifactuPanel({
     }, "Certificado desconectado.");
   };
 
+  const beginLocalPairing = () =>
+    run(async () => {
+      const nextPairing = await startLocalConnectorPairing();
+      setPairing(nextPairing);
+      setProfile((current) => ({
+        ...current,
+        channel: "local_connector",
+        connectorName: current.connectorName || "Conector Windows",
+      }));
+    }, "Código preparado. Es válido durante 10 minutos.");
+
   const downloadPackage = async (submissionId) => {
     setBusy(true);
     try {
@@ -207,7 +224,7 @@ export default function VerifactuPanel({
           </select>
         </label>
         <label className="form-group">
-          <span className="form-label">Canal de preparación</span>
+          <span className="form-label">Cómo conectar con la AEAT</span>
           <select
             className="form-input"
             value={profile.channel}
@@ -216,9 +233,9 @@ export default function VerifactuPanel({
             }
           >
             <option value="disabled">Sin canal</option>
-            <option value="cloud_certificate">Certificado en la nube (recomendado)</option>
+            <option value="cloud_certificate">Subir certificado PFX/P12</option>
             <option value="delegated">Asesor / tercero autorizado</option>
-            <option value="local_connector">Conector local</option>
+            <option value="local_connector">Usar el certificado de este ordenador</option>
           </select>
         </label>
         {profile.channel === "delegated" && (
@@ -227,9 +244,6 @@ export default function VerifactuPanel({
             <input className="form-input" placeholder="NIF del asesor" value={profile.adviserTaxId} onChange={(event) => setProfile({ ...profile, adviserTaxId: event.target.value })} />
             <input className="form-input" type="email" placeholder="Correo del asesor" value={profile.adviserEmail} onChange={(event) => setProfile({ ...profile, adviserEmail: event.target.value })} />
           </>
-        )}
-        {profile.channel === "local_connector" && (
-          <input className="form-input" placeholder="Nombre del conector" value={profile.connectorName} onChange={(event) => setProfile({ ...profile, connectorName: event.target.value })} />
         )}
       </div>
 
@@ -261,6 +275,45 @@ export default function VerifactuPanel({
                 </label>
               </div>
               <button type="button" className="btn btn-primary" disabled={busy || !certificateFile || !certificatePassword} onClick={connectCertificate}>Comprobar y conectar</button>
+            </>
+          )}
+        </div>
+      )}
+
+      {profile.channel === "local_connector" && (
+        <div style={{ marginTop: 14, padding: 14, borderRadius: 8, background: "white", border: "1px solid #cbd5e1" }}>
+          <h4 style={{ marginTop: 0 }}>Conectar este ordenador</h4>
+          {connectorStatus.online ? (
+            <>
+              <p style={{ marginBottom: 6, color: "#15803d" }}><strong>Conector activo:</strong> {connectorStatus.connectorName}</p>
+              <p style={{ margin: "4px 0", fontSize: 13 }}>{connectorStatus.certificateSubject}</p>
+              <p style={{ margin: "4px 0", fontSize: 13 }}>
+                Certificado válido hasta {new Date(connectorStatus.certificateValidTo).toLocaleDateString("es-ES")} · prueba AEAT {connectorStatus.aeatTestReachable ? "correcta" : "pendiente"}.
+              </p>
+            </>
+          ) : (
+            <>
+              <p style={{ color: "#475569", fontSize: 13 }}>
+                Esta opción sirve cuando Windows protege la clave y no permite exportarla. El certificado nunca sale del ordenador.
+              </p>
+              <ol style={{ color: "#475569", fontSize: 13, paddingLeft: 20 }}>
+                <li>Genera un código temporal.</li>
+                <li>Abre el conector de LimpiaGest en este ordenador.</li>
+                <li>Introduce el código y espera la confirmación.</li>
+              </ol>
+              {!pairing ? (
+                <button type="button" className="btn btn-primary" disabled={busy} onClick={beginLocalPairing}>Conectar este ordenador</button>
+              ) : (
+                <div style={{ padding: 12, borderRadius: 8, background: "#f1f5f9" }}>
+                  <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>Código válido durante 10 minutos</p>
+                  <p style={{ margin: "6px 0", fontSize: 24, fontWeight: 700, letterSpacing: 3 }}>{pairing.pairingCode}</p>
+                  <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>Identificador: {pairing.companyId}</p>
+                  <a className="btn btn-outline" style={{ display: "inline-block", marginTop: 10 }} href="https://raw.githubusercontent.com/Danielrabaneda/RyB-Limpiezas/fix/companion-ops-and-rules/connector/windows/Connect-LimpiaGest.ps1" download>
+                    Descargar conector para Windows
+                  </a>
+                  <button type="button" className="btn btn-outline" style={{ marginLeft: 8 }} disabled={busy} onClick={refresh}>Ya lo he conectado</button>
+                </div>
+              )}
             </>
           )}
         </div>

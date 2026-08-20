@@ -11,6 +11,20 @@ Actualizado: 19 de agosto de 2026.
 - El conector Windows queda como alternativa para certificados no exportables.
 - El entorno continúa fijado en pruebas y no se realizan envíos automáticos.
 
+### Alta para certificados protegidos por Windows
+
+- La pantalla ofrece `Usar el certificado de este ordenador` sin pedir huella,
+  almacén ni contraseña del certificado.
+- Se genera un código aleatorio de un solo uso que caduca en 10 minutos.
+- El conector empareja la empresa, detecta automáticamente el certificado por
+  NIF y envía únicamente metadatos y estado de conexión.
+- Su credencial local queda cifrada mediante DPAPI y ligada al usuario de
+  Windows; la clave privada nunca sale del almacén del sistema.
+- El conector comprueba el acceso al WSDL oficial de pruebas y mantiene un
+  latido cada minuto. Todavía no reclama ni envía facturas.
+- Antes del lanzamiento comercial debe empaquetarse y firmarse como instalador
+  de Windows para sustituir la descarga temporal del script de pruebas.
+
 Para cerrar esta fase faltan la habilitación y permisos de Secret Manager, una
 prueba completa con un `.pfx/.p12` real y la implementación/homologación del
 envío SOAP mutuo contra la AEAT.

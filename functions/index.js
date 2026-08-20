@@ -100,6 +100,23 @@ async function ensureTenantCertificateSecret(companyId) {
   return name;
 }
 
+function hashConnectorCredential(value) {
+  return createHash("sha256").update(String(value || ""), "utf8").digest("hex");
+}
+
+function createPairingCode() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = randomBytes(10);
+  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("");
+}
+
+function parseConnectorBody(request) {
+  if (!request.is("application/json") || !request.body || typeof request.body !== "object") {
+    return null;
+  }
+  return request.body;
+}
+
 // ============================================================================
 // CONSTANTES
 // ============================================================================
@@ -2131,6 +2148,148 @@ exports.disconnectAeatCertificate = onCall(
       actorId: request.auth.uid,
     });
     return { connected: false };
+  },
+);
+
+exports.startLocalConnectorPairing = onCall(
+  { region: "europe-west1", memory: "256MiB", timeoutSeconds: 30 },
+  async (request) => {
+    const companyId = await requireTenantAdmin(request);
+    const settingsSnap = await db.doc(`companies/${companyId}/settings/billing`).get();
+    const taxId = String(settingsSnap.data()?.nif || "").trim().toUpperCase();
+    if (!taxId) {
+      throw new HttpsError("failed-precondition", "Configura primero el NIF de facturación.");
+    }
+    const pairingCode = createPairingCode();
+    const expiresAt = Timestamp.fromMillis(Date.now() + 10 * 60 * 1000);
+    await db.doc(`companies/${companyId}/verifactuConfig/localConnector`).set({
+      pairingCodeHash: hashConnectorCredential(pairingCode),
+      pairingExpiresAt: expiresAt,
+      pairingUsed: false,
+      expectedTaxId: taxId,
+      status: "awaiting_pairing",
+      requestedAt: FieldValue.serverTimestamp(),
+      requestedBy: request.auth.uid,
+    }, { merge: true });
+    await recordVerifactuEvent(companyId, {
+      type: "local_connector_pairing_started",
+      actorId: request.auth.uid,
+    });
+    return { companyId, pairingCode, expiresAt: expiresAt.toDate().toISOString() };
+  },
+);
+
+exports.getLocalConnectorStatus = onCall(
+  { region: "europe-west1", memory: "256MiB", timeoutSeconds: 30 },
+  async (request) => {
+    const companyId = await requireTenantAdmin(request);
+    const snap = await db.doc(`companies/${companyId}/verifactuConfig/localConnector`).get();
+    if (!snap.exists) return { status: "not_connected" };
+    const data = snap.data();
+    const lastSeenAt = data.lastSeenAt?.toDate?.();
+    const online = lastSeenAt && Date.now() - lastSeenAt.getTime() < 3 * 60 * 1000;
+    return {
+      status: online ? "connected" : data.status || "not_connected",
+      online: Boolean(online),
+      connectorName: data.connectorName || "",
+      certificateSubject: data.certificateSubject || "",
+      certificateThumbprint: data.certificateThumbprint || "",
+      certificateValidTo: data.certificateValidTo || "",
+      daysRemaining: data.daysRemaining || 0,
+      aeatTestReachable: data.aeatTestReachable === true,
+      lastSeenAt: lastSeenAt?.toISOString?.() || "",
+    };
+  },
+);
+
+exports.localConnectorPair = onRequest(
+  { region: "europe-west1", memory: "256MiB", timeoutSeconds: 30, cors: false },
+  async (request, response) => {
+    if (request.method !== "POST") return response.status(405).json({ error: "method_not_allowed" });
+    const body = parseConnectorBody(request);
+    const companyId = String(body?.companyId || "").trim();
+    const pairingCode = String(body?.pairingCode || "").trim().toUpperCase();
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(companyId) || !/^[A-Z2-9]{10}$/.test(pairingCode)) {
+      return response.status(400).json({ error: "invalid_pairing" });
+    }
+    const ref = db.doc(`companies/${companyId}/verifactuConfig/localConnector`);
+    try {
+      const connectorToken = randomBytes(32).toString("base64url");
+      let expectedTaxId = "";
+      await db.runTransaction(async (transaction) => {
+        const snap = await transaction.get(ref);
+        const data = snap.data();
+        if (!snap.exists || data.pairingUsed === true || !data.pairingExpiresAt ||
+            data.pairingExpiresAt.toMillis() < Date.now() ||
+            data.pairingCodeHash !== hashConnectorCredential(pairingCode)) {
+          throw new Error("invalid_pairing");
+        }
+        expectedTaxId = data.expectedTaxId;
+        transaction.set(ref, {
+          pairingUsed: true,
+          pairingCodeHash: FieldValue.delete(),
+          connectorTokenHash: hashConnectorCredential(connectorToken),
+          status: "paired",
+          pairedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+      });
+      return response.status(200).json({
+        connectorToken,
+        companyId,
+        expectedTaxId,
+        environment: "test",
+        heartbeatUrl: "https://europe-west1-ryb-limpiezas-app.cloudfunctions.net/localConnectorHeartbeat",
+      });
+    } catch {
+      return response.status(401).json({ error: "invalid_or_expired_pairing" });
+    }
+  },
+);
+
+exports.localConnectorHeartbeat = onRequest(
+  { region: "europe-west1", memory: "256MiB", timeoutSeconds: 30, cors: false },
+  async (request, response) => {
+    if (request.method !== "POST") return response.status(405).json({ error: "method_not_allowed" });
+    const body = parseConnectorBody(request);
+    const companyId = String(body?.companyId || "").trim();
+    const token = String(request.get("authorization") || "").replace(/^Bearer\s+/i, "");
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(companyId) || !token) {
+      return response.status(401).json({ error: "unauthorized" });
+    }
+    const ref = db.doc(`companies/${companyId}/verifactuConfig/localConnector`);
+    const snap = await ref.get();
+    const data = snap.data();
+    if (!snap.exists || !data.connectorTokenHash ||
+        data.connectorTokenHash !== hashConnectorCredential(token)) {
+      return response.status(401).json({ error: "unauthorized" });
+    }
+    const certificateTaxId = String(body.certificateTaxId || "").trim().toUpperCase();
+    if (certificateTaxId !== data.expectedTaxId) {
+      return response.status(409).json({ error: "certificate_tax_id_mismatch" });
+    }
+    const safeUpdate = {
+      status: "connected",
+      connectorName: String(body.connectorName || "Este ordenador").slice(0, 100),
+      certificateSubject: String(body.certificateSubject || "").slice(0, 500),
+      certificateThumbprint: String(body.certificateThumbprint || "").replace(/[^a-fA-F0-9]/g, "").slice(0, 64).toUpperCase(),
+      certificateValidTo: String(body.certificateValidTo || "").slice(0, 40),
+      daysRemaining: Math.max(0, Math.min(5000, Number(body.daysRemaining) || 0)),
+      aeatTestReachable: body.aeatTestReachable === true,
+      lastSeenAt: FieldValue.serverTimestamp(),
+    };
+    await ref.set(safeUpdate, { merge: true });
+    await db.doc(`companies/${companyId}/settings/billing`).set({
+      aeatConnection: {
+        channel: "local_connector",
+        environment: "test",
+        connectorName: safeUpdate.connectorName,
+        credentialsStored: false,
+        productionEnabled: false,
+        schemaValidationStatus: "official_test_xsd_ready",
+      },
+      aeatConnectionUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return response.status(200).json({ ok: true, environment: "test", jobsAvailable: false });
   },
 );
 

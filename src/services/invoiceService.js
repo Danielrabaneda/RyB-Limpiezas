@@ -153,6 +153,18 @@ export async function disconnectAeatCertificate() {
   return result.data;
 }
 
+export async function startLocalConnectorPairing() {
+  const fn = httpsCallable(functions, "startLocalConnectorPairing");
+  const result = await fn({});
+  return result.data;
+}
+
+export async function getLocalConnectorStatus() {
+  const fn = httpsCallable(functions, "getLocalConnectorStatus");
+  const result = await fn({});
+  return result.data;
+}
+
 export async function getAeatSubmissions(companyId) {
   const q = query(
     tenantCollection(db, companyId, "aeatSubmissions"),

@@ -24,6 +24,19 @@ recibir archivos PFX/P12.
 El diagnóstico comprueba titular, NIF, caducidad, clave privada, cadena de
 confianza y acceso al WSDL de pruebas. No remite registros de facturación.
 
+## Alta guiada en LimpiaGest
+
+1. El administrador elige `Usar el certificado instalado en este ordenador`.
+2. LimpiaGest genera un código de un solo uso válido durante 10 minutos.
+3. `Connect-LimpiaGest.ps1` recibe el identificador de empresa y solicita ese
+   código. No solicita ni exporta la contraseña del certificado.
+4. El token resultante queda cifrado con DPAPI para el usuario de Windows.
+5. El conector detecta el certificado por NIF, comprueba la conexión de pruebas
+   de la AEAT y mantiene un latido cada minuto.
+
+El siguiente paso de producto será empaquetar y firmar este componente como
+instalador de Windows para que el cliente no tenga que abrir PowerShell.
+
 ## Arquitectura prevista
 
 El conector reclamará un registro de la cola de Firebase mediante una
