@@ -40,7 +40,7 @@ Set-Item -Path $protocolKey -Value "URL:LimpiaGest VeriFactu"
 Set-ItemProperty -Path $protocolKey -Name "URL Protocol" -Value ""
 $commandKey = Join-Path $protocolKey "shell\open\command"
 New-Item -Path $commandKey -Force | Out-Null
-$protocolCommand = "`"$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe`" -NoProfile -ExecutionPolicy Bypass -File `"$protocolHandlerTarget`" `"%1`""
+$protocolCommand = "`"$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe`" -NoExit -NoProfile -ExecutionPolicy Bypass -File `"$protocolHandlerTarget`" `"%1`""
 Set-Item -Path $commandKey -Value $protocolCommand
 
 $shell = New-Object -ComObject WScript.Shell
