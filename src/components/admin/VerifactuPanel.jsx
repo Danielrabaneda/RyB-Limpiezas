@@ -65,6 +65,9 @@ export default function VerifactuPanel({
   const [pairing, setPairing] = useState(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [fiscalAction, setFiscalAction] = useState(null);
+  const [fiscalInvoiceNumber, setFiscalInvoiceNumber] = useState("");
+  const [fiscalReason, setFiscalReason] = useState("");
 
   const eligibleInvoices = useMemo(
     () =>
@@ -187,25 +190,31 @@ export default function VerifactuPanel({
     }
   };
 
-  const requestFiscalAction = (kind) =>
+  const openFiscalAction = (kind) => {
+    const candidates = invoices.filter((invoice) => invoice.status !== "draft");
+    setFiscalAction(kind);
+    setFiscalInvoiceNumber(
+      candidates.length === 1 ? String(candidates[0].invoiceNumber || "") : "",
+    );
+    setFiscalReason("");
+    setMessage("");
+  };
+
+  const requestFiscalAction = () =>
     run(async () => {
-      const invoiceNumber = window.prompt(
-        `Número exacto de la factura que quieres ${kind === "cancel" ? "anular" : "subsanar"}:`,
-      );
-      if (!invoiceNumber) return;
       const invoice = invoices.find(
-        (item) => String(item.invoiceNumber) === invoiceNumber.trim(),
+        (item) => String(item.invoiceNumber) === fiscalInvoiceNumber.trim(),
       );
       if (!invoice) throw new Error("No se encontró esa factura en el periodo visible.");
-      const reason = window.prompt("Motivo obligatorio de la operación fiscal:");
-      if (!reason?.trim()) throw new Error("El motivo es obligatorio.");
-      if (kind === "cancel") {
-        await cancelInvoiceFiscalRecord(invoice.id, reason.trim());
+      if (!fiscalReason.trim()) throw new Error("El motivo es obligatorio.");
+      if (fiscalAction === "cancel") {
+        await cancelInvoiceFiscalRecord(invoice.id, fiscalReason.trim());
       } else {
-        await subsanateInvoiceFiscalRecord(invoice.id, reason.trim(), {});
+        await subsanateInvoiceFiscalRecord(invoice.id, fiscalReason.trim(), {});
       }
       await onInvoicesChanged?.();
-    }, kind === "cancel" ? "Registro de anulación creado." : "Registro de subsanación creado.");
+      setFiscalAction(null);
+    }, fiscalAction === "cancel" ? "Registro de anulación creado." : "Registro de subsanación creado.");
 
   return (
     <section
@@ -336,9 +345,35 @@ export default function VerifactuPanel({
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
         <button type="button" className="btn btn-primary" disabled={busy} onClick={saveConfiguration}>Guardar VeriFactu</button>
         <button type="button" className="btn btn-outline" disabled={busy || profile.channel === "disabled"} onClick={preparePending}>Preparar pendientes ({eligibleInvoices.length})</button>
-        <button type="button" className="btn btn-outline" disabled={busy} onClick={() => requestFiscalAction("cancel")}>Anular registro</button>
-        <button type="button" className="btn btn-outline" disabled={busy} onClick={() => requestFiscalAction("subsanate")}>Subsanar registro</button>
+        <button type="button" className="btn btn-outline" disabled={busy} onClick={() => openFiscalAction("cancel")}>Anular registro</button>
+        <button type="button" className="btn btn-outline" disabled={busy} onClick={() => openFiscalAction("subsanate")}>Subsanar registro</button>
       </div>
+      {fiscalAction && (
+        <div style={{ marginTop: 14, padding: 14, borderRadius: 8, background: "#fff", border: "1px solid #bfdbfe" }}>
+          <strong>{fiscalAction === "cancel" ? "Anular registro fiscal" : "Subsanar registro fiscal"}</strong>
+          <label className="form-group" style={{ display: "block", marginTop: 10 }}>
+            <span className="form-label">Factura</span>
+            <select className="form-input" value={fiscalInvoiceNumber} onChange={(event) => setFiscalInvoiceNumber(event.target.value)}>
+              <option value="">Selecciona una factura</option>
+              {invoices.filter((invoice) => invoice.status !== "draft").map((invoice) => (
+                <option key={invoice.id} value={invoice.invoiceNumber}>
+                  {invoice.invoiceNumber} · {invoice.client?.name || invoice.communityName || "Sin cliente"}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="form-group" style={{ display: "block", marginTop: 10 }}>
+            <span className="form-label">Motivo obligatorio</span>
+            <input className="form-input" value={fiscalReason} onChange={(event) => setFiscalReason(event.target.value)} placeholder="Describe el motivo de la operación" />
+          </label>
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button type="button" className="btn btn-primary" disabled={busy || !fiscalInvoiceNumber || !fiscalReason.trim()} onClick={requestFiscalAction}>
+              Confirmar {fiscalAction === "cancel" ? "anulación" : "subsanación"}
+            </button>
+            <button type="button" className="btn btn-outline" disabled={busy} onClick={() => setFiscalAction(null)}>Cancelar</button>
+          </div>
+        </div>
+      )}
       {message && <p style={{ fontSize: 13, marginBottom: 0 }}>{message}</p>}
 
       <h4>Cola AEAT ({submissions.length})</h4>
