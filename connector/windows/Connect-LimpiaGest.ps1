@@ -2,6 +2,8 @@
 param(
   [Parameter(Mandatory = $true)][string]$CompanyId,
   [string]$PairingCode,
+  [switch]$ForcePair,
+  [switch]$PairOnly,
   [switch]$Once
 )
 
@@ -80,7 +82,7 @@ function Test-AeatAccess($Certificate) {
 
 New-Item -ItemType Directory -Path $DataDirectory -Force | Out-Null
 $credential = $null
-if (Test-Path -LiteralPath $CredentialPath) {
+if (-not $ForcePair -and (Test-Path -LiteralPath $CredentialPath)) {
   $saved = Get-Content -LiteralPath $CredentialPath -Raw | ConvertFrom-Json
   $credential = [pscustomobject]@{
     companyId = $saved.companyId
@@ -193,6 +195,10 @@ function Send-AeatJob($Job, $Certificate) {
 do {
   $heartbeatResponse = Invoke-JsonPost $credential.heartbeatUrl $heartbeat $credential.connectorToken
   Write-Host "Conectado a LimpiaGest · certificado válido hasta $($certificate.NotAfter.ToString('dd/MM/yyyy'))" -ForegroundColor Green
+  if ($PairOnly) {
+    Write-Host "Emparejamiento completado. No se ha enviado ningún registro a la AEAT." -ForegroundColor Green
+    break
+  }
   $claimUrl = if ($credential.claimUrl) { $credential.claimUrl } elseif ($heartbeatResponse.claimUrl) { $heartbeatResponse.claimUrl } else { $DefaultClaimUrl }
   $resultUrl = if ($credential.resultUrl) { $credential.resultUrl } elseif ($heartbeatResponse.resultUrl) { $heartbeatResponse.resultUrl } else { $DefaultResultUrl }
   $claim = Invoke-JsonPost $claimUrl @{ companyId = $credential.companyId } $credential.connectorToken
