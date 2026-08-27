@@ -79,6 +79,15 @@ function resolveInvoiceType(invoice = {}) {
 }
 
 function resolveInvoiceSeries(settings = {}, invoice = {}) {
+  const verifactuTestMode =
+    settings.verifactuEnabled === true &&
+    settings.aeatConnection?.environment !== "production";
+  if (verifactuTestMode) {
+    return String(settings.verifactuTestSeries || "TEST-VF")
+      .trim()
+      .toUpperCase()
+      .slice(0, 20);
+  }
   const invoiceType = resolveInvoiceType(invoice);
   const requested = String(invoice.series || "").trim().toUpperCase();
   if (requested) return requested.slice(0, 20);

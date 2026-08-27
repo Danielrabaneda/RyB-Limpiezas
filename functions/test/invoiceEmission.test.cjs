@@ -9,6 +9,7 @@ const {
   formatInvoiceNumber,
   formatIssueDateForHash,
   getMadridIsoTimestamp,
+  resolveInvoiceSeries,
 } = require("../lib/invoiceEmission");
 
 test("computeInvoiceHash genera una huella SHA-256 estable y en mayúsculas", () => {
@@ -53,6 +54,36 @@ test("formatInvoiceNumber respeta numeración simple y con prefijo", () => {
   assert.equal(
     formatInvoiceNumber({}, { year: 2026 }, 7, "R"),
     "R-2026-0007",
+  );
+});
+
+test("VeriFactu de pruebas usa una serie aislada de la numeración real", () => {
+  const settings = {
+    verifactuEnabled: true,
+    verifactuTestSeries: "TEST-VF",
+    defaultInvoiceSeries: "REAL",
+    aeatConnection: { environment: "test" },
+  };
+
+  assert.equal(resolveInvoiceSeries(settings, {}), "TEST-VF");
+  assert.equal(resolveInvoiceSeries(settings, { series: "REAL" }), "TEST-VF");
+  assert.equal(
+    formatInvoiceNumber(settings, { year: 2026 }, 1, "TEST-VF"),
+    "TEST-VF-2026-0001",
+  );
+});
+
+test("la serie real se conserva fuera del entorno de pruebas", () => {
+  assert.equal(
+    resolveInvoiceSeries(
+      {
+        verifactuEnabled: true,
+        defaultInvoiceSeries: "REAL",
+        aeatConnection: { environment: "production" },
+      },
+      {},
+    ),
+    "REAL",
   );
 });
 

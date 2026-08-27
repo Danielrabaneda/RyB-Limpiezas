@@ -83,6 +83,7 @@ const DEFAULT_SETTINGS = {
   customIssueDate: "",
   verifactuEnabled: false,
   verifactuMode: "disabled",
+  verifactuTestSeries: "TEST-VF",
   aeatConnection: {
     channel: "disabled",
     environment: "test",
