@@ -382,7 +382,7 @@ export default function VerifactuPanel({
       ) : (
         <div style={{ overflowX: "auto" }}>
           <table className="table">
-            <thead><tr><th>Factura</th><th>Tipo</th><th>Estado</th><th>Intentos</th><th></th></tr></thead>
+            <thead><tr><th>Factura</th><th>Tipo</th><th>Estado</th><th>Intentos</th><th>Respuesta AEAT</th><th></th></tr></thead>
             <tbody>
               {submissions.slice(0, 50).map((item) => (
                 <tr key={item.id}>
@@ -390,6 +390,10 @@ export default function VerifactuPanel({
                   <td>{item.recordType}</td>
                   <td>{STATUS_LABELS[item.status] || item.status}</td>
                   <td>{item.attempts || 0}</td>
+                  <td style={{ maxWidth: 360, whiteSpace: "normal", fontSize: 12 }}>
+                    {item.aeatResponse?.message || item.lastError ||
+                      (item.aeatResponse?.code ? `Código ${item.aeatResponse.code}` : "—")}
+                  </td>
                   <td><button type="button" className="btn btn-sm btn-outline" disabled={busy} onClick={() => downloadPackage(item.id)}>XML</button></td>
                 </tr>
               ))}
