@@ -190,6 +190,11 @@ export default function VerifactuPanel({
     }
   };
 
+  const chooseCertificateFile = () => {
+    setProfile((current) => ({ ...current, channel: "cloud_certificate" }));
+    setMessage("Selecciona el archivo .p12 o .pfx y escribe su contraseña para comprobarlo.");
+  };
+
   const removeLocalConnector = () => {
     if (!window.confirm("¿Desconectar este ordenador? El conector dejará de poder acceder a la cola de esta empresa.")) return;
     run(async () => {
@@ -400,6 +405,15 @@ export default function VerifactuPanel({
               )}
             </>
           )}
+          <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid #e2e8f0" }}>
+            <p style={{ margin: "0 0 8px", fontSize: 13, color: "#475569" }}>
+              <strong>¿Tienes el archivo original .p12 o .pfx?</strong>{" "}
+              Puedes seleccionarlo directamente si Windows no dispone de una clave privada utilizable.
+            </p>
+            <button type="button" className="btn btn-outline" disabled={busy} onClick={chooseCertificateFile}>
+              Seleccionar archivo PFX/P12
+            </button>
+          </div>
         </div>
       )}
 
