@@ -93,6 +93,9 @@ export default function VerifactuPanel({
     setEvents(nextEvents);
     setCertificate(nextCertificate);
     setConnectorStatus(nextConnector);
+    if (["paired", "connected"].includes(nextConnector.status)) {
+      setPairing(null);
+    }
     if (nextCertificate.connected) {
       setProfile((current) => ({ ...current, channel: "cloud_certificate" }));
     }
@@ -324,14 +327,28 @@ export default function VerifactuPanel({
       {profile.channel === "local_connector" && (
         <div style={{ marginTop: 14, padding: 14, borderRadius: 8, background: "white", border: "1px solid #cbd5e1" }}>
           <h4 style={{ marginTop: 0 }}>Conectar este ordenador</h4>
-          {connectorStatus.online && !pairing ? (
+          {["paired", "connected"].includes(connectorStatus.status) && !pairing ? (
             <>
-              <p style={{ marginBottom: 6, color: "#15803d" }}><strong>Conector activo:</strong> {connectorStatus.connectorName}</p>
-              <p style={{ margin: "4px 0", fontSize: 13 }}>{connectorStatus.certificateSubject}</p>
-              <p style={{ margin: "4px 0", fontSize: 13 }}>
-                Certificado válido hasta {new Date(connectorStatus.certificateValidTo).toLocaleDateString("es-ES")} · prueba AEAT {connectorStatus.aeatTestReachable ? "correcta" : "pendiente"}.
+              <p style={{ marginBottom: 6, color: connectorStatus.online ? "#15803d" : "#b45309" }}>
+                <strong>{connectorStatus.online ? "Conector activo" : "Ordenador emparejado"}:</strong>{" "}
+                {connectorStatus.connectorName || "Conector Windows"}
               </p>
+              {connectorStatus.certificateSubject && (
+                <p style={{ margin: "4px 0", fontSize: 13 }}>{connectorStatus.certificateSubject}</p>
+              )}
+              <p style={{ margin: "4px 0", fontSize: 13 }}>
+                {connectorStatus.certificateValidTo
+                  ? `Certificado válido hasta ${new Date(connectorStatus.certificateValidTo).toLocaleDateString("es-ES")}`
+                  : "Certificado pendiente de comprobación"}{" "}
+                · prueba AEAT {connectorStatus.aeatTestReachable ? "correcta" : "pendiente"}.
+              </p>
+              {!connectorStatus.online && (
+                <p style={{ margin: "6px 0", fontSize: 13, color: "#475569" }}>
+                  La vinculación está guardada. El servicio se iniciará automáticamente al entrar en Windows.
+                </p>
+              )}
               <button type="button" className="btn btn-outline" disabled={busy} onClick={beginLocalPairing}>Cambiar de ordenador</button>
+              <button type="button" className="btn btn-outline" style={{ marginLeft: 8 }} disabled={busy} onClick={refresh}>Actualizar estado</button>
               <button type="button" className="btn btn-outline" style={{ marginLeft: 8 }} disabled={busy} onClick={removeLocalConnector}>Desconectar</button>
             </>
           ) : (
