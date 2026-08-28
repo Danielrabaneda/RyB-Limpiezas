@@ -340,7 +340,7 @@ export default function VerifactuPanel({
                 {connectorStatus.certificateValidTo
                   ? `Certificado válido hasta ${new Date(connectorStatus.certificateValidTo).toLocaleDateString("es-ES")}`
                   : "Certificado pendiente de comprobación"}{" "}
-                · prueba AEAT {connectorStatus.aeatTestReachable ? "correcta" : "pendiente"}.
+                · servicio AEAT de pruebas {connectorStatus.aeatTestReachable ? "accesible" : "pendiente de comprobar"}.
               </p>
               {!connectorStatus.online && (
                 <p style={{ margin: "6px 0", fontSize: 13, color: "#475569" }}>
