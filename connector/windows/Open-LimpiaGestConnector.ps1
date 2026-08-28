@@ -6,16 +6,16 @@ param(
 $ErrorActionPreference = "Stop"
 $host.UI.RawUI.WindowTitle = "Conectar este ordenador con LimpiaGest"
 Clear-Host
-Write-Host "LimpiaGest · Conexión con VeriFactu" -ForegroundColor Cyan
+Write-Host "LimpiaGest - Conexion con VeriFactu" -ForegroundColor Cyan
 Write-Host "-----------------------------------" -ForegroundColor Cyan
-Write-Host "El código temporal se ha recibido automáticamente." -ForegroundColor White
+Write-Host "El codigo temporal se ha recibido automaticamente." -ForegroundColor White
 Write-Host "No tienes que escribirlo de nuevo." -ForegroundColor White
 Write-Host ""
 
 try {
   $uri = [Uri]$ProtocolUrl
   if ($uri.Scheme -ne "limpiagest-verifactu" -or $uri.Host -ne "pair") {
-    throw "Enlace de conexión de LimpiaGest no válido."
+    throw "Enlace de conexion de LimpiaGest no valido."
   }
 
   $parameters = @{}
@@ -29,7 +29,7 @@ try {
   $companyId = ([string]$parameters.companyId).Trim()
   $pairingCode = ([string]$parameters.code).Trim().ToUpperInvariant()
   if ($companyId -notmatch "^[a-zA-Z0-9_-]{1,128}$" -or $pairingCode -notmatch "^[A-Z2-9]{10}$") {
-    throw "El código temporal no es válido. Vuelve a LimpiaGest y genera uno nuevo."
+    throw "El codigo temporal no es valido. Vuelve a LimpiaGest y genera uno nuevo."
   }
 
   Write-Host "Conectando este ordenador..." -ForegroundColor Yellow
@@ -42,10 +42,10 @@ try {
   Write-Host "No se ha enviado ninguna factura a la AEAT." -ForegroundColor Green
 } catch {
   Write-Host ""
-  Write-Host "NO SE HA PODIDO COMPLETAR LA CONEXIÓN" -ForegroundColor Red
+  Write-Host "NO SE HA PODIDO COMPLETAR LA CONEXION" -ForegroundColor Red
   Write-Host $_.Exception.Message -ForegroundColor Red
-  Write-Host "Vuelve a LimpiaGest, genera un código nuevo y pulsa otra vez Abrir conector." -ForegroundColor Yellow
+  Write-Host "Vuelve a LimpiaGest, genera un codigo nuevo y pulsa otra vez Abrir conector." -ForegroundColor Yellow
 } finally {
   Write-Host ""
-  Read-Host "Pulsa Intro cuando hayas leído el resultado para cerrar esta ventana"
+  Read-Host "Pulsa Intro cuando hayas leido el resultado para cerrar esta ventana"
 }
