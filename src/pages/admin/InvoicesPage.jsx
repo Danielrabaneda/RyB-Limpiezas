@@ -15,7 +15,6 @@ import {
   deleteInvoiceTemplate,
   getLastEmittedInvoice,
   emitAllInvoices,
-  getNextInvoiceNumber,
   uploadInvoicePDFToStorage,
   sendInvoiceEmails,
   sendGroupedInvoiceEmails,
@@ -501,17 +500,7 @@ export default function InvoicesPage() {
   };
 
   // Modal add handlers
-  const handleOpenAddInvoice = async () => {
-    setActionLoading(true);
-    let nextNum = "Borrador";
-    try {
-      nextNum = await getNextInvoiceNumber(companyId, filterYear);
-    } catch (err) {
-      console.error("Error fetching next invoice number:", err);
-    } finally {
-      setActionLoading(false);
-    }
-
+  const handleOpenAddInvoice = () => {
     setAddForm({
       clientType: "community",
       selectedCommunityId: "",
@@ -526,7 +515,6 @@ export default function InvoicesPage() {
       month: filterMonth,
       saveAsTemplate: false,
       templateName: "",
-      invoiceNumber: nextNum,
     });
     setAddModalOpen(true);
   };
@@ -680,31 +668,9 @@ export default function InvoicesPage() {
       );
       const totalAmount = parseFloat((subtotal + taxAmount).toFixed(2));
 
-      const typedNum = addForm.invoiceNumber?.trim() || "Borrador";
-      const isDraft = typedNum.toLowerCase() === "borrador";
-      let invoiceSeq = null;
-      if (!isDraft) {
-        const seqMatch = typedNum.match(/\d+$/);
-        if (seqMatch) {
-          invoiceSeq = parseInt(seqMatch[0]);
-        }
-      }
-
-      let issueDate = new Date();
-      if (
-        !isDraft &&
-        billingSettings &&
-        billingSettings.issueDateMode === "custom" &&
-        billingSettings.customIssueDate
-      ) {
-        issueDate = new Date(billingSettings.customIssueDate + "T00:00:00");
-      }
-      const dueDate = new Date(issueDate.getTime() + 30 * 24 * 60 * 60 * 1000);
-
       const invoiceData = {
-        invoiceNumber: typedNum,
-        ...(invoiceSeq !== null ? { invoiceSeq } : {}),
-        status: isDraft ? "draft" : "pending",
+        invoiceNumber: "Borrador",
+        status: "draft",
         year: parseInt(addForm.year),
         month: parseInt(addForm.month),
         client: {
@@ -728,34 +694,11 @@ export default function InvoicesPage() {
         taxAmount,
         totalAmount,
         paymentMethod: addForm.paymentMethod,
-        issueDate: isDraft ? null : issueDate,
-        dueDate: isDraft ? null : dueDate,
+        issueDate: null,
+        dueDate: null,
       };
 
       await createInvoice(companyId, invoiceData);
-
-      // Try to increment sequence in settings if a manual number was typed
-      if (!isDraft && invoiceSeq !== null) {
-        try {
-          if (
-            billingSettings &&
-            invoiceSeq >= (parseInt(billingSettings.nextInvoiceSeq) || 1)
-          ) {
-            await saveBillingSettings(companyId, {
-              nextInvoiceSeq: invoiceSeq + 1,
-            });
-            setBillingSettings((prev) => ({
-              ...prev,
-              nextInvoiceSeq: invoiceSeq + 1,
-            }));
-          }
-        } catch (seqErr) {
-          console.warn(
-            "Could not auto-increment settings nextInvoiceSeq:",
-            seqErr,
-          );
-        }
-      }
 
       if (addForm.saveAsTemplate) {
         const templateData = {
@@ -778,11 +721,7 @@ export default function InvoicesPage() {
         await saveInvoiceTemplate(companyId, templateData);
       }
 
-      alert(
-        isDraft
-          ? "Factura manual creada correctamente en borradores."
-          : "Factura manual emitida correctamente.",
-      );
+      alert("Factura manual creada correctamente en borradores.");
       setAddModalOpen(false);
       await Promise.all([loadInvoices(), loadTemplates()]);
     } catch (err) {
@@ -3953,34 +3892,19 @@ export default function InvoicesPage() {
                   📅 Datos y Período de Facturación
                 </h4>
                 <div className="grid-3-col mb-4">
-                  <div className="form-group">
-                    <label className="form-label" style={{ fontSize: "12px" }}>
-                      Número de Factura
-                    </label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      style={{ padding: "8px" }}
-                      placeholder="Ej: Borrador o número"
-                      value={addForm.invoiceNumber || ""}
-                      onChange={(e) =>
-                        setAddForm({
-                          ...addForm,
-                          invoiceNumber: e.target.value,
-                        })
-                      }
-                      required
-                    />
-                    <small
-                      style={{
-                        fontSize: "10px",
-                        color: "#64748b",
-                        display: "block",
-                        marginTop: "2px",
-                      }}
-                    >
-                      Usa <strong>Borrador</strong> para crear borrador
-                    </small>
+                  <div
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: "8px",
+                      background: "#eff6ff",
+                      border: "1px solid #bfdbfe",
+                      color: "#1e3a8a",
+                      fontSize: "12px",
+                    }}
+                  >
+                    <strong>Se guardará como borrador.</strong>
+                    <br />
+                    El número y la fecha se asignarán automáticamente al emitir la factura.
                   </div>
                   <div className="form-group">
                     <label className="form-label" style={{ fontSize: "12px" }}>
