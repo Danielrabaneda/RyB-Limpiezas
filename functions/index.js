@@ -104,7 +104,50 @@ async function ensureTenantCertificateSecret(companyId) {
       secret: { replication: { automatic: {} } },
     });
   }
+  await ensureRuntimeCanAccessSecret(name);
   return name;
+}
+
+async function getRuntimeServiceAccountEmail() {
+  const response = await fetch(
+    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email",
+    {
+      headers: { "Metadata-Flavor": "Google" },
+      signal: AbortSignal.timeout(5000),
+    },
+  );
+  if (!response.ok) throw new Error("No se pudo identificar la cuenta segura de ejecución.");
+  return (await response.text()).trim();
+}
+
+async function ensureRuntimeCanAccessSecret(secretName) {
+  const serviceAccountEmail = await getRuntimeServiceAccountEmail();
+  const member = `serviceAccount:${serviceAccountEmail}`;
+  const [currentPolicy] = await secretManager.getIamPolicy({ resource: secretName });
+  const bindings = Array.isArray(currentPolicy.bindings) ? currentPolicy.bindings : [];
+  const accessorBinding = bindings.find(
+    (binding) => binding.role === "roles/secretmanager.secretAccessor",
+  );
+  if (accessorBinding?.members?.includes(member)) return;
+  const nextBindings = bindings.map((binding) => ({
+    ...binding,
+    members: [...(binding.members || [])],
+  }));
+  const nextAccessorBinding = nextBindings.find(
+    (binding) => binding.role === "roles/secretmanager.secretAccessor",
+  );
+  if (nextAccessorBinding) {
+    nextAccessorBinding.members.push(member);
+  } else {
+    nextBindings.push({
+      role: "roles/secretmanager.secretAccessor",
+      members: [member],
+    });
+  }
+  await secretManager.setIamPolicy({
+    resource: secretName,
+    policy: { ...currentPolicy, bindings: nextBindings },
+  });
 }
 
 function hashConnectorCredential(value) {
@@ -2275,6 +2318,8 @@ exports.sendAeatCloudTestSubmission = onCall(
         { ...settings, companyId },
         previousFiscalRecord,
       );
+      const secretName = String(certificate.secretVersion).replace(/\/versions\/[^/]+$/, "");
+      await ensureRuntimeCanAccessSecret(secretName);
       const [secretVersion] = await secretManager.accessSecretVersion({
         name: certificate.secretVersion,
       });
@@ -2296,10 +2341,14 @@ exports.sendAeatCloudTestSubmission = onCall(
         submissionId,
         error: error.message,
       });
+      const rawMessage = String(error.message || "No se pudo conectar con la AEAT.");
+      const safeMessage = /PERMISSION_DENIED|secretmanager\.versions\.access|secretmanager\.secrets\.setIamPolicy/i.test(rawMessage)
+        ? "No se pudo abrir temporalmente el certificado seguro. Vuelve a intentarlo en unos segundos."
+        : rawMessage;
       aeatResult = {
         transportOk: false,
         httpStatus: 0,
-        message: String(error.message || "No se pudo conectar con la AEAT.").slice(0, 1500),
+        message: safeMessage.slice(0, 1500),
       };
     }
 
