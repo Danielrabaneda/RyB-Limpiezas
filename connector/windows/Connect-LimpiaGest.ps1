@@ -8,6 +8,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+Add-Type -AssemblyName System.Net.Http
 $PairUrl = "https://europe-west1-ryb-limpiezas-app.cloudfunctions.net/localConnectorPair"
 $DefaultHeartbeatUrl = "https://europe-west1-ryb-limpiezas-app.cloudfunctions.net/localConnectorHeartbeat"
 $DefaultClaimUrl = "https://europe-west1-ryb-limpiezas-app.cloudfunctions.net/localConnectorClaim"
