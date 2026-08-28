@@ -42,8 +42,11 @@ export async function computeInvoiceHash({
   huellaAnterior,
   fechaHoraHusoGenRegistro,
 }) {
+  const normalizedIssuerNif = String(idEmisorFactura || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
   const cadena =
-    `IDEmisorFactura=${idEmisorFactura}` +
+    `IDEmisorFactura=${normalizedIssuerNif}` +
     `&NumSerieFactura=${numSerieFactura}` +
     `&FechaExpedicionFactura=${fechaExpedicionFactura}` +
     `&TipoFactura=${tipoFactura}` +

@@ -209,8 +209,11 @@ function computeInvoiceHash({
   huellaAnterior,
   fechaHoraHusoGenRegistro,
 }) {
+  const normalizedIssuerNif = String(idEmisorFactura || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
   const chain =
-    `IDEmisorFactura=${idEmisorFactura}` +
+    `IDEmisorFactura=${normalizedIssuerNif}` +
     `&NumSerieFactura=${numSerieFactura}` +
     `&FechaExpedicionFactura=${fechaExpedicionFactura}` +
     `&TipoFactura=${tipoFactura}` +
@@ -229,8 +232,11 @@ function computeCancellationHash({
   previousHash,
   generationTimestamp,
 }) {
+  const normalizedIssuerNif = String(issuerNif || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
   const chain =
-    `IDEmisorFacturaAnulada=${issuerNif}` +
+    `IDEmisorFacturaAnulada=${normalizedIssuerNif}` +
     `&NumSerieFacturaAnulada=${invoiceNumber}` +
     `&FechaExpedicionFacturaAnulada=${issueDate}` +
     `&Huella=${previousHash || ""}` +

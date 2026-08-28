@@ -30,6 +30,27 @@ test("computeInvoiceHash genera una huella SHA-256 estable y en mayúsculas", ()
   );
 });
 
+test("computeInvoiceHash normaliza el NIF igual que la AEAT", () => {
+  const common = {
+    numSerieFactura: "346",
+    fechaExpedicionFactura: "31-07-2026",
+    tipoFactura: "F1",
+    cuotaTotal: "0.21",
+    importeTotal: "1.21",
+    huellaAnterior: "",
+    fechaHoraHusoGenRegistro: "2026-08-27T12:42:15+02:00",
+  };
+
+  assert.equal(
+    computeInvoiceHash({ ...common, idEmisorFactura: "B-04843843" }),
+    computeInvoiceHash({ ...common, idEmisorFactura: "B04843843" }),
+  );
+  assert.equal(
+    computeInvoiceHash({ ...common, idEmisorFactura: "B-04843843" }),
+    "89F421C83173E67B4856B3FE0CE2FDB2E7E76C9B60D43561035A4EF20BBE67FE",
+  );
+});
+
 test("las fechas fiscales usan el huso horario de Madrid", () => {
   assert.equal(
     getMadridIsoTimestamp(new Date("2026-07-26T10:30:00Z")),
@@ -144,6 +165,7 @@ test("la anulación genera una huella estable y encadenada", () => {
 
   assert.match(first, /^[A-F0-9]{64}$/);
   assert.equal(first, second);
+  assert.equal(first, computeCancellationHash({ ...input, issuerNif: "B-04843843" }));
   assert.notEqual(first, changed);
 });
 

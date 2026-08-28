@@ -67,6 +67,7 @@ const { SecretManagerServiceClient } = require("@google-cloud/secret-manager");
 const {
   MAX_PFX_BYTES,
   buildTenantSecretId,
+  normalizeTaxId,
   parseAndValidatePfx,
 } = require("./lib/aeatCertificate");
 const {
@@ -1742,7 +1743,7 @@ exports.emitInvoices = onCall(
         let previousHash = previousFiscalRecordId
           ? settings.lastInvoiceHash || ""
           : "";
-        const issuerNif = String(settings.nif || "").trim();
+        const issuerNif = normalizeTaxId(settings.nif);
         const now = new Date();
         const issueDate = getIssueDate(settings, now);
         if (Number.isNaN(issueDate.getTime())) {
@@ -3015,7 +3016,7 @@ exports.cancelInvoiceFiscalRecord = onCall(
       const issueDate = invoice.issueDate?.toDate
         ? invoice.issueDate.toDate()
         : new Date(invoice.issueDate);
-      const issuerNif = String(settings.nif || "").trim();
+      const issuerNif = normalizeTaxId(settings.nif);
       const hash = computeCancellationHash({
         issuerNif,
         invoiceNumber: invoice.invoiceNumber,
@@ -3200,7 +3201,7 @@ exports.subsanateInvoiceFiscalRecord = onCall(
       const issueDate = invoice.issueDate?.toDate
         ? invoice.issueDate.toDate()
         : new Date(invoice.issueDate);
-      const issuerNif = String(settings.nif || "").trim();
+      const issuerNif = normalizeTaxId(settings.nif);
       const invoiceType = resolveInvoiceType(correctedInvoice);
       const hash = computeInvoiceHash({
         idEmisorFactura: issuerNif,
