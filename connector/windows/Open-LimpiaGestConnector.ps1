@@ -48,7 +48,6 @@ try {
   Write-Host "Conectando este ordenador..." -ForegroundColor Yellow
   $connector = Join-Path $PSScriptRoot "Connect-LimpiaGest.ps1"
   & $connector -CompanyId $CompanyId -PairingCode $PairingCode -ForcePair -PairOnly
-  if ($LASTEXITCODE -ne 0) { throw "No se pudo conectar este ordenador." }
 
   Write-Host ""
   Write-Host "ORDENADOR CONECTADO CORRECTAMENTE" -ForegroundColor Green

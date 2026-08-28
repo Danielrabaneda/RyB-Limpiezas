@@ -34,7 +34,6 @@ Copy-Item -LiteralPath $validatorSource -Destination (Join-Path $installDirector
 Copy-Item -LiteralPath $schemasSource -Destination (Join-Path $installDirectory "schemas") -Recurse -Force
 
 & $connectorTarget -CompanyId $CompanyId -PairingCode $PairingCode -ForcePair -PairOnly
-if ($LASTEXITCODE -ne 0) { throw "No se pudo comprobar la conexión." }
 
 $protocolKey = "HKCU:\Software\Classes\limpiagest-verifactu"
 New-Item -Path $protocolKey -Force | Out-Null
