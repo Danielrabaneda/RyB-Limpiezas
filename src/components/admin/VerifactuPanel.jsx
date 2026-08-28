@@ -11,6 +11,7 @@ import {
   getAeatSubmissions,
   getVerifactuEvents,
   prepareAeatSubmissions,
+  sendAeatCloudTestSubmission,
   startLocalConnectorPairing,
   subsanateInvoiceFiscalRecord,
 } from "../../services/invoiceService";
@@ -64,6 +65,7 @@ export default function VerifactuPanel({
   const [connectorStatus, setConnectorStatus] = useState({ status: "not_connected" });
   const [pairing, setPairing] = useState(null);
   const [connectorLaunchAttempted, setConnectorLaunchAttempted] = useState(false);
+  const [cloudSubmissionToSend, setCloudSubmissionToSend] = useState(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [fiscalAction, setFiscalAction] = useState(null);
@@ -216,6 +218,16 @@ export default function VerifactuPanel({
     } finally {
       setBusy(false);
     }
+  };
+
+  const sendCloudTest = () => {
+    if (!cloudSubmissionToSend) return;
+    const selected = cloudSubmissionToSend;
+    run(async () => {
+      await sendAeatCloudTestSubmission(selected.id);
+      setCloudSubmissionToSend(null);
+      await onInvoicesChanged?.();
+    }, "La AEAT ha respondido al envío de prueba. Revisa el estado de la cola.");
   };
 
   const openFiscalAction = (kind) => {
@@ -451,6 +463,25 @@ export default function VerifactuPanel({
       )}
       {message && <p style={{ fontSize: 13, marginBottom: 0 }}>{message}</p>}
 
+      {cloudSubmissionToSend && (
+        <div style={{ marginTop: 14, padding: 14, borderRadius: 8, background: "#fff7ed", border: "1px solid #fdba74" }}>
+          <strong>Confirmar envío al entorno de pruebas de la AEAT</strong>
+          <p style={{ margin: "8px 0", fontSize: 13, color: "#7c2d12" }}>
+            Se enviará el registro <strong>{cloudSubmissionToSend.recordType}</strong> de la factura{" "}
+            <strong>{cloudSubmissionToSend.invoiceNumber || cloudSubmissionToSend.invoiceId}</strong> utilizando el certificado conectado.
+            La producción continúa bloqueada.
+          </p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" className="btn btn-primary" disabled={busy} onClick={sendCloudTest}>
+              Sí, enviar prueba a la AEAT
+            </button>
+            <button type="button" className="btn btn-outline" disabled={busy} onClick={() => setCloudSubmissionToSend(null)}>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
       <h4>Cola AEAT ({submissions.length})</h4>
       {submissions.length === 0 ? (
         <p style={{ color: "#64748b", fontSize: 13 }}>Todavía no hay paquetes preparados.</p>
@@ -469,7 +500,16 @@ export default function VerifactuPanel({
                     {item.aeatResponse?.message || item.lastError ||
                       (item.aeatResponse?.code ? `Código ${item.aeatResponse.code}` : "—")}
                   </td>
-                  <td><button type="button" className="btn btn-sm btn-outline" disabled={busy} onClick={() => downloadPackage(item.id)}>XML</button></td>
+                  <td>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      <button type="button" className="btn btn-sm btn-outline" disabled={busy} onClick={() => downloadPackage(item.id)}>XML</button>
+                      {profile.channel === "cloud_certificate" && certificate.connected && ["awaiting_sender", "awaiting_local_connector", "awaiting_cloud_sender", "retry_pending"].includes(item.status) && (
+                        <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => setCloudSubmissionToSend(item)}>
+                          Enviar prueba
+                        </button>
+                      )}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>

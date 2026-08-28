@@ -69,6 +69,12 @@ const {
   buildTenantSecretId,
   parseAndValidatePfx,
 } = require("./lib/aeatCertificate");
+const {
+  parseAeatSoapResponse,
+  postSoapWithPfx,
+} = require("./lib/aeatCloudSender");
+
+const AEAT_TEST_ENDPOINT = "https://prewww1.aeat.es/wlpl/TIKE-CONT/ws/SistemaFacturacion/VerifactuSOAP";
 
 // Inicializar Firebase Admin
 initializeApp();
@@ -2165,6 +2171,199 @@ exports.disconnectAeatCertificate = onCall(
   },
 );
 
+exports.sendAeatCloudTestSubmission = onCall(
+  {
+    region: "europe-west1",
+    memory: "512MiB",
+    timeoutSeconds: 120,
+  },
+  async (request) => {
+    const companyId = await requireTenantAdmin(request);
+    const submissionId = String(request.data?.submissionId || "").trim();
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(submissionId)) {
+      throw new HttpsError("invalid-argument", "El registro de prueba no es válido.");
+    }
+    if (request.data?.confirmTestSend !== true) {
+      throw new HttpsError("failed-precondition", "Confirma expresamente el envío al entorno de pruebas de la AEAT.");
+    }
+
+    const settingsRef = db.doc(`companies/${companyId}/settings/billing`);
+    const certificateRef = db.doc(`companies/${companyId}/verifactuConfig/certificate`);
+    const submissionRef = db.doc(`companies/${companyId}/aeatSubmissions/${submissionId}`);
+    const [settingsSnap, certificateSnap, submissionSnap] = await Promise.all([
+      settingsRef.get(),
+      certificateRef.get(),
+      submissionRef.get(),
+    ]);
+    if (!settingsSnap.exists || !submissionSnap.exists) {
+      throw new HttpsError("not-found", "No se encuentra la configuración o el registro de prueba.");
+    }
+    const settings = settingsSnap.data() || {};
+    const certificate = certificateSnap.data() || {};
+    const submission = submissionSnap.data() || {};
+    if (
+      settings.verifactuEnabled !== true ||
+      settings.verifactuMode !== "test" ||
+      settings.aeatConnection?.channel !== "cloud_certificate"
+    ) {
+      throw new HttpsError("failed-precondition", "Guarda VeriFactu en modo de pruebas con el certificado PFX/P12.");
+    }
+    if (!certificateSnap.exists || certificate.connected !== true || !certificate.secretVersion) {
+      throw new HttpsError("failed-precondition", "El certificado PFX/P12 no está conectado.");
+    }
+    if (submission.environment !== "test" || submission.productionEnabled === true) {
+      throw new HttpsError("failed-precondition", "La producción permanece bloqueada.");
+    }
+    const sendableStatuses = new Set([
+      "awaiting_sender",
+      "awaiting_local_connector",
+      "awaiting_cloud_sender",
+      "retry_pending",
+    ]);
+    if (!sendableStatuses.has(submission.status)) {
+      throw new HttpsError("failed-precondition", "Este registro no está pendiente de envío.");
+    }
+    if (Number(submission.attempts || 0) >= MAX_SUBMISSION_ATTEMPTS) {
+      throw new HttpsError("failed-precondition", "El registro ha agotado los intentos permitidos.");
+    }
+    if (submission.recordType === "anulacion") {
+      const altaSnap = await db.doc(`companies/${companyId}/aeatSubmissions/alta_${submission.invoiceId}`).get();
+      const altaStatus = altaSnap.data()?.status;
+      if (!altaSnap.exists || !["accepted", "accepted_with_errors"].includes(altaStatus)) {
+        throw new HttpsError("failed-precondition", "Primero debe aceptarse el alta de esta factura en el entorno de pruebas.");
+      }
+    }
+
+    const claimed = await db.runTransaction(async (transaction) => {
+      const fresh = await transaction.get(submissionRef);
+      if (!fresh.exists) return null;
+      const data = fresh.data();
+      if (
+        data.environment !== "test" ||
+        data.productionEnabled === true ||
+        !sendableStatuses.has(data.status) ||
+        Number(data.attempts || 0) >= MAX_SUBMISSION_ATTEMPTS
+      ) {
+        return null;
+      }
+      const attemptNumber = Number(data.attempts || 0) + 1;
+      transaction.update(submissionRef, {
+        status: "processing",
+        attempts: attemptNumber,
+        leaseUntil: Timestamp.fromMillis(Date.now() + 2 * 60 * 1000),
+        claimedAt: FieldValue.serverTimestamp(),
+        claimedBy: request.auth.uid,
+      });
+      return { ...data, attemptNumber };
+    });
+    if (!claimed) {
+      throw new HttpsError("aborted", "El registro ya no está disponible para enviarlo.");
+    }
+
+    let aeatResult;
+    try {
+      const fiscalSnap = await db.doc(`companies/${companyId}/fiscalRecords/${claimed.fiscalRecordId}`).get();
+      if (!fiscalSnap.exists) throw new Error("No se encuentra el registro fiscal inmutable.");
+      const fiscalRecord = fiscalSnap.data();
+      let previousFiscalRecord = null;
+      if (fiscalRecord.chain?.previousFiscalRecordId) {
+        const previousSnap = await db.doc(`companies/${companyId}/fiscalRecords/${fiscalRecord.chain.previousFiscalRecordId}`).get();
+        previousFiscalRecord = previousSnap.exists ? previousSnap.data() : null;
+      }
+      const soapXml = buildAeatOfficialSoapEnvelope(
+        fiscalRecord,
+        { ...settings, companyId },
+        previousFiscalRecord,
+      );
+      const [secretVersion] = await secretManager.accessSecretVersion({
+        name: certificate.secretVersion,
+      });
+      const secretText = secretVersion.payload?.data?.toString("utf8") || "";
+      const secretPayload = JSON.parse(secretText);
+      if (!secretPayload.pfxBase64 || !secretPayload.password) {
+        throw new Error("El certificado custodiado no está completo.");
+      }
+      const httpResponse = await postSoapWithPfx({
+        endpoint: AEAT_TEST_ENDPOINT,
+        soapXml,
+        pfx: Buffer.from(secretPayload.pfxBase64, "base64"),
+        passphrase: secretPayload.password,
+      });
+      aeatResult = parseAeatSoapResponse(httpResponse);
+    } catch (error) {
+      logger.error("Fallo en el envío VeriFactu de pruebas", {
+        companyId,
+        submissionId,
+        error: error.message,
+      });
+      aeatResult = {
+        transportOk: false,
+        httpStatus: 0,
+        message: String(error.message || "No se pudo conectar con la AEAT.").slice(0, 1500),
+      };
+    }
+
+    const recordState = String(aeatResult.recordState || "").slice(0, 50);
+    let status = !aeatResult.transportOk
+      ? (aeatResult.permanentFailure ? "rejected" : "retry_pending")
+      : recordState === "Correcto"
+        ? "accepted"
+        : recordState === "AceptadoConErrores"
+          ? "accepted_with_errors"
+          : "rejected";
+    const nextAttemptAt = status === "retry_pending" && claimed.attemptNumber < MAX_SUBMISSION_ATTEMPTS
+      ? Timestamp.fromDate(getNextRetryDate(claimed.attemptNumber))
+      : null;
+    if (status === "retry_pending" && !nextAttemptAt) status = "rejected";
+    const sanitizedResponse = {
+      csv: String(aeatResult.csv || "").slice(0, 100),
+      code: String(aeatResult.code || "").slice(0, 100),
+      message: String(aeatResult.message || "").slice(0, 1500),
+      shipmentState: String(aeatResult.shipmentState || "").slice(0, 50),
+      recordState,
+      waitSeconds: Math.max(0, Math.min(3600, Number(aeatResult.waitSeconds) || 0)),
+      httpStatus: Math.max(0, Math.min(999, Number(aeatResult.httpStatus) || 0)),
+    };
+    await db.runTransaction(async (transaction) => {
+      transaction.update(submissionRef, {
+        status,
+        channel: "cloud_certificate",
+        nextAttemptAt,
+        leaseUntil: null,
+        aeatResponse: sanitizedResponse,
+        lastError: ["rejected", "retry_pending"].includes(status) ? sanitizedResponse.message : null,
+        processedAt: FieldValue.serverTimestamp(),
+        processedBy: "cloud_certificate",
+      });
+      transaction.update(db.doc(`companies/${companyId}/invoices/${claimed.invoiceId}`), {
+        aeatStatus: status,
+        aeatEnvironment: "test",
+        aeatProductionAccepted: false,
+        aeatResponseCode: sanitizedResponse.code,
+        aeatCsv: sanitizedResponse.csv,
+        aeatProcessedAt: FieldValue.serverTimestamp(),
+      });
+    });
+    await recordVerifactuEvent(companyId, {
+      type: "aeat_cloud_test_result_recorded",
+      actorId: request.auth.uid,
+      invoiceId: claimed.invoiceId,
+      invoiceNumber: claimed.invoiceNumber,
+      fiscalRecordId: claimed.fiscalRecordId,
+      submissionId,
+      channel: "cloud_certificate",
+      details: { status, httpStatus: sanitizedResponse.httpStatus },
+    });
+    return {
+      submissionId,
+      status,
+      environment: "test",
+      productionEnabled: false,
+      response: sanitizedResponse,
+    };
+  },
+);
+
 exports.startLocalConnectorPairing = onCall(
   { region: "europe-west1", memory: "256MiB", timeoutSeconds: 30 },
   async (request) => {
@@ -2347,6 +2546,13 @@ exports.localConnectorClaim = onRequest(
     const authenticated = await authenticateLocalConnector(request, body);
     if (!authenticated) return response.status(401).json({ error: "unauthorized" });
     const { companyId } = authenticated;
+    const channelSettingsSnap = await db.doc(`companies/${companyId}/settings/billing`).get();
+    if (channelSettingsSnap.data()?.aeatConnection?.channel !== "local_connector") {
+      return response.status(409).json({
+        error: "local_connector_disabled",
+        job: null,
+      });
+    }
     const submissionsRef = db.collection(`companies/${companyId}/aeatSubmissions`);
     const candidateSnaps = [];
     for (const status of ["awaiting_local_connector", "retry_pending", "processing"]) {

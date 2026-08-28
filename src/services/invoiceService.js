@@ -197,6 +197,12 @@ export async function prepareAeatSubmissions(invoiceIds) {
   return result.data;
 }
 
+export async function sendAeatCloudTestSubmission(submissionId) {
+  const fn = httpsCallable(functions, "sendAeatCloudTestSubmission");
+  const result = await fn({ submissionId, confirmTestSend: true });
+  return result.data;
+}
+
 export async function getAeatSubmissionPackage(submissionId) {
   const fn = httpsCallable(functions, "getAeatSubmissionPackage");
   const result = await fn({ submissionId });
