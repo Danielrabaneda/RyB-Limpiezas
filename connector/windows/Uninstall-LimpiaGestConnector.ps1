@@ -4,6 +4,7 @@ param()
 $ErrorActionPreference = "Stop"
 $installDirectory = Join-Path $env:LOCALAPPDATA "LimpiaGest\ConectorVeriFactu"
 $shortcutPath = Join-Path ([Environment]::GetFolderPath("Startup")) "LimpiaGest VeriFactu.lnk"
+$manualShortcutPath = Join-Path ([Environment]::GetFolderPath("Programs")) "Conectar LimpiaGest VeriFactu.lnk"
 $protocolKey = "HKCU:\Software\Classes\limpiagest-verifactu"
 
 Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" |
@@ -11,6 +12,7 @@ Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 
 if (Test-Path -LiteralPath $shortcutPath) { Remove-Item -LiteralPath $shortcutPath -Force }
+if (Test-Path -LiteralPath $manualShortcutPath) { Remove-Item -LiteralPath $manualShortcutPath -Force }
 if (Test-Path -LiteralPath $protocolKey) { Remove-Item -LiteralPath $protocolKey -Recurse -Force }
 if (Test-Path -LiteralPath $installDirectory) { Remove-Item -LiteralPath $installDirectory -Recurse -Force }
 

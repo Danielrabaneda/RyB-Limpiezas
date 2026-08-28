@@ -63,6 +63,7 @@ export default function VerifactuPanel({
   const [certificatePassword, setCertificatePassword] = useState("");
   const [connectorStatus, setConnectorStatus] = useState({ status: "not_connected" });
   const [pairing, setPairing] = useState(null);
+  const [connectorLaunchAttempted, setConnectorLaunchAttempted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [fiscalAction, setFiscalAction] = useState(null);
@@ -160,12 +161,31 @@ export default function VerifactuPanel({
     run(async () => {
       const nextPairing = await startLocalConnectorPairing();
       setPairing(nextPairing);
+      setConnectorLaunchAttempted(false);
       setProfile((current) => ({
         ...current,
         channel: "local_connector",
         connectorName: current.connectorName || "Conector Windows",
       }));
     }, "Código preparado. Es válido durante 10 minutos.");
+
+  const openLocalConnector = () => {
+    if (!pairing) return;
+    setConnectorLaunchAttempted(true);
+    window.location.assign(
+      `limpiagest-verifactu://pair?companyId=${encodeURIComponent(pairing.companyId)}&code=${encodeURIComponent(pairing.pairingCode)}`,
+    );
+  };
+
+  const copyPairingCode = async () => {
+    if (!pairing) return;
+    try {
+      await navigator.clipboard.writeText(pairing.pairingCode);
+      setMessage("Código copiado. Abre 'Conectar LimpiaGest VeriFactu' desde el menú Inicio y pégalo.");
+    } catch {
+      setMessage(`Copia este código: ${pairing.pairingCode}`);
+    }
+  };
 
   const removeLocalConnector = () => {
     if (!window.confirm("¿Desconectar este ordenador? El conector dejará de poder acceder a la cola de esta empresa.")) return;
@@ -331,15 +351,26 @@ export default function VerifactuPanel({
                   <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>Código válido durante 10 minutos</p>
                   <p style={{ margin: "6px 0", fontSize: 24, fontWeight: 700, letterSpacing: 3 }}>{pairing.pairingCode}</p>
                   <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>Identificador: {pairing.companyId}</p>
-                  <a
+                  <button
+                    type="button"
                     className="btn btn-primary"
                     style={{ display: "inline-block", marginTop: 10 }}
-                    href={`limpiagest-verifactu://pair?companyId=${encodeURIComponent(pairing.companyId)}&code=${encodeURIComponent(pairing.pairingCode)}`}
+                    onClick={openLocalConnector}
                   >
                     Abrir conector automáticamente
-                  </a>
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    style={{ marginLeft: 8, marginTop: 10 }}
+                    onClick={copyPairingCode}
+                  >
+                    Copiar código
+                  </button>
                   <p style={{ margin: "8px 0 0", fontSize: 12, color: "#64748b" }}>
-                    Si Windows no abre la utilidad, instala primero el conector.
+                    {connectorLaunchAttempted
+                      ? "Si no aparece la ventana, abre el menú Inicio de Windows, busca “Conectar LimpiaGest VeriFactu” y pega el código."
+                      : "Si Windows no abre la utilidad, instala primero el conector."}
                   </p>
                   <a className="btn btn-outline" style={{ display: "inline-block", marginTop: 10 }} href="/downloads/LimpiaGest-Conector-Windows.zip" download>
                     Descargar instalador para Windows

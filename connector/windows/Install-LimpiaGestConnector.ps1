@@ -14,6 +14,8 @@ $validatorSource = Join-Path $PSScriptRoot "Test-OfficialSoapSchema.ps1"
 $schemasSource = Join-Path $PSScriptRoot "schemas"
 $startupDirectory = [Environment]::GetFolderPath("Startup")
 $shortcutPath = Join-Path $startupDirectory "LimpiaGest VeriFactu.lnk"
+$programsDirectory = [Environment]::GetFolderPath("Programs")
+$manualShortcutPath = Join-Path $programsDirectory "Conectar LimpiaGest VeriFactu.lnk"
 
 if (-not (Test-Path -LiteralPath $connectorSource) -or -not (Test-Path -LiteralPath $protocolHandlerSource) -or -not (Test-Path -LiteralPath $validatorSource) -or -not (Test-Path -LiteralPath $schemasSource)) {
   throw "No se encuentra el conector junto al instalador."
@@ -51,4 +53,11 @@ $shortcut.WorkingDirectory = $installDirectory
 $shortcut.Description = "Conector VeriFactu de LimpiaGest"
 $shortcut.Save()
 
-Write-Host "LimpiaGest ha quedado conectado y arrancará automáticamente al iniciar sesión." -ForegroundColor Green
+$manualShortcut = $shell.CreateShortcut($manualShortcutPath)
+$manualShortcut.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+$manualShortcut.Arguments = "-NoExit -NoProfile -ExecutionPolicy Bypass -File `"$protocolHandlerTarget`" -CompanyId `"$CompanyId`""
+$manualShortcut.WorkingDirectory = $installDirectory
+$manualShortcut.Description = "Conectar este ordenador con LimpiaGest"
+$manualShortcut.Save()
+
+Write-Host "LimpiaGest ha quedado conectado y arrancara automaticamente al iniciar sesion." -ForegroundColor Green
