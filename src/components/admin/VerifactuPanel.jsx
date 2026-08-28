@@ -358,8 +358,8 @@ export default function VerifactuPanel({
               </p>
               <ol style={{ color: "#475569", fontSize: 13, paddingLeft: 20 }}>
                 <li>Genera un código temporal.</li>
-                <li>Abre el conector de LimpiaGest en este ordenador.</li>
-                <li>Introduce el código y espera la confirmación.</li>
+                <li>Pulsa <strong>Abrir conector automáticamente</strong>. El código se enviará solo: no tienes que copiarlo ni escribirlo.</li>
+                <li>Si el navegador no abre el conector, utiliza la alternativa manual que aparecerá junto al código.</li>
               </ol>
               {!pairing ? (
                 <button type="button" className="btn btn-primary" disabled={busy} onClick={beginLocalPairing}>Conectar este ordenador</button>
@@ -368,6 +368,9 @@ export default function VerifactuPanel({
                   <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>Código válido durante 10 minutos</p>
                   <p style={{ margin: "6px 0", fontSize: 24, fontWeight: 700, letterSpacing: 3 }}>{pairing.pairingCode}</p>
                   <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>Identificador: {pairing.companyId}</p>
+                  <div style={{ marginTop: 10, padding: 10, borderRadius: 7, background: "#dcfce7", color: "#166534", fontSize: 13 }}>
+                    <strong>Opción recomendada:</strong> pulsa el botón azul. El código se copiará al conector automáticamente y no tendrás que escribirlo.
+                  </div>
                   <button
                     type="button"
                     className="btn btn-primary"
@@ -386,8 +389,8 @@ export default function VerifactuPanel({
                   </button>
                   <p style={{ margin: "8px 0 0", fontSize: 12, color: "#64748b" }}>
                     {connectorLaunchAttempted
-                      ? "Si no aparece la ventana, abre el menú Inicio de Windows, busca “Conectar LimpiaGest VeriFactu” y pega el código."
-                      : "Si Windows no abre la utilidad, instala primero el conector."}
+                      ? "Alternativa manual: pulsa “Copiar código”, abre el menú Inicio de Windows, busca “Conectar LimpiaGest VeriFactu” y pega el código."
+                      : "Si no aparece ninguna ventana al pulsar el botón azul, utiliza “Copiar código” y sigue la alternativa manual."}
                   </p>
                   <a className="btn btn-outline" style={{ display: "inline-block", marginTop: 10 }} href="/downloads/LimpiaGest-Conector-Windows.zip" download>
                     Descargar instalador para Windows
