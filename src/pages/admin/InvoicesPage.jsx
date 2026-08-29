@@ -40,6 +40,7 @@ import {
   calculateInvoiceSummaryTotals,
   getInvoiceLifecycleStatus,
 } from "../../utils/invoiceAccounting";
+import { isVerifactuInvoice } from "../../utils/verifactuQr";
 
 const parseLocaleFloat = (val) => {
   if (val === undefined || val === null || val === "") return 0;
@@ -1172,25 +1173,36 @@ export default function InvoicesPage() {
     if (
       inv.status !== "draft" &&
       inv.invoiceNumber &&
-      inv.invoiceNumber !== "Borrador"
+      inv.invoiceNumber !== "Borrador" &&
+      isVerifactuInvoice(inv)
     ) {
       try {
         const qrUrl = buildVerifactuQrUrl(inv, billingSettings);
         const qrDataUrl = await QRCode.toDataURL(qrUrl, {
           margin: 1,
           width: 100,
+          errorCorrectionLevel: "M",
         });
 
         const qrX = startX;
-        const qrY = 212;
-        const qrSize = 25; // 25x25 mm
+        const qrY = 214;
+        const qrSize = 30; // Mínimo oficial: 30x30 mm
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.setTextColor(15, 23, 42);
+        doc.text("QR tributario:", qrX + qrSize / 2, qrY - 2, {
+          align: "center",
+        });
 
         doc.addImage(qrDataUrl, "PNG", qrX, qrY, qrSize, qrSize);
 
         doc.setFont("helvetica", "bold");
         doc.setFontSize(9);
         doc.setTextColor(15, 23, 42); // slate-900
-        doc.text("VERI*FACTU", qrX, qrY + qrSize + 4.5);
+        doc.text("VERI*FACTU", qrX + qrSize / 2, qrY + qrSize + 4.5, {
+          align: "center",
+        });
 
         doc.setFont("helvetica", "italic");
         doc.setFontSize(7.5);

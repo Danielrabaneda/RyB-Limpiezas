@@ -19,6 +19,7 @@ import { httpsCallable } from "firebase/functions";
 import { db, storage, functions } from "../config/firebase";
 import { getCommunities } from "./communityService";
 import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
+export { buildVerifactuQrUrl } from "../utils/verifactuQr";
 
 const COLLECTION = "invoices";
 
@@ -630,26 +631,3 @@ export async function createRectifyingInvoice(
 }
 
 // ==================== VERIFACTU: QR ====================
-/**
- * Construye la URL oficial de la AEAT para el código QR de verificación.
- * Formato: https://www2.agenciatributaria.es/wlpl/TIKE-CONT/ValidarQR?nif=X&numserie=X&fecha=DD-MM-YYYY&importe=X.XX
- */
-export function buildVerifactuQrUrl(invoice, billingSettings) {
-  const nif = encodeURIComponent(billingSettings?.nif || "B04843843");
-  const numserie = encodeURIComponent(invoice.invoiceNumber || "");
-
-  let fecha = "";
-  if (invoice.issueDate) {
-    const d = invoice.issueDate.toDate
-      ? invoice.issueDate.toDate()
-      : new Date(invoice.issueDate);
-    const dd = String(d.getDate()).padStart(2, "0");
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const yyyy = d.getFullYear();
-    fecha = `${dd}-${mm}-${yyyy}`;
-  }
-
-  const importe = parseFloat(invoice.totalAmount || 0).toFixed(2);
-
-  return `https://www2.agenciatributaria.es/wlpl/TIKE-CONT/ValidarQR?nif=${nif}&numserie=${numserie}&fecha=${fecha}&importe=${importe}`;
-}
