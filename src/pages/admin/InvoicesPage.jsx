@@ -57,7 +57,7 @@ export default function InvoicesPage() {
   const [filterYear, setFilterYear] = useState(String(currentYear));
   const [filterMonth, setFilterMonth] = useState(String(currentMonth));
 
-  // Tabs: 'drafts', 'pending', 'paid', 'cancelled', 'settings'
+  // Tabs: 'drafts', 'pending', 'paid', 'cancelled', 'verifactu', 'settings'
   const [activeTab, setActiveTab] = useState("drafts");
   const [searchTerm, setSearchTerm] = useState("");
   const [filterAdmin, setFilterAdmin] = useState("");
@@ -1848,7 +1848,7 @@ export default function InvoicesPage() {
       </div>
 
       {/* Filter and Global Actions Card */}
-      {activeTab !== "settings" && (
+      {activeTab !== "settings" && activeTab !== "verifactu" && (
         <div className="card mb-6 p-4">
           <div className="flex flex-wrap justify-between items-end gap-4">
             <div className="flex gap-4 items-end flex-wrap flex-1">
@@ -2006,12 +2006,28 @@ export default function InvoicesPage() {
         >
           ⚙️ Ajustes Factura
         </button>
+        <button
+          className={`btn btn-sm ${activeTab === "verifactu" ? "btn-primary" : "btn-ghost"}`}
+          onClick={() => setActiveTab("verifactu")}
+        >
+          🧾 VeriFactu · Pruebas
+        </button>
       </div>
 
       {/* Tab Contents */}
       {loading ? (
         <div className="flex justify-center p-8">
           <div className="spinner"></div>
+        </div>
+      ) : activeTab === "verifactu" ? (
+        <div className="card" style={{ padding: "0 18px 18px" }}>
+          <VerifactuPanel
+            companyId={companyId}
+            invoices={invoices}
+            billingSettings={billingSettings}
+            onSettingsChanged={loadInitialData}
+            onInvoicesChanged={loadInvoices}
+          />
         </div>
       ) : activeTab === "settings" ? (
         /* Settings Tab */
@@ -3020,13 +3036,6 @@ export default function InvoicesPage() {
               </button>
             </div>
           </form>
-          <VerifactuPanel
-            companyId={companyId}
-            invoices={invoices}
-            billingSettings={billingSettings}
-            onSettingsChanged={loadInitialData}
-            onInvoicesChanged={loadInvoices}
-          />
         </div>
       ) : (
         /* Invoices Table View */
