@@ -35,15 +35,23 @@ Actualizado: 29 de agosto de 2026.
 - Aplicación y funciones publicadas en Firebase sobre Node.js 22, con pruebas
   automáticas, compilación web, sintaxis PowerShell y validación XSD superadas.
 
-## Caso controlado actualmente preparado
+## Resultado del caso controlado
 
 - Alta `TEST-VF-2026-0001`: **aceptada en pruebas**.
-- Subsanación del alta: **generada y pendiente de autorización para enviar**.
-- Anulación: **generada y pendiente de autorización para enviar**.
-- Cotejo del QR oficial: **pendiente**, y debe hacerse antes de transmitir la
-  anulación para comprobar la factura todavía vigente.
+- Cotejo del QR oficial: **superado**. La sede de pruebas mostró `Encontrada` y
+  coincidieron NIF, número, fecha e importe.
+- Anulación: **aceptada con errores**. La AEAT aceptó el registro y avisó de que
+  su hora de generación superaba el margen de 240 segundos.
+- Subsanación del alta: **rechazada como duplicada** porque el XML no incluyó el
+  indicador oficial de subsanación.
 - Efecto contable local tras preparar la anulación: 0,00 EUR facturados y
   0,00 EUR pendientes de cobro para este caso de prueba.
+
+Los dos defectos detectados ya están corregidos y publicados: las nuevas
+subsanaciones incluyen el indicador oficial, exigen modificar al menos un dato
+fiscal y conducen directamente a la confirmación de envío; además, el servidor
+impide un primer envío si la hora fiscal lleva preparada más de tres minutos.
+La corrección corresponde al commit `de59240`.
 
 La numeración `TEST-VF-...` está aislada de las series reales. Todos estos
 registros pertenecen al entorno de pruebas y no producen facturación real.
@@ -56,12 +64,12 @@ aplicación no puede transmitir a producción con su configuración actual.
 
 ## Las tres tareas finales pendientes
 
-### 1. Completar y archivar la evidencia externa de pruebas
+### 1. Repetir una subsanación limpia y archivar la evidencia
 
-Con confirmación expresa en el momento del envío: transmitir la subsanación,
-cotejar el QR en la sede de pruebas y transmitir la anulación de
-`TEST-VF-2026-0001`. Después se conservarán los estados y respuestas de la AEAT
-como evidencia de cierre.
+Crear una nueva factura de la serie `TEST-VF-...`, aceptar su alta, corregir un
+dato fiscal desde la pantalla de subsanación y confirmar inmediatamente el
+envío. La factura anterior ya está anulada y sus respuestas se conservan sin
+reescribirlas.
 
 ### 2. Revisión legal y declaración responsable
 
@@ -77,11 +85,16 @@ separado y deliberado el endpoint de producción y el modo exclusivo exigible.
 
 ## Cómo continuar
 
-El siguiente paso inmediato es autorizar las tres acciones externas del caso
-controlado. El certificado `.p12` ya conectado permite realizarlas sin volver a
-introducir la clave. El ordenador solo necesita permanecer encendido durante
-los envíos mediante el conector local; con el certificado P12 alojado de forma
-segura, el envío puede procesarse desde la plataforma.
+El siguiente paso técnico es una nueva alta y subsanación controladas para
+confirmar en la AEAT la corrección publicada. El certificado `.p12` ya conectado
+permite realizarlas sin volver a introducir la clave. Después solo quedarán la
+revisión/firma de la declaración y la distribución firmada con activación
+controlada de producción.
+
+Se ha dejado preparado un borrador de 1,21 EUR para `CLIENTE PRUEBA
+SUBSANACION`, todavía sin emitir. Al continuar debe emitirse para obtener el
+siguiente número `TEST-VF-...`, enviar su alta y después subsanar el nombre a
+`CLIENTE PRUEBA SUBSANACION CORREGIDO`.
 
 ## Puntos de entrada
 
