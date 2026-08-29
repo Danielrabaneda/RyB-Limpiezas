@@ -37,6 +37,7 @@ const {
   buildSubmissionManifest,
   getInitialSubmissionStatus,
   getNextRetryDate,
+  isAeatGenerationTimestampFresh,
   normalizeAeatConnectionProfile,
 } = require("./lib/aeatSubmission");
 const {
@@ -2227,6 +2228,27 @@ exports.sendAeatCloudTestSubmission = onCall(
     if (Number(submission.attempts || 0) >= MAX_SUBMISSION_ATTEMPTS) {
       throw new HttpsError("failed-precondition", "El registro ha agotado los intentos permitidos.");
     }
+    const fiscalRef = db.doc(
+      `companies/${companyId}/fiscalRecords/${submission.fiscalRecordId}`,
+    );
+    const fiscalBeforeSendSnap = await fiscalRef.get();
+    if (!fiscalBeforeSendSnap.exists) {
+      throw new HttpsError(
+        "not-found",
+        "No se encuentra el registro fiscal inmutable.",
+      );
+    }
+    if (
+      Number(submission.attempts || 0) === 0 &&
+      !isAeatGenerationTimestampFresh(
+        fiscalBeforeSendSnap.data()?.fechaHoraHusoGenRegistro,
+      )
+    ) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Este registro lleva preparado más de 3 minutos y la AEAT ya no admite su hora de generación. Créalo de nuevo y confirma el envío inmediatamente.",
+      );
+    }
     if (submission.recordType === "anulacion") {
       const altaSnap = await db.doc(`companies/${companyId}/aeatSubmissions/alta_${submission.invoiceId}`).get();
       const altaStatus = altaSnap.data()?.status;
@@ -2263,7 +2285,7 @@ exports.sendAeatCloudTestSubmission = onCall(
 
     let aeatResult;
     try {
-      const fiscalSnap = await db.doc(`companies/${companyId}/fiscalRecords/${claimed.fiscalRecordId}`).get();
+      const fiscalSnap = await fiscalRef.get();
       if (!fiscalSnap.exists) throw new Error("No se encuentra el registro fiscal inmutable.");
       const fiscalRecord = fiscalSnap.data();
       let previousFiscalRecord = null;
@@ -3106,6 +3128,7 @@ exports.cancelInvoiceFiscalRecord = onCall(
       return {
         invoiceId,
         cancellationFiscalRecordId: cancellationRef.id,
+        submissionId: submissionDocument ? cancellationSubmissionRef.id : null,
         hash,
       };
     });
@@ -3122,7 +3145,12 @@ exports.subsanateInvoiceFiscalRecord = onCall(
     const companyId = await requireTenantAdmin(request);
     const invoiceId = String(request.data?.invoiceId || "").trim();
     const reason = String(request.data?.reason || "").trim().slice(0, 500);
-    const corrections = request.data?.corrections || {};
+    const corrections =
+      request.data?.corrections &&
+      typeof request.data.corrections === "object" &&
+      !Array.isArray(request.data.corrections)
+        ? request.data.corrections
+        : {};
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(invoiceId) || !reason) {
       throw new HttpsError(
         "invalid-argument",
@@ -3163,6 +3191,27 @@ exports.subsanateInvoiceFiscalRecord = onCall(
           "La factura no admite una subsanación fiscal.",
         );
       }
+      const correctedClientName = String(
+        corrections.clientName ?? invoice.client?.name ?? "",
+      ).trim();
+      const correctedClientTaxId = normalizeTaxId(
+        corrections.clientTaxId ?? invoice.client?.cif ?? "",
+      );
+      const currentClientName = String(invoice.client?.name || "").trim();
+      const currentClientTaxId = normalizeTaxId(invoice.client?.cif || "");
+      const changesFiscalData =
+        correctedClientName !== currentClientName ||
+        correctedClientTaxId !== currentClientTaxId ||
+        (corrections.invoiceType &&
+          corrections.invoiceType !== invoice.invoiceType) ||
+        (corrections.operationDate &&
+          corrections.operationDate !== invoice.operationDate);
+      if (!changesFiscalData) {
+        throw new HttpsError(
+          "invalid-argument",
+          "Modifica al menos un dato fiscal antes de crear la subsanación.",
+        );
+      }
 
       const correctedInvoice = {
         ...invoice,
@@ -3171,10 +3220,10 @@ exports.subsanateInvoiceFiscalRecord = onCall(
         client: {
           ...(invoice.client || {}),
           name: String(
-            corrections.clientName || invoice.client?.name || "",
+            correctedClientName,
           ).slice(0, 200),
           cif: String(
-            corrections.clientTaxId || invoice.client?.cif || "",
+            correctedClientTaxId,
           ).slice(0, 30),
           idType: String(
             corrections.clientIdType || invoice.client?.idType || "NIF",
@@ -3230,7 +3279,7 @@ exports.subsanateInvoiceFiscalRecord = onCall(
 
       const subsanationRecord = {
         ...record,
-        recordType: "alta_subsanacion",
+        recordType: "subsanacion",
         subsanacion: true,
         correctionReason: reason,
         originalFiscalRecordId:
@@ -3294,6 +3343,7 @@ exports.subsanateInvoiceFiscalRecord = onCall(
       return {
         invoiceId,
         subsanationFiscalRecordId: subsanationRef.id,
+        submissionId: submissionDocument ? subsanationSubmissionRef.id : null,
         hash,
       };
     });

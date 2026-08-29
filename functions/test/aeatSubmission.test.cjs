@@ -9,6 +9,7 @@ const {
   normalizeAeatConnectionProfile,
   getRetryDelayMs,
   getNextRetryDate,
+  isAeatGenerationTimestampFresh,
 } = require("../lib/aeatSubmission");
 
 const fiscalRecord = {
@@ -109,6 +110,32 @@ test("genera el sobre SOAP 1.1 oficial sin habilitar producción", () => {
   assert.match(xml, /Limpieza &amp; mantenimiento/);
   assert.match(xml, /<sf:TipoHuella>01<\/sf:TipoHuella>/);
   assert.doesNotMatch(xml, /www1\.agenciatributaria/);
+});
+
+test("marca las altas de subsanación con el indicador oficial", () => {
+  const xml = buildAeatOfficialSoapEnvelope({
+    ...fiscalRecord,
+    recordType: "alta_subsanacion",
+    subsanacion: true,
+  }, {
+    companyName: "Limpiezas Rayba S.L",
+  });
+
+  assert.match(xml, /<sf:RegistroAlta>/);
+  assert.match(xml, /<sf:Subsanacion>S<\/sf:Subsanacion>/);
+});
+
+test("impide el primer envío cuando la hora fiscal ya ha caducado", () => {
+  const now = new Date("2026-08-29T19:00:00.000Z");
+  assert.equal(
+    isAeatGenerationTimestampFresh("2026-08-29T20:57:30+02:00", now),
+    true,
+  );
+  assert.equal(
+    isAeatGenerationTimestampFresh("2026-08-29T20:56:00+02:00", now),
+    false,
+  );
+  assert.equal(isAeatGenerationTimestampFresh("fecha-no-valida", now), false);
 });
 
 test("el manifiesto enlaza la cola con la huella fiscal inmutable", () => {

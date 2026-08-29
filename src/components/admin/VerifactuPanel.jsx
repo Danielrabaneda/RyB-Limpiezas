@@ -71,6 +71,10 @@ export default function VerifactuPanel({
   const [fiscalAction, setFiscalAction] = useState(null);
   const [fiscalInvoiceNumber, setFiscalInvoiceNumber] = useState("");
   const [fiscalReason, setFiscalReason] = useState("");
+  const [fiscalCorrections, setFiscalCorrections] = useState({
+    clientName: "",
+    clientTaxId: "",
+  });
 
   const eligibleInvoices = useMemo(
     () =>
@@ -231,12 +235,23 @@ export default function VerifactuPanel({
   };
 
   const openFiscalAction = (kind) => {
-    const candidates = invoices.filter((invoice) => invoice.status !== "draft");
+    const candidates = invoices.filter(
+      (invoice) =>
+        invoice.status !== "draft" &&
+        invoice.emissionMode === "verifactu_test" &&
+        invoice.fiscalRecordId &&
+        invoice.invoiceStatus !== "cancelled",
+    );
+    const selected = candidates.length === 1 ? candidates[0] : null;
     setFiscalAction(kind);
     setFiscalInvoiceNumber(
-      candidates.length === 1 ? String(candidates[0].invoiceNumber || "") : "",
+      selected ? String(selected.invoiceNumber || "") : "",
     );
     setFiscalReason("");
+    setFiscalCorrections({
+      clientName: selected?.client?.name || selected?.communityName || "",
+      clientTaxId: selected?.client?.taxId || selected?.client?.cif || "",
+    });
     setMessage("");
   };
 
@@ -247,13 +262,49 @@ export default function VerifactuPanel({
       );
       if (!invoice) throw new Error("No se encontró esa factura en el periodo visible.");
       if (!fiscalReason.trim()) throw new Error("El motivo es obligatorio.");
+      let result;
       if (fiscalAction === "cancel") {
-        await cancelInvoiceFiscalRecord(invoice.id, fiscalReason.trim());
+        result = await cancelInvoiceFiscalRecord(invoice.id, fiscalReason.trim());
       } else {
-        await subsanateInvoiceFiscalRecord(invoice.id, fiscalReason.trim(), {});
+        const corrections = {
+          clientName: fiscalCorrections.clientName.trim(),
+          clientTaxId: fiscalCorrections.clientTaxId.trim().toUpperCase(),
+        };
+        const originalName = String(
+          invoice.client?.name || invoice.communityName || "",
+        ).trim();
+        const originalTaxId = String(
+          invoice.client?.taxId || invoice.client?.cif || "",
+        ).trim().toUpperCase();
+        if (
+          corrections.clientName === originalName &&
+          corrections.clientTaxId === originalTaxId
+        ) {
+          throw new Error(
+            "Modifica al menos el nombre o el NIF del cliente para crear una subsanación.",
+          );
+        }
+        result = await subsanateInvoiceFiscalRecord(
+          invoice.id,
+          fiscalReason.trim(),
+          corrections,
+        );
       }
       await onInvoicesChanged?.();
       setFiscalAction(null);
+      if (
+        profile.channel === "cloud_certificate" &&
+        certificate.connected &&
+        result?.submissionId
+      ) {
+        setCloudSubmissionToSend({
+          id: result.submissionId,
+          invoiceId: invoice.id,
+          invoiceNumber: invoice.invoiceNumber,
+          recordType:
+            fiscalAction === "cancel" ? "anulacion" : "subsanacion",
+        });
+      }
     }, fiscalAction === "cancel" ? "Registro de anulación creado." : "Registro de subsanación creado.");
 
   return (
@@ -440,15 +491,71 @@ export default function VerifactuPanel({
           <strong>{fiscalAction === "cancel" ? "Anular registro fiscal" : "Subsanar registro fiscal"}</strong>
           <label className="form-group" style={{ display: "block", marginTop: 10 }}>
             <span className="form-label">Factura</span>
-            <select className="form-input" value={fiscalInvoiceNumber} onChange={(event) => setFiscalInvoiceNumber(event.target.value)}>
+            <select
+              className="form-input"
+              value={fiscalInvoiceNumber}
+              onChange={(event) => {
+                const nextNumber = event.target.value;
+                const nextInvoice = invoices.find(
+                  (invoice) => String(invoice.invoiceNumber) === nextNumber,
+                );
+                setFiscalInvoiceNumber(nextNumber);
+                setFiscalCorrections({
+                  clientName:
+                    nextInvoice?.client?.name ||
+                    nextInvoice?.communityName ||
+                    "",
+                  clientTaxId:
+                    nextInvoice?.client?.taxId ||
+                    nextInvoice?.client?.cif ||
+                    "",
+                });
+              }}
+            >
               <option value="">Selecciona una factura</option>
-              {invoices.filter((invoice) => invoice.status !== "draft").map((invoice) => (
+              {invoices.filter((invoice) =>
+                invoice.status !== "draft" &&
+                invoice.emissionMode === "verifactu_test" &&
+                invoice.fiscalRecordId &&
+                invoice.invoiceStatus !== "cancelled"
+              ).map((invoice) => (
                 <option key={invoice.id} value={invoice.invoiceNumber}>
                   {invoice.invoiceNumber} · {invoice.client?.name || invoice.communityName || "Sin cliente"}
                 </option>
               ))}
             </select>
           </label>
+          {fiscalAction === "subsanate" && (
+            <>
+              <p style={{ margin: "10px 0 0", fontSize: 13, color: "#475569" }}>
+                Corrige al menos uno de estos datos. El registro original se conservará sin cambios.
+              </p>
+              <div className="grid grid-2 gap-4" style={{ marginTop: 10 }}>
+                <label className="form-group">
+                  <span className="form-label">Nombre o razón social corregido</span>
+                  <input
+                    className="form-input"
+                    value={fiscalCorrections.clientName}
+                    onChange={(event) => setFiscalCorrections((current) => ({
+                      ...current,
+                      clientName: event.target.value,
+                    }))}
+                  />
+                </label>
+                <label className="form-group">
+                  <span className="form-label">NIF/CIF corregido</span>
+                  <input
+                    className="form-input"
+                    value={fiscalCorrections.clientTaxId}
+                    onChange={(event) => setFiscalCorrections((current) => ({
+                      ...current,
+                      clientTaxId: event.target.value,
+                    }))}
+                  />
+                </label>
+              </div>
+            </>
+          )}
           <label className="form-group" style={{ display: "block", marginTop: 10 }}>
             <span className="form-label">Motivo obligatorio</span>
             <input className="form-input" value={fiscalReason} onChange={(event) => setFiscalReason(event.target.value)} placeholder="Describe el motivo de la operación" />
@@ -459,6 +566,11 @@ export default function VerifactuPanel({
             </button>
             <button type="button" className="btn btn-outline" disabled={busy} onClick={() => setFiscalAction(null)}>Cancelar</button>
           </div>
+          {profile.channel === "cloud_certificate" && certificate.connected && (
+            <p style={{ margin: "8px 0 0", fontSize: 12, color: "#92400e" }}>
+              Después aparecerá la confirmación de envío. Confírmala de inmediato: la AEAT admite un margen máximo de cuatro minutos para la hora de generación.
+            </p>
+          )}
         </div>
       )}
       {message && <p style={{ fontSize: 13, marginBottom: 0 }}>{message}</p>}

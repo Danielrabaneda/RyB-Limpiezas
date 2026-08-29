@@ -136,7 +136,10 @@ function buildAeatOfficialSoapEnvelope(fiscalRecord, settings = {}, previousFisc
       `<sf:FechaExpedicionFactura>${escapeXml(invoiceDate)}</sf:FechaExpedicionFactura>`,
       "</sf:IDFactura>",
       `<sf:NombreRazonEmisor>${escapeXml(issuerName)}</sf:NombreRazonEmisor>`,
-      fiscalRecord.recordType === "subsanacion" ? "<sf:Subsanacion>S</sf:Subsanacion>" : "",
+      fiscalRecord.subsanacion === true ||
+      ["subsanacion", "alta_subsanacion"].includes(fiscalRecord.recordType)
+        ? "<sf:Subsanacion>S</sf:Subsanacion>"
+        : "",
       `<sf:TipoFactura>${escapeXml(fiscalRecord.invoiceType || "F1")}</sf:TipoFactura>`,
       `<sf:DescripcionOperacion>${escapeXml(description)}</sf:DescripcionOperacion>`,
       recipients,
@@ -306,6 +309,22 @@ function buildSubmissionManifest({
   };
 }
 
+function isAeatGenerationTimestampFresh(
+  generationTimestamp,
+  now = new Date(),
+  maxSkewMs = 3 * 60 * 1000,
+) {
+  const generatedAt = new Date(generationTimestamp);
+  const reference = now instanceof Date ? now : new Date(now);
+  if (
+    Number.isNaN(generatedAt.getTime()) ||
+    Number.isNaN(reference.getTime())
+  ) {
+    return false;
+  }
+  return Math.abs(reference.getTime() - generatedAt.getTime()) <= maxSkewMs;
+}
+
 module.exports = {
   AEAT_CHANNELS,
   AEAT_JOB_STATUSES,
@@ -317,5 +336,6 @@ module.exports = {
   getInitialSubmissionStatus,
   getNextRetryDate,
   getRetryDelayMs,
+  isAeatGenerationTimestampFresh,
   normalizeAeatConnectionProfile,
 };
