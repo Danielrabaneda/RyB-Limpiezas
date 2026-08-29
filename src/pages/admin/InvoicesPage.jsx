@@ -36,6 +36,10 @@ import {
   validateIBAN,
 } from "../../services/sepaGenerator";
 import VerifactuPanel from "../../components/admin/VerifactuPanel";
+import {
+  calculateInvoiceSummaryTotals,
+  getInvoiceLifecycleStatus,
+} from "../../utils/invoiceAccounting";
 
 const parseLocaleFloat = (val) => {
   if (val === undefined || val === null || val === "") return 0;
@@ -53,7 +57,7 @@ export default function InvoicesPage() {
   const [filterYear, setFilterYear] = useState(String(currentYear));
   const [filterMonth, setFilterMonth] = useState(String(currentMonth));
 
-  // Tabs: 'drafts', 'pending', 'paid', 'settings'
+  // Tabs: 'drafts', 'pending', 'paid', 'cancelled', 'settings'
   const [activeTab, setActiveTab] = useState("drafts");
   const [searchTerm, setSearchTerm] = useState("");
   const [filterAdmin, setFilterAdmin] = useState("");
@@ -1611,9 +1615,13 @@ export default function InvoicesPage() {
   const filteredInvoices = invoices
     .filter((inv) => {
       let matchesTab = false;
-      if (activeTab === "drafts") matchesTab = inv.status === "draft";
-      else if (activeTab === "pending") matchesTab = inv.status === "pending";
-      else if (activeTab === "paid") matchesTab = inv.status === "paid";
+      const lifecycleStatus = getInvoiceLifecycleStatus(inv);
+      if (activeTab === "drafts") matchesTab = lifecycleStatus === "draft";
+      else if (activeTab === "pending") matchesTab = lifecycleStatus === "pending";
+      else if (activeTab === "paid") matchesTab = lifecycleStatus === "paid";
+      else if (activeTab === "cancelled") {
+        matchesTab = lifecycleStatus === "cancelled";
+      }
 
       if (!matchesTab) return false;
 
@@ -1639,27 +1647,14 @@ export default function InvoicesPage() {
     });
 
   // Calculate totals for summary cards
-  const summaryTotals = (() => {
-    let facturado = 0;
-    let cobrado = 0;
-    let pendiente = 0;
-
-    invoices.forEach((inv) => {
-      if (inv.status === "pending") {
-        facturado += inv.totalAmount;
-        pendiente += inv.totalAmount;
-      } else if (inv.status === "paid") {
-        facturado += inv.totalAmount;
-        cobrado += inv.totalAmount;
-      }
-    });
-    return { facturado, cobrado, pendiente };
-  })();
+  const summaryTotals = calculateInvoiceSummaryTotals(invoices);
 
   // ==================== SEPA REMITTANCE HANDLERS ====================
   const handleOpenSepaModal = () => {
     // Filter pending invoices with 'recibo' payment method
-    const pendingInvoices = invoices.filter((inv) => inv.status === "pending");
+    const pendingInvoices = invoices.filter(
+      (inv) => getInvoiceLifecycleStatus(inv) === "pending",
+    );
     const eligible = [];
     const warnings = [];
 
@@ -1969,20 +1964,41 @@ export default function InvoicesPage() {
           className={`btn btn-sm ${activeTab === "drafts" ? "btn-primary" : "btn-ghost"}`}
           onClick={() => setActiveTab("drafts")}
         >
-          📋 Borradores ({invoices.filter((i) => i.status === "draft").length})
+          📋 Borradores ({
+            invoices.filter(
+              (invoice) => getInvoiceLifecycleStatus(invoice) === "draft",
+            ).length
+          })
         </button>
         <button
           className={`btn btn-sm ${activeTab === "pending" ? "btn-primary" : "btn-ghost"}`}
           onClick={() => setActiveTab("pending")}
         >
-          ⏳ Pendientes ({invoices.filter((i) => i.status === "pending").length}
-          )
+          ⏳ Pendientes ({
+            invoices.filter(
+              (invoice) => getInvoiceLifecycleStatus(invoice) === "pending",
+            ).length
+          })
         </button>
         <button
           className={`btn btn-sm ${activeTab === "paid" ? "btn-primary" : "btn-ghost"}`}
           onClick={() => setActiveTab("paid")}
         >
-          ✅ Cobradas ({invoices.filter((i) => i.status === "paid").length})
+          ✅ Cobradas ({
+            invoices.filter(
+              (invoice) => getInvoiceLifecycleStatus(invoice) === "paid",
+            ).length
+          })
+        </button>
+        <button
+          className={`btn btn-sm ${activeTab === "cancelled" ? "btn-primary" : "btn-ghost"}`}
+          onClick={() => setActiveTab("cancelled")}
+        >
+          🚫 Anuladas ({
+            invoices.filter(
+              (invoice) => getInvoiceLifecycleStatus(invoice) === "cancelled",
+            ).length
+          })
         </button>
         <button
           className={`btn btn-sm ${activeTab === "settings" ? "btn-primary" : "btn-ghost"}`}
@@ -3088,7 +3104,9 @@ export default function InvoicesPage() {
                   📥 Descargar todos los PDFs ({filteredInvoices.length})
                 </button>
               )}
-              {filteredInvoices.length > 0 && activeTab !== "drafts" && (
+              {filteredInvoices.length > 0 &&
+                activeTab !== "drafts" &&
+                activeTab !== "cancelled" && (
                 <button
                   type="button"
                   className="btn btn-sm btn-outline"
@@ -3196,7 +3214,8 @@ export default function InvoicesPage() {
                       }}
                     >
                       <span>Acciones</span>
-                      {filteredInvoices.length > 0 && (
+                      {filteredInvoices.length > 0 &&
+                        activeTab !== "cancelled" && (
                         <label
                           style={{
                             display: "inline-flex",
@@ -3326,22 +3345,24 @@ export default function InvoicesPage() {
                         style={{ minWidth: "330px" }}
                       >
                         <div className="flex justify-end gap-1.5">
-                          <input
-                            type="checkbox"
-                            checked={!!selectedInvoices[inv.id]}
-                            onChange={(e) =>
-                              handleToggleSelectRow(inv.id, e.target.checked)
-                            }
-                            style={{
-                              width: "15px",
-                              height: "15px",
-                              marginRight: "8px",
-                              alignSelf: "center",
-                              cursor: "pointer",
-                            }}
-                            title="Seleccionar para borrado en lote"
-                          />
-                          {inv.status === "draft" && (
+                          {activeTab !== "cancelled" && (
+                            <input
+                              type="checkbox"
+                              checked={!!selectedInvoices[inv.id]}
+                              onChange={(e) =>
+                                handleToggleSelectRow(inv.id, e.target.checked)
+                              }
+                              style={{
+                                width: "15px",
+                                height: "15px",
+                                marginRight: "8px",
+                                alignSelf: "center",
+                                cursor: "pointer",
+                              }}
+                              title="Seleccionar para borrado en lote"
+                            />
+                          )}
+                          {getInvoiceLifecycleStatus(inv) === "draft" && (
                             <>
                               <button
                                 className="btn btn-xs btn-success"
@@ -3361,7 +3382,7 @@ export default function InvoicesPage() {
                               </button>
                             </>
                           )}
-                          {inv.status === "pending" && (
+                          {getInvoiceLifecycleStatus(inv) === "pending" && (
                             <>
                               <button
                                 className="btn btn-xs btn-success"
@@ -3381,7 +3402,7 @@ export default function InvoicesPage() {
                               </button>
                             </>
                           )}
-                          {inv.status === "paid" && (
+                          {getInvoiceLifecycleStatus(inv) === "paid" && (
                             <>
                               <button
                                 className="btn btn-xs btn-ghost text-xs"
@@ -3416,7 +3437,8 @@ export default function InvoicesPage() {
                           >
                             📥 PDF
                           </button>
-                          {inv.status !== "draft" && (
+                          {getInvoiceLifecycleStatus(inv) !== "draft" &&
+                            getInvoiceLifecycleStatus(inv) !== "cancelled" && (
                             <button
                               className="btn btn-xs btn-outline"
                               style={{
@@ -3430,26 +3452,30 @@ export default function InvoicesPage() {
                               ✉️ Email
                             </button>
                           )}
-                          <button
-                            className="btn btn-xs"
-                            style={{
-                              backgroundColor: "#25d366",
-                              color: "white",
-                              border: "none",
-                            }}
-                            onClick={() => handleSendWhatsApp(inv)}
-                            title="Enviar detalles por WhatsApp"
-                          >
-                            💬 WA
-                          </button>
-                          <button
-                            className="btn btn-ghost btn-xs text-danger ml-1"
-                            onClick={() => handleDeleteInvoice(inv.id)}
-                            disabled={actionLoading}
-                            title="Eliminar factura"
-                          >
-                            🗑️
-                          </button>
+                          {getInvoiceLifecycleStatus(inv) !== "cancelled" && (
+                            <button
+                              className="btn btn-xs"
+                              style={{
+                                backgroundColor: "#25d366",
+                                color: "white",
+                                border: "none",
+                              }}
+                              onClick={() => handleSendWhatsApp(inv)}
+                              title="Enviar detalles por WhatsApp"
+                            >
+                              💬 WA
+                            </button>
+                          )}
+                          {getInvoiceLifecycleStatus(inv) === "draft" && (
+                            <button
+                              className="btn btn-ghost btn-xs text-danger ml-1"
+                              onClick={() => handleDeleteInvoice(inv.id)}
+                              disabled={actionLoading}
+                              title="Eliminar factura"
+                            >
+                              🗑️
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
