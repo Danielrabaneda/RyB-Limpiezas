@@ -84,27 +84,20 @@ todo el historial de pruebas, incluidas las respuestas anteriores con errores.
 
 La documentación anterior se publicó en GitHub con el commit `ca4e203`, tras
 autorización expresa para incluir los datos de empresa y evidencias. El DOCX
-de declaración sigue siendo un borrador no firmable y su anexo de pruebas
-todavía refleja el estado anterior a esta segunda prueba; este apartado es
-la actualización de evidencia, no una declaración de conformidad.
+de declaración sigue siendo un borrador no firmable. Su anexo de pruebas ya
+incorpora el ciclo completo aceptado de TEST-VF-2026-0002 y se revisaron
+visualmente sus cuatro páginas tras la actualización. Esta actualización de
+evidencia no constituye una declaración de conformidad firmada.
 
 ## Tareas finales pendientes antes de producción
 
-### 1. Incorporar las evidencias finales a la declaración
-
-El ciclo alta, subsanación y anulación de `TEST-VF-2026-0002` está cerrado:
-los tres registros están aceptados sin errores al primer intento.
-Actualizar el anexo del borrador DOCX antes de su revisión formal. No repetir
-envíos ni eliminar las evidencias históricas. Esta prueba satisfactoria no
-equivale a una certificación integral del producto ni habilita producción.
-
-### 2. Revisión legal y declaración responsable
+### 1. Revisión legal y declaración responsable
 
 Completar el borrador con los datos definitivos del productor, someter el
 sistema y las evidencias a revisión técnica/legal independiente y firmar la
 declaración responsable exigible antes de comercializar o activar producción.
 
-### 3. Distribución firmada y activación controlada de producción
+### 2. Distribución firmada y activación controlada de producción
 
 Adquirir un certificado de firma de código, firmar el instalador Windows y
 realizar la revisión final. Solo entonces debe habilitarse mediante un cambio
@@ -113,9 +106,11 @@ separado y deliberado el endpoint de producción y el modo exclusivo exigible.
 ## Cómo continuar
 
 No crear otra alta ni repetir la subsanación o la anulación: las tres ya
-están aceptadas. Continuar con el anexo documental, la revisión/firma y la
-distribución firmada. El certificado `.p12` sigue conectado; no hace falta
-volver a introducir la clave. Producción permanece bloqueada.
+están aceptadas y el anexo documental está actualizado. Continuar con la
+revisión/firma y la distribución firmada. El certificado `.p12` sigue conectado;
+no hace falta volver a introducir la clave. Por instrucción expresa del
+usuario, producción permanece bloqueada: no activar endpoints ni modificar
+las barreras de producción al continuar tareas documentales.
 
 ## Puntos de entrada
 

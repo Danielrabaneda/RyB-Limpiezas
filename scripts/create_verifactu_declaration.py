@@ -174,7 +174,7 @@ set_font(r, size=13, color=MUTED)
 add_callout(
     doc,
     "NO FIRMAR TODAVÍA.",
-    "Este documento recoge las evidencias técnicas disponibles a 29/08/2026, pero no certifica el cierre legal. Antes de firmarlo deben completarse una nueva prueba limpia de subsanación, la revisión independiente y la versión comercial bloqueada exclusivamente en modalidad VERI*FACTU.",
+    "Evidencias actualizadas a 30/08/2026: alta, subsanación y anulación del caso TEST-VF-2026-0002 aceptadas sin errores. Esto no certifica el cierre legal. Quedan la revisión independiente y la versión comercial exclusiva VERI*FACTU. La producción permanece bloqueada.",
 )
 
 doc.add_heading("1. Información obligatoria", level=1)
@@ -238,9 +238,9 @@ for i, value in enumerate(headers):
 rows = [
     ("Pruebas internas", "SUPERADO", "30 pruebas del servidor y 7 pruebas web focalizadas, compilación de producción, sintaxis PowerShell y validación XSD."),
     ("Certificado", "SUPERADO", "B04843843 detectado; clave privada no exportada; acceso WSDL de pruebas correcto; caducidad 20/11/2026."),
-    ("Alta AEAT de pruebas", "SUPERADO", "TEST-VF-2026-0001, 1,21 EUR: alta aceptada sin errores en un intento."),
-    ("Anulación", "ACEPTADA CON AVISO", "La AEAT aceptó la anulación en un intento y avisó de que su hora de generación superaba el margen de 240 segundos. El flujo ya bloquea futuros primeros envíos caducados."),
-    ("Subsanación", "REPETIR", "La prueba fue rechazada como registro duplicado porque faltó el indicador oficial. La generación se corrigió, ahora exige modificar un dato fiscal y se publicó en el commit de59240; falta validarla con un caso nuevo."),
+    ("Alta AEAT de pruebas", "SUPERADO", "TEST-VF-2026-0002, 1,21 EUR: aceptada sin errores al primer intento. También se conserva el alta aceptada de TEST-VF-2026-0001."),
+    ("Anulación", "SUPERADO", "TEST-VF-2026-0002: aceptada sin errores al primer intento. Totales facturado y pendiente: 0,00 EUR. Se conserva el historial; no se borraron registros ni se marcaron como cobrados."),
+    ("Subsanación", "SUPERADO", "TEST-VF-2026-0002: aceptada sin errores al primer intento. Nombre corregido a CLIENTE PRUEBA SUBSANACION CORREGIDO; NIF e importes sin cambios. Corrección técnica de59240 validada."),
     ("QR", "SUPERADO", "El portal AEAT de preproducción mostró 'Encontrada' y coincidieron NIF B04843843, número TEST-VF-2026-0001, fecha 31/07/2026 e importe 1,21 EUR."),
     ("Revisión independiente", "PENDIENTE", "Revisión jurídica/fiscal y técnica de la versión candidata."),
     ("Modo comercial exclusivo", "PENDIENTE", "Bloquear emisión cuando VERI*FACTU no esté activo para la versión declarada."),
