@@ -1,6 +1,6 @@
 # Estado de cierre de facturación y VeriFactu
 
-Actualizado: 29 de agosto de 2026.
+Actualizado: 30 de agosto de 2026.
 
 ## Terminado, probado y publicado
 
@@ -62,14 +62,38 @@ El entorno permanece fijado en `test`, `productionEnabled` no puede activarse
 desde la interfaz y el conector local solo acepta la URL AEAT de pruebas. La
 aplicación no puede transmitir a producción con su configuración actual.
 
+## Segunda prueba controlada: alta y subsanación superadas
+
+El 30 de agosto se verificó desde la plataforma la factura
+`TEST-VF-2026-0002`, por 1,21 EUR (base 1,00 EUR e IVA 0,21 EUR):
+
+- Alta: **Aceptado en pruebas**, un intento y sin mensaje de error.
+- Subsanación: **Aceptado en pruebas**, un intento y sin mensaje de error.
+- Único dato corregido: nombre de cliente, de `CLIENTE PRUEBA SUBSANACION`
+  a `CLIENTE PRUEBA SUBSANACION CORREGIDO`; NIF e importes sin cambios.
+- Cola visible tras la comprobación: siete registros; registro operativo: 36.
+
+Esto confirma externamente la corrección del indicador de subsanación. La
+factura de prueba sigue activa: el panel muestra 1,21 EUR facturados y
+pendientes. No se ha anulado, borrado ni marcado como cobrada. La autorización
+de esta sesión cubría el alta y la subsanación, no una nueva anulación.
+
+La documentación anterior se publicó en GitHub con el commit `ca4e203`, tras
+autorización expresa para incluir los datos de empresa y evidencias. El DOCX
+de declaración sigue siendo un borrador no firmable y su anexo de pruebas
+todavía refleja el estado anterior a esta segunda prueba; este apartado es
+la actualización de evidencia, no una declaración de conformidad.
+
 ## Las tres tareas finales pendientes
 
-### 1. Repetir una subsanación limpia y archivar la evidencia
+### 1. Cerrar la prueba mediante una anulación limpia
 
-Crear una nueva factura de la serie `TEST-VF-...`, aceptar su alta, corregir un
-dato fiscal desde la pantalla de subsanación y confirmar inmediatamente el
-envío. La factura anterior ya está anulada y sus respuestas se conservan sin
-reescribirlas.
+La nueva alta y subsanación de `TEST-VF-2026-0002` ya están aceptadas sin
+errores. Con autorización específica, crear y enviar inmediatamente su
+anulación a la AEAT de pruebas para comprobar también este flujo sin avisos
+temporales y dejar a cero los totales del caso. Conservar todas las respuestas
+anteriores como evidencia, sin reescribirlas. Actualizar después el anexo de
+la declaración con las evidencias finales.
 
 ### 2. Revisión legal y declaración responsable
 
@@ -85,16 +109,10 @@ separado y deliberado el endpoint de producción y el modo exclusivo exigible.
 
 ## Cómo continuar
 
-El siguiente paso técnico es una nueva alta y subsanación controladas para
-confirmar en la AEAT la corrección publicada. El certificado `.p12` ya conectado
-permite realizarlas sin volver a introducir la clave. Después solo quedarán la
-revisión/firma de la declaración y la distribución firmada con activación
-controlada de producción.
-
-Se ha dejado preparado un borrador de 1,21 EUR para `CLIENTE PRUEBA
-SUBSANACION`, todavía sin emitir. Al continuar debe emitirse para obtener el
-siguiente número `TEST-VF-...`, enviar su alta y después subsanar el nombre a
-`CLIENTE PRUEBA SUBSANACION CORREGIDO`.
+No crear otra alta ni repetir la subsanación: ambas ya están aceptadas.
+El siguiente paso es solicitar confirmación para anular `TEST-VF-2026-0002`
+en pruebas y comprobar el resultado. El certificado `.p12` sigue conectado;
+no hace falta volver a introducir la clave. Producción permanece bloqueada.
 
 ## Puntos de entrada
 
