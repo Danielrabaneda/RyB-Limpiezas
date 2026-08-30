@@ -323,6 +323,8 @@ export default function VerifactuPanel({
         pruebas externas de la AEAT y firmar la declaración responsable.
       </p>
 
+      <section aria-label="Configuración y conexión" style={{ padding: 16, borderRadius: 10, background: "white", border: "1px solid #cbd5e1" }}>
+      <h4 style={{ marginTop: 0 }}>Configuración y conexión</h4>
       <div className="grid grid-2 gap-4">
         <label className="form-group">
           <span className="form-label">Modo fiscal</span>
@@ -480,8 +482,17 @@ export default function VerifactuPanel({
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
-        <button type="button" className="btn btn-primary" disabled={busy} onClick={saveConfiguration}>Guardar VeriFactu</button>
+      <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid #e2e8f0" }}>
+        <button type="button" className="btn btn-primary" disabled={busy} onClick={saveConfiguration}>Guardar configuración</button>
+        <p style={{ margin: "8px 0 0", fontSize: 13, color: "#475569" }}>
+          Guarda el modo fiscal y la forma de conexión. El certificado se guarda al conectarlo. No envía facturas a la AEAT.
+        </p>
+      </div>
+      </section>
+
+      <section aria-label="Cola AEAT" style={{ marginTop: 24 }}>
+      <h4 style={{ marginTop: 0 }}>Cola AEAT ({submissions.length})</h4>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14, marginBottom: 14 }}>
         <button type="button" className="btn btn-outline" disabled={busy || profile.channel === "disabled"} onClick={preparePending}>Preparar pendientes ({eligibleInvoices.length})</button>
         <button type="button" className="btn btn-outline" disabled={busy} onClick={() => openFiscalAction("cancel")}>Anular registro</button>
         <button type="button" className="btn btn-outline" disabled={busy} onClick={() => openFiscalAction("subsanate")}>Subsanar registro</button>
@@ -594,7 +605,6 @@ export default function VerifactuPanel({
         </div>
       )}
 
-      <h4>Cola AEAT ({submissions.length})</h4>
       {submissions.length === 0 ? (
         <p style={{ color: "#64748b", fontSize: 13 }}>Todavía no hay paquetes preparados.</p>
       ) : (
@@ -637,6 +647,7 @@ export default function VerifactuPanel({
           ))}
         </ul>
       </details>
+      </section>
     </section>
   );
 }
