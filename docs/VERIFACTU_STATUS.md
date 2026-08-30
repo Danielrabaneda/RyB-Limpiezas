@@ -62,21 +62,25 @@ El entorno permanece fijado en `test`, `productionEnabled` no puede activarse
 desde la interfaz y el conector local solo acepta la URL AEAT de pruebas. La
 aplicación no puede transmitir a producción con su configuración actual.
 
-## Segunda prueba controlada: alta y subsanación superadas
+## Segunda prueba controlada: ciclo completo superado
 
 El 30 de agosto se verificó desde la plataforma la factura
 `TEST-VF-2026-0002`, por 1,21 EUR (base 1,00 EUR e IVA 0,21 EUR):
 
 - Alta: **Aceptado en pruebas**, un intento y sin mensaje de error.
 - Subsanación: **Aceptado en pruebas**, un intento y sin mensaje de error.
+- Anulación: **Aceptado en pruebas**, un intento y sin mensaje de error.
 - Único dato corregido: nombre de cliente, de `CLIENTE PRUEBA SUBSANACION`
   a `CLIENTE PRUEBA SUBSANACION CORREGIDO`; NIF e importes sin cambios.
-- Cola visible tras la comprobación: siete registros; registro operativo: 36.
+- Cola visible tras el cierre: ocho registros; registro operativo: 38.
 
-Esto confirma externamente la corrección del indicador de subsanación. La
-factura de prueba sigue activa: el panel muestra 1,21 EUR facturados y
-pendientes. No se ha anulado, borrado ni marcado como cobrada. La autorización
-de esta sesión cubría el alta y la subsanación, no una nueva anulación.
+Esto confirma externamente la corrección del indicador de subsanación y el
+flujo de anulación sin avisos temporales en este caso. Tras autorización
+específica del usuario, la factura quedó anulada y se envió inmediatamente
+su anulación al entorno de pruebas. El panel muestra 0,00 EUR facturados,
+0,00 EUR cobrados, 0,00 EUR pendientes, cero borradores y tres anuladas.
+No se borraron registros ni se marcó la factura como cobrada. Se conserva
+todo el historial de pruebas, incluidas las respuestas anteriores con errores.
 
 La documentación anterior se publicó en GitHub con el commit `ca4e203`, tras
 autorización expresa para incluir los datos de empresa y evidencias. El DOCX
@@ -84,16 +88,15 @@ de declaración sigue siendo un borrador no firmable y su anexo de pruebas
 todavía refleja el estado anterior a esta segunda prueba; este apartado es
 la actualización de evidencia, no una declaración de conformidad.
 
-## Las tres tareas finales pendientes
+## Tareas finales pendientes antes de producción
 
-### 1. Cerrar la prueba mediante una anulación limpia
+### 1. Incorporar las evidencias finales a la declaración
 
-La nueva alta y subsanación de `TEST-VF-2026-0002` ya están aceptadas sin
-errores. Con autorización específica, crear y enviar inmediatamente su
-anulación a la AEAT de pruebas para comprobar también este flujo sin avisos
-temporales y dejar a cero los totales del caso. Conservar todas las respuestas
-anteriores como evidencia, sin reescribirlas. Actualizar después el anexo de
-la declaración con las evidencias finales.
+El ciclo alta, subsanación y anulación de `TEST-VF-2026-0002` está cerrado:
+los tres registros están aceptados sin errores al primer intento.
+Actualizar el anexo del borrador DOCX antes de su revisión formal. No repetir
+envíos ni eliminar las evidencias históricas. Esta prueba satisfactoria no
+equivale a una certificación integral del producto ni habilita producción.
 
 ### 2. Revisión legal y declaración responsable
 
@@ -109,10 +112,10 @@ separado y deliberado el endpoint de producción y el modo exclusivo exigible.
 
 ## Cómo continuar
 
-No crear otra alta ni repetir la subsanación: ambas ya están aceptadas.
-El siguiente paso es solicitar confirmación para anular `TEST-VF-2026-0002`
-en pruebas y comprobar el resultado. El certificado `.p12` sigue conectado;
-no hace falta volver a introducir la clave. Producción permanece bloqueada.
+No crear otra alta ni repetir la subsanación o la anulación: las tres ya
+están aceptadas. Continuar con el anexo documental, la revisión/firma y la
+distribución firmada. El certificado `.p12` sigue conectado; no hace falta
+volver a introducir la clave. Producción permanece bloqueada.
 
 ## Puntos de entrada
 
