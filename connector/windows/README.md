@@ -6,6 +6,10 @@ recibir archivos PFX/P12.
 
 ## Estado
 
+Revisión local `2.1.0-preview`, protocolo 2. Requiere despliegue coordinado del
+servidor antes de instalarla; no implica activación de producción. El ZIP de
+revisión no es un instalador firmado para distribución definitiva.
+
 - Certificado detectado: FNMT de representación de Limpiezas Raiba S.L.
 - Almacén: `LocalMachine/My`.
 - NIF esperado: `B04843843`.
@@ -34,15 +38,41 @@ confianza y acceso al WSDL de pruebas. No remite registros de facturación.
 5. El conector detecta el certificado por NIF, comprueba la conexión de pruebas
    de la AEAT y mantiene un latido cada minuto.
 
-El siguiente paso de producto será empaquetar y firmar este componente como
-instalador de Windows para que el cliente no tenga que abrir PowerShell.
+El ZIP se construye con `scripts/package_verifactu_connector.ps1`, incluyendo
+solo fuentes distribuibles. Sigue pendiente el instalador firmado definitivo.
 
-## Arquitectura prevista
+## Envío y recuperación (protocolo 2)
 
-El conector reclamará un registro de la cola de Firebase mediante una
-credencial rotatoria propia, construirá el SOAP oficial, lo validará con los XSD
-incluidos en `schemas/test`, lo enviará usando el certificado de Windows y
-devolverá a Firebase el estado y los datos no sensibles de la respuesta.
+El servidor reserva el registro por empresa e intento, congela el SOAP y su
+SHA-256 y devuelve una autorización temporal solo de pruebas. Windows verifica
+entorno, destino exacto, permiso vigente, NIF, certificado, huella y esquema.
+Los redireccionamientos HTTP están deshabilitados. El servidor interpreta la
+respuesta XML y comprueba número, NIF, fecha y operación antes de aceptarla.
+
+Antes del envío se escribe una marca durable cifrada con DPAPI; después se
+guarda el resultado recibido. Si la plataforma no confirma la recepción, se
+reenvía solo el resultado. Repetir la confirmación es idempotente. Un recibo
+demorado se acepta únicamente si su intento no ha sido reemplazado; si ya hay
+otro intento, se conserva para revisión, sin pisar su estado.
+
+Una caída antes de poder guardar la respuesta se trata como resultado incierto:
+el servidor decide el reintento con el mismo XML, nunca regenerando la factura.
+Si un envío queda incierto o aparece como duplicado, el administrador puede
+solicitar «Comprobar en AEAT». El mismo diario protegido transporta la consulta
+oficial y su respuesta. Solo una coincidencia exacta permite cerrar la incidencia;
+«Sin datos», varias coincidencias o una huella diferente permanecen en revisión
+y nunca provocan un reenvío automático.
+
+El archivo `{empresa}.pending-result.dpapi` no contiene la clave privada del
+certificado. No se borra hasta recibir confirmación del servidor. Una incidencia
+pendiente bloquea nuevas remisiones desde esa instancia, revinculación local y
+desinstalación. Un mutex evita dos instancias por empresa en la misma sesión;
+la reserva del servidor protege también otras instancias/ordenadores.
+
+Las comprobaciones de salud ya no cambian el canal elegido en la plataforma.
+Los clientes del protocolo anterior no reciben trabajos y deben actualizarse.
+Ejecutar `Test-ConnectorProtocol.ps1` prueba recuperación y cifrado con datos
+ficticios, sin abrir el almacén de certificados ni conectarse a la AEAT.
 
 El token del conector se guardará protegido mediante DPAPI para la cuenta que
 ejecute la tarea programada. Nunca se incluirá en Git ni en este directorio en

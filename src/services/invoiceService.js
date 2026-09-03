@@ -123,7 +123,12 @@ export async function getBillingSettings(companyId) {
 
 export async function saveBillingSettings(companyId, data) {
   const ref = tenantDoc(db, companyId, "settings", "billing");
-  await setDoc(ref, data, { merge: true });
+  // Never send back stale server-owned state when saving document preferences.
+  const editable = { ...data };
+  for (const key of ["lastInvoiceHash", "lastFiscalRecordId", "seriesCounters", "lastEmissionMode", "verifactuProduction"]) {
+    delete editable[key];
+  }
+  await setDoc(ref, editable, { merge: true });
 }
 
 export async function setVerifactuMode(companyId, enabled) {
@@ -204,6 +209,18 @@ export async function prepareAeatSubmissions(invoiceIds) {
 export async function sendAeatCloudTestSubmission(submissionId) {
   const fn = httpsCallable(functions, "sendAeatCloudTestSubmission");
   const result = await fn({ submissionId, confirmTestSend: true });
+  return result.data;
+}
+
+export async function reconcileAeatCloudTestSubmission(submissionId) {
+  const fn = httpsCallable(functions, "reconcileAeatCloudTestSubmission");
+  const result = await fn({ submissionId, confirmTestQuery: true });
+  return result.data;
+}
+
+export async function requestAeatLocalTestReconciliation(submissionId) {
+  const fn = httpsCallable(functions, "requestAeatLocalTestReconciliation");
+  const result = await fn({ submissionId, confirmTestQuery: true });
   return result.data;
 }
 

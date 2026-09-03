@@ -41,6 +41,9 @@ function parseAeatSoapResponse({ statusCode, body }) {
       message: fault,
     };
   }
+  const lines = [...responseBody.matchAll(/<(?:[\w-]+:)?RespuestaLinea(?:\s[^>]*)?>([\s\S]*?)<\/(?:[\w-]+:)?RespuestaLinea>/g)];
+  const line = lines.length === 1 ? lines[0][1] : "";
+  const rawWait = getXmlValue(responseBody, "TiempoEsperaEnvio");
   return {
     transportOk: true,
     httpStatus,
@@ -50,10 +53,22 @@ function parseAeatSoapResponse({ statusCode, body }) {
     code: getXmlValue(responseBody, "CodigoErrorRegistro"),
     message: getXmlValue(responseBody, "DescripcionErrorRegistro"),
     waitSeconds: Number(getXmlValue(responseBody, "TiempoEsperaEnvio")) || 0,
+    waitValid: /^\d{1,6}$/.test(rawWait),
+    lineCount: lines.length,
+    issuerNif: getXmlValue(line, "IDEmisorFactura"),
+    invoiceNumber: getXmlValue(line, "NumSerieFactura"),
+    issueDate: getXmlValue(line, "FechaExpedicionFactura"),
+    duplicate: /<(?:[\w-]+:)?RegistroDuplicado(?:\s|>)/.test(line),
+    operation: getXmlValue(line, "TipoOperacion"),
+    subsanation: getXmlValue(line, "Subsanacion"),
   };
 }
 
 function postSoapWithPfx({ endpoint, soapXml, pfx, passphrase, timeoutMs = 60000 }) {
+  // Defence in depth: callers cannot bypass the test-only release boundary.
+  if (endpoint !== "https://prewww1.aeat.es/wlpl/TIKE-CONT/ws/SistemaFacturacion/VerifactuSOAP") {
+    return Promise.reject(new Error("Destino no autorizado: la producción permanece bloqueada."));
+  }
   const url = new URL(endpoint);
   if (url.protocol !== "https:") {
     return Promise.reject(new Error("El destino AEAT debe utilizar HTTPS."));

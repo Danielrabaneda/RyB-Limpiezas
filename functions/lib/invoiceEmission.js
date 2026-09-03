@@ -2,7 +2,19 @@ const crypto = require("crypto");
 
 const MADRID_TIME_ZONE = "Europe/Madrid";
 const FISCAL_SCHEMA_VERSION = "verifactu-pre-aeat-v1";
-const SYSTEM_VERSION = "0.1.0-phase2";
+const SYSTEM = require("./verifactuRelease.json");
+const SYSTEM_VERSION = SYSTEM.version;
+
+function getEmissionBlockReason(settings = {}) {
+  if (settings.verifactuEnabled !== true) {
+    return "Activa VeriFactu de pruebas antes de emitir. Puedes seguir creando y guardando borradores; no se ha consumido ningún número de factura.";
+  }
+  const profile = settings.aeatConnection || {};
+  if ((profile.environment && profile.environment !== "test") || profile.productionEnabled === true) {
+    return "La producción permanece bloqueada. Solo se permite emitir en el entorno de pruebas.";
+  }
+  return null;
+}
 const INVOICE_TYPES = new Set([
   "F1",
   "F2",
@@ -262,11 +274,7 @@ function buildFiscalRecord({
 
   return {
     schemaVersion: FISCAL_SCHEMA_VERSION,
-    system: {
-      name: "RyB App",
-      version: SYSTEM_VERSION,
-      producer: "Limpiezas Rayba S.L",
-    },
+    system: { ...SYSTEM },
     companyId,
     invoiceId,
     recordType: "alta",
@@ -331,6 +339,8 @@ function buildFiscalRecord({
 module.exports = {
   FISCAL_SCHEMA_VERSION,
   SYSTEM_VERSION,
+  SYSTEM,
+  getEmissionBlockReason,
   buildFiscalRecord,
   calculateInvoiceFiscalTotals,
   computeCancellationHash,

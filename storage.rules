@@ -34,6 +34,19 @@ service firebase.storage {
       return isTenant(companyId) && request.auth.token.role == 'admin';
     }
 
+    // Match the app's legacy subscription support, scoped to this archive only.
+    function isVerifactuDocumentAdmin(companyId) {
+      let company = firestore.get(/databases/(default)/documents/companies/$(companyId)).data;
+      return isTenantAdmin(companyId) || (
+        isAuthenticated()
+        && request.auth.token.companyId == companyId
+        && request.auth.token.active == true
+        && request.auth.token.role == 'admin'
+        && company.status == 'active'
+        && company.subscriptionStatus == 'legacy'
+      );
+    }
+
     function isTenantEmployee(companyId) {
       return isTenant(companyId) && 
         (request.auth.token.role == 'admin' || request.auth.token.role == 'operario');
@@ -46,6 +59,23 @@ service firebase.storage {
     // Invoices: tenant-scoped
     match /companies/{companyId}/invoices/{invoiceId}/{fileName} {
       allow read, write: if isTenantAdmin(companyId);
+    }
+
+    // Private test evidence, immutable once stored. No fiscal activation flags.
+    match /companies/{companyId}/verifactuDocuments/{fileName} {
+      allow read: if isVerifactuDocumentAdmin(companyId);
+      allow create: if isVerifactuDocumentAdmin(companyId) && resource == null
+        && fileName.matches('[a-zA-Z0-9_-]+[.]pdf')
+        && request.resource.size > 0
+        && request.resource.size <= 10 * 1024 * 1024
+        && request.resource.contentType == 'application/pdf'
+        && request.resource.metadata.keys().hasAll(['purpose', 'title', 'sha256', 'signatureKind'])
+        && request.resource.metadata.purpose == 'test_evidence'
+        && request.resource.metadata.title.size() > 0
+        && request.resource.metadata.title.size() <= 120
+        && request.resource.metadata.sha256.matches('[a-f0-9]{64}')
+        && request.resource.metadata.signatureKind in ['none', 'handwritten'];
+      allow update, delete: if false;
     }
 
     // Evidence, Guides and Absence Proofs: tenant-scoped

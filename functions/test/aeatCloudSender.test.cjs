@@ -3,7 +3,18 @@ const assert = require("node:assert/strict");
 const {
   getXmlValue,
   parseAeatSoapResponse,
+  postSoapWithPfx,
 } = require("../lib/aeatCloudSender");
+
+test("el transporte rechaza cualquier destino ajeno a pruebas sin abrir conexiones", async () => {
+  for (const endpoint of [
+    "https://www1.agenciatributaria.gob.es/wlpl/TIKE-CONT/ws/SistemaFacturacion/VerifactuSOAP",
+    "https://example.com/", "http://127.0.0.1/",
+    "https://prewww1.aeat.es/wlpl/TIKE-CONT/ws/SistemaFacturacion/VerifactuSOAP?other=1",
+  ]) {
+    await assert.rejects(postSoapWithPfx({ endpoint }), /producción permanece bloqueada/);
+  }
+});
 
 test("lee valores XML con prefijos y entidades", () => {
   const xml = "<soap:Envelope><sf:DescripcionErrorRegistro>Error &amp; detalle</sf:DescripcionErrorRegistro></soap:Envelope>";

@@ -59,8 +59,10 @@ export function NotificationProvider({ children }) {
 
   // Re-alert tracking
   const repeatTrackersRef = useRef({});
-  const MAX_REPEATS = 10;
-  const REPEAT_INTERVAL_MS = 20 * 1000; // 20 segundos entre repeticiones
+  // Una única realerta, cinco minutos después. Evita fatiga y que el usuario
+  // termine desactivando por completo los permisos de notificación.
+  const MAX_REPEATS = 2;
+  const REPEAT_INTERVAL_MS = 5 * 60 * 1000;
 
   const cleanupTracker = useCallback((docId) => {
     const trackers = repeatTrackersRef.current;

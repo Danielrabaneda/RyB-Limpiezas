@@ -428,7 +428,7 @@ export default function TodayPage() {
         onClose={() => setShowWorkdayExceptionModal(false)}
         onConfirm={handleConfirmWorkdayException}
         title="Motivo de Cierre Retroactivo"
-        message="Indica el motivo del cierre retroactivo de este servicio (obligatorio):"
+        message="Indica el motivo del cierre retroactivo de la jornada (obligatorio):"
         loading={actionLoading}
       />
 
@@ -628,7 +628,10 @@ export default function TodayPage() {
             <div className="flex flex-col gap-3">
               <button
                 className="btn btn-primary w-full py-4 font-bold flex justify-center items-center gap-2"
-                onClick={() => setShowWorkdayExceptionModal(true)}
+                onClick={() => {
+                  setRetroactiveModal((prev) => ({ ...prev, open: false }));
+                  setShowWorkdayExceptionModal(true);
+                }}
                 disabled={actionLoading}
                 style={{
                   backgroundColor: "var(--color-success)",

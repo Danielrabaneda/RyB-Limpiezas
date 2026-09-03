@@ -17,7 +17,7 @@ const componentModule = { exports: {} };
 vm.runInNewContext(compiled, {
   module: componentModule,
   exports: componentModule.exports,
-  require: (name) => name.endsWith("services/invoiceService") ? {} : require(name),
+  require: (name) => name.endsWith("services/invoiceService") ? {} : name === "./VerifactuDocuments" ? () => null : require(name),
 });
 const Panel = componentModule.exports.default;
 

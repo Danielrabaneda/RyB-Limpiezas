@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import VerifactuDocuments from "./VerifactuDocuments";
 import {
   cancelInvoiceFiscalRecord,
   connectAeatCertificate,
@@ -11,6 +12,8 @@ import {
   getAeatSubmissions,
   getVerifactuEvents,
   prepareAeatSubmissions,
+  reconcileAeatCloudTestSubmission,
+  requestAeatLocalTestReconciliation,
   sendAeatCloudTestSubmission,
   startLocalConnectorPairing,
   subsanateInvoiceFiscalRecord,
@@ -25,6 +28,7 @@ const STATUS_LABELS = {
   accepted_with_errors: "Aceptado con errores",
   rejected: "Rechazado",
   retry_pending: "Reintento pendiente",
+  needs_review: "Necesita revisión",
 };
 
 function downloadText(filename, content) {
@@ -231,7 +235,23 @@ export default function VerifactuPanel({
       await sendAeatCloudTestSubmission(selected.id);
       setCloudSubmissionToSend(null);
       await onInvoicesChanged?.();
-    }, "La AEAT ha respondido al envío de prueba. Revisa el estado de la cola.");
+    }, "Intento finalizado. Revisa el resultado o la incidencia indicada en la cola.");
+  };
+
+  const reconcileCloudTest = (item) => {
+    if (!window.confirm(
+      `¿Consultar en la AEAT de pruebas el estado de la factura ${item.invoiceNumber || item.invoiceId}? No se enviará ningún registro nuevo.`,
+    )) return;
+    run(async () => {
+      if (profile.channel === "local_connector") {
+        await requestAeatLocalTestReconciliation(item.id);
+      } else {
+        await reconcileAeatCloudTestSubmission(item.id);
+      }
+      await onInvoicesChanged?.();
+    }, profile.channel === "local_connector"
+      ? "Consulta preparada. El conector de Windows la realizará automáticamente."
+      : "Consulta finalizada. Revisa el estado conciliado en la cola.");
   };
 
   const openFiscalAction = (kind) => {
@@ -333,9 +353,10 @@ export default function VerifactuPanel({
             value={enabled ? "test" : "disabled"}
             onChange={(event) => setEnabled(event.target.value === "test")}
           >
-            <option value="disabled">Desactivado</option>
+            <option value="disabled">Desactivado · solo borradores</option>
             <option value="test">VeriFactu de pruebas</option>
           </select>
+          <small>Con VeriFactu desactivado puedes guardar borradores, pero no emitir facturas.</small>
         </label>
         <label className="form-group">
           <span className="form-label">Cómo conectar con la AEAT</span>
@@ -403,6 +424,19 @@ export default function VerifactuPanel({
                 <strong>{connectorStatus.online ? "Conector activo" : "Ordenador emparejado"}:</strong>{" "}
                 {connectorStatus.connectorName || "Conector Windows"}
               </p>
+              {connectorStatus.updateRequired && (
+                <div role="alert" style={{ margin: "8px 0", padding: 10, background: "#fff7ed", color: "#92400e" }}>
+                  Actualiza el conector para poder enviar con seguridad. Descarga el instalador, ejecútalo y reinicia Windows.
+                  La vinculación y los resultados pendientes se conservan.
+                  <br /><a className="btn btn-outline" href="/downloads/LimpiaGest-Conector-Windows.zip" download>Descargar actualización de Windows</a>
+                </div>
+              )}
+              {connectorStatus.pendingReview && (
+                <p role="alert" style={{ color: "#92400e", fontSize: 13 }}>
+                  Hay un resultado protegido en este ordenador que necesita revisión. No borres ni vuelvas a emitir la factura.
+                  Conserva el ordenador y su vinculación hasta resolver la incidencia.
+                </p>
+              )}
               {connectorStatus.certificateSubject && (
                 <p style={{ margin: "4px 0", fontSize: 13 }}>{connectorStatus.certificateSubject}</p>
               )}
@@ -489,6 +523,8 @@ export default function VerifactuPanel({
         </p>
       </div>
       </section>
+
+      <VerifactuDocuments key={companyId} companyId={companyId} />
 
       <section aria-label="Cola AEAT" style={{ marginTop: 24 }}>
       <h4 style={{ marginTop: 0 }}>Cola AEAT ({submissions.length})</h4>
@@ -579,7 +615,7 @@ export default function VerifactuPanel({
           </div>
           {profile.channel === "cloud_certificate" && certificate.connected && (
             <p style={{ margin: "8px 0 0", fontSize: 12, color: "#92400e" }}>
-              Después aparecerá la confirmación de envío. Confírmala de inmediato: la AEAT admite un margen máximo de cuatro minutos para la hora de generación.
+              Después aparecerá la confirmación de envío. Confírmala cuanto antes. Si el envío se demora, revisa la incidencia sin borrar ni volver a emitir la factura.
             </p>
           )}
         </div>
@@ -619,7 +655,7 @@ export default function VerifactuPanel({
                   <td>{STATUS_LABELS[item.status] || item.status}</td>
                   <td>{item.attempts || 0}</td>
                   <td style={{ maxWidth: 360, whiteSpace: "normal", fontSize: 12 }}>
-                    {item.aeatResponse?.message || item.lastError ||
+                    {item.reconciliation?.message || item.lastError || item.aeatResponse?.message ||
                       (item.aeatResponse?.code ? `Código ${item.aeatResponse.code}` : "—")}
                   </td>
                   <td>
@@ -628,6 +664,12 @@ export default function VerifactuPanel({
                       {profile.channel === "cloud_certificate" && certificate.connected && ["awaiting_sender", "awaiting_local_connector", "awaiting_cloud_sender", "retry_pending"].includes(item.status) && (
                         <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => setCloudSubmissionToSend(item)}>
                           Enviar prueba
+                        </button>
+                      )}
+                      {((profile.channel === "cloud_certificate" && certificate.connected) ||
+                        (profile.channel === "local_connector" && connectorStatus.online && !connectorStatus.updateRequired)) && item.status === "needs_review" && (
+                        <button type="button" className="btn btn-sm btn-primary" disabled={busy || ["processing", "awaiting_local_connector"].includes(item.reconciliation?.status)} onClick={() => reconcileCloudTest(item)}>
+                          {item.reconciliation?.status === "awaiting_local_connector" ? "Pendiente del conector" : "Comprobar en AEAT"}
                         </button>
                       )}
                     </div>

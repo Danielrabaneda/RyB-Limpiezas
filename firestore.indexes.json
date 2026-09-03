@@ -1,6 +1,15 @@
 {
   "indexes": [
     {
+      "collectionGroup": "aeatSubmissions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "channel", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "users",
       "queryScope": "COLLECTION",
       "fields": [
@@ -192,6 +201,19 @@
     }
   ],
   "fieldOverrides": [
+    {
+      "collectionGroup": "aeatSubmissions",
+      "fieldPath": "reconciliation.queryXml",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "verifactuConfig",
+      "fieldPath": "autoCloudTestEnabled",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
     {
       "collectionGroup": "workdays",
       "fieldPath": "status",

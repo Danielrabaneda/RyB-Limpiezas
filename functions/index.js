@@ -9,11 +9,16 @@
 
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { shouldSendPushNotification } = require("./notificationPolicy");
+const { readFiscalState, assertFiscalScope, isTestSubmissionEligible } = require("./lib/verifactuEnvironment");
+const { createAeatCloudWorker } = require("./lib/aeatCloudWorker");
+const { createAeatReconciliationWorker } = require("./lib/aeatReconciliationWorker");
 const {
   clampAutoCloseEndTime,
   getMadridDateKey,
 } = require("./lib/workdayAutoClose");
 const {
+  SYSTEM,
+  getEmissionBlockReason,
   buildFiscalRecord,
   calculateInvoiceFiscalTotals,
   computeCancellationHash,
@@ -37,7 +42,6 @@ const {
   buildSubmissionManifest,
   getInitialSubmissionStatus,
   getNextRetryDate,
-  isAeatGenerationTimestampFresh,
   normalizeAeatConnectionProfile,
 } = require("./lib/aeatSubmission");
 const {
@@ -72,7 +76,6 @@ const {
   parseAndValidatePfx,
 } = require("./lib/aeatCertificate");
 const {
-  parseAeatSoapResponse,
   postSoapWithPfx,
 } = require("./lib/aeatCloudSender");
 
@@ -156,7 +159,9 @@ const LONG_WORKDAY_THRESHOLD_HOURS = 10;
 const AUTO_CLOSE_WORKDAY_THRESHOLD_HOURS = 12;
 
 /** Tiempo mínimo entre recordatorios del mismo tipo (en minutos) */
-const REMINDER_COOLDOWN_MIN = 30;
+// Cada tipo de recordatorio se envía como máximo una vez por jornada.
+// La consulta también filtra por workdayId, por lo que 24 h cubre el ciclo.
+const REMINDER_COOLDOWN_MIN = 24 * 60;
 
 /** Días máximos sin actualizar un token FCM antes de borrarlo */
 const FCM_TOKEN_MAX_AGE_DAYS = 60;
@@ -385,6 +390,7 @@ function buildAeatSubmissionDocument({
   createdBy,
   createdAt,
 }) {
+  assertFiscalScope(fiscalRecord, companyId, profile.environment);
   const status = getInitialSubmissionStatus(profile.channel);
   if (!status) return null;
   return {
@@ -1576,10 +1582,12 @@ exports.onGeoDetectionCreated = onDocumentCreated(
         type: isEntry ? "success" : "warning",
         serviceId: detection.serviceId || null,
         targetUrl: "/admin",
-        triggerEvent: "push_only",
+        // Las llegadas/salidas ya quedan registradas en geoDetections. Se
+        // conserva esta entrada como historial técnico, pero sin push ni badge.
+        triggerEvent: "log_only",
         source: "geo_detection",
         detectionId,
-        read: false,
+        read: true,
         createdAt: FieldValue.serverTimestamp(),
       });
     });
@@ -1682,9 +1690,16 @@ exports.emitInvoices = onCall(
       return await db.runTransaction(async (transaction) => {
         const settingsSnap = await transaction.get(settingsRef);
         const settings = settingsSnap.exists ? settingsSnap.data() : {};
+        const emissionBlockReason = getEmissionBlockReason(settings);
+        if (emissionBlockReason) {
+          throw new HttpsError("failed-precondition", emissionBlockReason);
+        }
         const verifactuEnabled = settings.verifactuEnabled === true;
         const aeatProfile = normalizeAeatConnectionProfile(
           settings.aeatConnection || {},
+        );
+        const { ref: fiscalStateRef, state: fiscalState } = await readFiscalState(
+          transaction, db, companyId, "test", settings,
         );
 
         const [invoiceSnaps, fiscalRecordSnaps] = await Promise.all([
@@ -1737,12 +1752,12 @@ exports.emitInvoices = onCall(
           1,
           Number.parseInt(settings.nextInvoiceSeq, 10) || 1,
         );
-        const seriesCounters = { ...(settings.seriesCounters || {}) };
-        let previousFiscalRecordId = settings.lastFiscalRecordId || null;
+        const seriesCounters = { ...(fiscalState.seriesCounters || {}) };
+        let previousFiscalRecordId = fiscalState.lastFiscalRecordId || null;
         // Las huellas antiguas creadas en navegador no tienen un registro fiscal
         // inmutable asociado. La nueva cadena solo continúa si existe ese registro.
         let previousHash = previousFiscalRecordId
-          ? settings.lastInvoiceHash || ""
+          ? fiscalState.lastInvoiceHash || ""
           : "";
         const issuerNif = normalizeTaxId(settings.nif);
         const now = new Date();
@@ -1845,7 +1860,7 @@ exports.emitInvoices = onCall(
             dueDate: dueDateTimestamp,
             emittedAt: Timestamp.fromDate(generationDate),
             emittedBy: request.auth.uid,
-            emissionMode: verifactuEnabled ? "verifactu_test" : "legacy",
+            emissionMode: "verifactu_test",
             verifactuEnabledAtEmission: verifactuEnabled,
             items: fiscalTotals.items,
             taxBreakdown: fiscalTotals.taxBreakdown,
@@ -1916,14 +1931,6 @@ exports.emitInvoices = onCall(
             });
             previousHash = hash;
             previousFiscalRecordId = fiscalRef.id;
-          } else {
-            transaction.update(ref, {
-              ...commonInvoiceUpdate,
-              fiscalRecordId: null,
-              fiscalStatus: "not_applicable",
-              aeatStatus: "not_applicable",
-              tipoFactura: invoiceType,
-            });
           }
 
           emitted.push({
@@ -1938,7 +1945,7 @@ exports.emitInvoices = onCall(
           nextInvoiceSeq:
             seriesCounters.__default || legacyNextSequence,
           seriesCounters,
-          lastEmissionMode: verifactuEnabled ? "verifactu_test" : "legacy",
+          lastEmissionMode: "verifactu_test",
           updatedAt: FieldValue.serverTimestamp(),
         };
         if (verifactuEnabled) {
@@ -1956,10 +1963,17 @@ exports.emitInvoices = onCall(
           });
         }
         transaction.set(settingsRef, settingsUpdate, { merge: true });
+        transaction.set(fiscalStateRef, {
+          ...fiscalState,
+          seriesCounters,
+          lastInvoiceHash: previousHash,
+          lastFiscalRecordId: previousFiscalRecordId,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
 
         return {
           emitted,
-          emissionMode: verifactuEnabled ? "verifactu_test" : "legacy",
+          emissionMode: "verifactu_test",
           aeatSubmissionEnabled: false,
           aeatQueuePrepared: aeatProfile.channel !== "disabled",
         };
@@ -2173,12 +2187,41 @@ exports.disconnectAeatCertificate = onCall(
   },
 );
 
+// Two independent server-side gates. Never set either as part of a deploy.
+function automaticAeatTestEnabled() {
+  return process.env.VERIFACTU_AUTOMATIC_TEST_SEND_ENABLED === "true";
+}
+
+async function loadTenantAeatCertificate(companyId, certificate) {
+  const parts = String(certificate.secretVersion || "").split("/");
+  const projectId = getGoogleCloudProjectId();
+  if (!projectId || parts.length !== 6 || parts[0] !== "projects" || parts[2] !== "secrets" ||
+      parts[3] !== buildTenantSecretId(companyId) || parts[4] !== "versions" || !/^[1-9][0-9]*$/.test(parts[5])) {
+    throw new Error("invalid_certificate_reference");
+  }
+  // Bind reads to this deployment's project and this tenant, not an arbitrary stored resource.
+  const [version] = await secretManager.accessSecretVersion({
+    name: `projects/${projectId}/secrets/${buildTenantSecretId(companyId)}/versions/${parts[5]}`,
+  });
+  const payload = JSON.parse(version.payload?.data?.toString("utf8") || "{}");
+  const parsed = parseAndValidatePfx({
+    pfxBase64: payload.pfxBase64, password: payload.password, expectedTaxId: certificate.taxId,
+  });
+  if (parsed.metadata.fingerprintSha256 !== certificate.fingerprintSha256) throw new Error("certificate_changed");
+  return { pfx: parsed.pfxBuffer, passphrase: payload.password };
+}
+
+const cloudTestWorker = createAeatCloudWorker({
+  db,
+  timestamp: (millis) => Timestamp.fromMillis(millis),
+  assertTenantEnabled,
+  automaticEnabled: automaticAeatTestEnabled,
+  loadCertificate: loadTenantAeatCertificate,
+  transport: (payload) => postSoapWithPfx({ ...payload, endpoint: AEAT_TEST_ENDPOINT }),
+});
+
 exports.sendAeatCloudTestSubmission = onCall(
-  {
-    region: "europe-west1",
-    memory: "512MiB",
-    timeoutSeconds: 120,
-  },
+  { region: "europe-west1", memory: "512MiB", timeoutSeconds: 120 },
   async (request) => {
     const companyId = await requireTenantAdmin(request);
     const submissionId = String(request.data?.submissionId || "").trim();
@@ -2188,206 +2231,64 @@ exports.sendAeatCloudTestSubmission = onCall(
     if (request.data?.confirmTestSend !== true) {
       throw new HttpsError("failed-precondition", "Confirma expresamente el envío al entorno de pruebas de la AEAT.");
     }
-
-    const settingsRef = db.doc(`companies/${companyId}/settings/billing`);
-    const certificateRef = db.doc(`companies/${companyId}/verifactuConfig/certificate`);
-    const submissionRef = db.doc(`companies/${companyId}/aeatSubmissions/${submissionId}`);
-    const [settingsSnap, certificateSnap, submissionSnap] = await Promise.all([
-      settingsRef.get(),
-      certificateRef.get(),
-      submissionRef.get(),
-    ]);
-    if (!settingsSnap.exists || !submissionSnap.exists) {
-      throw new HttpsError("not-found", "No se encuentra la configuración o el registro de prueba.");
-    }
-    const settings = settingsSnap.data() || {};
-    const certificate = certificateSnap.data() || {};
-    const submission = submissionSnap.data() || {};
-    if (
-      settings.verifactuEnabled !== true ||
-      settings.verifactuMode !== "test" ||
-      settings.aeatConnection?.channel !== "cloud_certificate"
-    ) {
-      throw new HttpsError("failed-precondition", "Guarda VeriFactu en modo de pruebas con el certificado PFX/P12.");
-    }
-    if (!certificateSnap.exists || certificate.connected !== true || !certificate.secretVersion) {
-      throw new HttpsError("failed-precondition", "El certificado PFX/P12 no está conectado.");
-    }
-    if (submission.environment !== "test" || submission.productionEnabled === true) {
-      throw new HttpsError("failed-precondition", "La producción permanece bloqueada.");
-    }
-    const sendableStatuses = new Set([
-      "awaiting_sender",
-      "awaiting_local_connector",
-      "awaiting_cloud_sender",
-      "retry_pending",
-    ]);
-    if (!sendableStatuses.has(submission.status)) {
-      throw new HttpsError("failed-precondition", "Este registro no está pendiente de envío.");
-    }
-    if (Number(submission.attempts || 0) >= MAX_SUBMISSION_ATTEMPTS) {
-      throw new HttpsError("failed-precondition", "El registro ha agotado los intentos permitidos.");
-    }
-    const fiscalRef = db.doc(
-      `companies/${companyId}/fiscalRecords/${submission.fiscalRecordId}`,
-    );
-    const fiscalBeforeSendSnap = await fiscalRef.get();
-    if (!fiscalBeforeSendSnap.exists) {
-      throw new HttpsError(
-        "not-found",
-        "No se encuentra el registro fiscal inmutable.",
-      );
-    }
-    if (
-      Number(submission.attempts || 0) === 0 &&
-      !isAeatGenerationTimestampFresh(
-        fiscalBeforeSendSnap.data()?.fechaHoraHusoGenRegistro,
-      )
-    ) {
-      throw new HttpsError(
-        "failed-precondition",
-        "Este registro lleva preparado más de 3 minutos y la AEAT ya no admite su hora de generación. Créalo de nuevo y confirma el envío inmediatamente.",
-      );
-    }
-    if (submission.recordType === "anulacion") {
-      const altaSnap = await db.doc(`companies/${companyId}/aeatSubmissions/alta_${submission.invoiceId}`).get();
-      const altaStatus = altaSnap.data()?.status;
-      if (!altaSnap.exists || !["accepted", "accepted_with_errors"].includes(altaStatus)) {
-        throw new HttpsError("failed-precondition", "Primero debe aceptarse el alta de esta factura en el entorno de pruebas.");
-      }
-    }
-
-    const claimed = await db.runTransaction(async (transaction) => {
-      const fresh = await transaction.get(submissionRef);
-      if (!fresh.exists) return null;
-      const data = fresh.data();
-      if (
-        data.environment !== "test" ||
-        data.productionEnabled === true ||
-        !sendableStatuses.has(data.status) ||
-        Number(data.attempts || 0) >= MAX_SUBMISSION_ATTEMPTS
-      ) {
-        return null;
-      }
-      const attemptNumber = Number(data.attempts || 0) + 1;
-      transaction.update(submissionRef, {
-        status: "processing",
-        attempts: attemptNumber,
-        leaseUntil: Timestamp.fromMillis(Date.now() + 2 * 60 * 1000),
-        claimedAt: FieldValue.serverTimestamp(),
-        claimedBy: request.auth.uid,
-      });
-      return { ...data, attemptNumber };
+    const result = await cloudTestWorker.run({
+      companyId, submissionId, automatic: false, confirmTestSend: true, actorId: request.auth.uid,
     });
-    if (!claimed) {
-      throw new HttpsError("aborted", "El registro ya no está disponible para enviarlo.");
-    }
+    if (result.blocked) throw new HttpsError("failed-precondition", result.blocked);
+    if (result.ignored) throw new HttpsError("aborted", "Este intento ha caducado. Actualiza la cola para ver su estado.");
+    return result;
+  },
+);
 
-    let aeatResult;
-    try {
-      const fiscalSnap = await fiscalRef.get();
-      if (!fiscalSnap.exists) throw new Error("No se encuentra el registro fiscal inmutable.");
-      const fiscalRecord = fiscalSnap.data();
-      let previousFiscalRecord = null;
-      if (fiscalRecord.chain?.previousFiscalRecordId) {
-        const previousSnap = await db.doc(`companies/${companyId}/fiscalRecords/${fiscalRecord.chain.previousFiscalRecordId}`).get();
-        previousFiscalRecord = previousSnap.exists ? previousSnap.data() : null;
-      }
-      const soapXml = buildAeatOfficialSoapEnvelope(
-        fiscalRecord,
-        { ...settings, companyId },
-        previousFiscalRecord,
-      );
-      const [secretVersion] = await secretManager.accessSecretVersion({
-        name: certificate.secretVersion,
-      });
-      const secretText = secretVersion.payload?.data?.toString("utf8") || "";
-      const secretPayload = JSON.parse(secretText);
-      if (!secretPayload.pfxBase64 || !secretPayload.password) {
-        throw new Error("El certificado custodiado no está completo.");
-      }
-      const httpResponse = await postSoapWithPfx({
-        endpoint: AEAT_TEST_ENDPOINT,
-        soapXml,
-        pfx: Buffer.from(secretPayload.pfxBase64, "base64"),
-        passphrase: secretPayload.password,
-      });
-      aeatResult = parseAeatSoapResponse(httpResponse);
-    } catch (error) {
-      logger.error("Fallo en el envío VeriFactu de pruebas", {
-        companyId,
-        submissionId,
-        error: error.message,
-      });
-      const rawMessage = String(error.message || "No se pudo conectar con la AEAT.");
-      const safeMessage = /PERMISSION_DENIED|secretmanager\.versions\.access|secretmanager\.secrets\.setIamPolicy/i.test(rawMessage)
-        ? "No se pudo abrir temporalmente el certificado seguro. Vuelve a intentarlo en unos segundos."
-        : rawMessage;
-      aeatResult = {
-        transportOk: false,
-        httpStatus: 0,
-        message: safeMessage.slice(0, 1500),
-      };
-    }
+exports.onAeatCloudTestSubmissionCreated = onDocumentCreated(
+  { document: "companies/{companyId}/aeatSubmissions/{submissionId}", region: "europe-west1",
+    memory: "512MiB", timeoutSeconds: 120, retry: true },
+  async (event) => {
+    if (!automaticAeatTestEnabled()) return;
+    await cloudTestWorker.run({ companyId: event.params.companyId, submissionId: event.params.submissionId });
+  },
+);
 
-    const recordState = String(aeatResult.recordState || "").slice(0, 50);
-    let status = !aeatResult.transportOk
-      ? (aeatResult.permanentFailure ? "rejected" : "retry_pending")
-      : recordState === "Correcto"
-        ? "accepted"
-        : recordState === "AceptadoConErrores"
-          ? "accepted_with_errors"
-          : "rejected";
-    const nextAttemptAt = status === "retry_pending" && claimed.attemptNumber < MAX_SUBMISSION_ATTEMPTS
-      ? Timestamp.fromDate(getNextRetryDate(claimed.attemptNumber))
-      : null;
-    if (status === "retry_pending" && !nextAttemptAt) status = "rejected";
-    const sanitizedResponse = {
-      csv: String(aeatResult.csv || "").slice(0, 100),
-      code: String(aeatResult.code || "").slice(0, 100),
-      message: String(aeatResult.message || "").slice(0, 1500),
-      shipmentState: String(aeatResult.shipmentState || "").slice(0, 50),
-      recordState,
-      waitSeconds: Math.max(0, Math.min(3600, Number(aeatResult.waitSeconds) || 0)),
-      httpStatus: Math.max(0, Math.min(999, Number(aeatResult.httpStatus) || 0)),
-    };
-    await db.runTransaction(async (transaction) => {
-      transaction.update(submissionRef, {
-        status,
-        channel: "cloud_certificate",
-        nextAttemptAt,
-        leaseUntil: null,
-        aeatResponse: sanitizedResponse,
-        lastError: ["rejected", "retry_pending"].includes(status) ? sanitizedResponse.message : null,
-        processedAt: FieldValue.serverTimestamp(),
-        processedBy: "cloud_certificate",
-      });
-      transaction.update(db.doc(`companies/${companyId}/invoices/${claimed.invoiceId}`), {
-        aeatStatus: status,
-        aeatEnvironment: "test",
-        aeatProductionAccepted: false,
-        aeatResponseCode: sanitizedResponse.code,
-        aeatCsv: sanitizedResponse.csv,
-        aeatProcessedAt: FieldValue.serverTimestamp(),
-      });
-    });
-    await recordVerifactuEvent(companyId, {
-      type: "aeat_cloud_test_result_recorded",
-      actorId: request.auth.uid,
-      invoiceId: claimed.invoiceId,
-      invoiceNumber: claimed.invoiceNumber,
-      fiscalRecordId: claimed.fiscalRecordId,
-      submissionId,
-      channel: "cloud_certificate",
-      details: { status, httpStatus: sanitizedResponse.httpStatus },
-    });
-    return {
-      submissionId,
-      status,
-      environment: "test",
-      productionEnabled: false,
-      response: sanitizedResponse,
-    };
+async function recoverAeatCompanyTest(companyRef) {
+  let cursor = null;
+  while (automaticAeatTestEnabled()) {
+    let query = db.collection(`${companyRef.path}/aeatSubmissions`)
+      .where("channel", "==", "cloud_certificate")
+      .where("status", "in", ["awaiting_cloud_sender", "retry_pending", "processing"])
+      .orderBy("createdAt", "asc").limit(50);
+    if (cursor) query = query.startAfter(cursor);
+    const pending = await query.get();
+    if (pending.empty) return;
+    // Equal creation timestamps are common in batch emission. Do not assume
+    // document ID order equals fiscal-chain order: inspect other candidates.
+    for (const job of pending.docs) {
+      if (!automaticAeatTestEnabled()) return;
+      const result = await cloudTestWorker.run({ companyId: companyRef.id, submissionId: job.id });
+      if (result.status || result.ignored || ["company_busy", "cooldown"].includes(result.reason)) return;
+    }
+    cursor = pending.docs[pending.docs.length - 1];
+  }
+}
+
+exports.recoverAeatCloudTestSubmissions = onSchedule(
+  { schedule: "every 1 minutes", region: "europe-west1", timeZone: "Europe/Madrid",
+    memory: "512MiB", timeoutSeconds: 540, maxInstances: 1 },
+  async () => {
+    if (!automaticAeatTestEnabled()) return;
+    // No activation is inferred from the calendar; these documents are server-write-only.
+    const configs = await db.collectionGroup("verifactuConfig").where("autoCloudTestEnabled", "==", true).get();
+    for (const config of configs.docs) {
+      if (!automaticAeatTestEnabled()) return;
+      if (config.id !== "automation" || config.data().environment !== "test") continue;
+      const companyRef = config.ref.parent.parent;
+      if (!companyRef || companyRef.parent.path !== "companies") continue;
+      try {
+        await recoverAeatCompanyTest(companyRef);
+      } catch {
+        // Keep credentials and raw SDK errors out of logs; other tenants still run.
+        logger.warn("Recuperación VeriFactu de pruebas pendiente de revisión", { companyId: companyRef.id });
+      }
+    }
   },
 );
 
@@ -2435,6 +2336,9 @@ exports.getLocalConnectorStatus = onCall(
       certificateSubject: data.certificateSubject || "",
       certificateThumbprint: data.certificateThumbprint || "",
       certificateValidTo: data.certificateValidTo || "",
+      protocolVersion: data.protocolVersion || 0,
+      updateRequired: data.protocolVersion !== 2 || !Array.isArray(data.capabilities) || !data.capabilities.includes("query_reconciliation_v1"),
+      pendingReview: data.pendingReview || null,
       daysRemaining: data.daysRemaining || 0,
       aeatTestReachable: data.aeatTestReachable === true,
       lastSeenAt: lastSeenAt?.toISOString?.() || "",
@@ -2519,6 +2423,34 @@ exports.localConnectorPair = onRequest(
   },
 );
 
+const aeatTestReconciliationWorker = createAeatReconciliationWorker({
+  db,
+  timestamp: (millis) => Timestamp.fromMillis(millis),
+  assertTenantEnabled,
+  loadCertificate: loadTenantAeatCertificate,
+  transport: (payload) => postSoapWithPfx({ ...payload, endpoint: AEAT_TEST_ENDPOINT }),
+});
+
+exports.reconcileAeatCloudTestSubmission = onCall(
+  { region: "europe-west1", memory: "512MiB", timeoutSeconds: 120 },
+  async (request) => {
+    const companyId = await requireTenantAdmin(request);
+    const submissionId = String(request.data?.submissionId || "").trim();
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(submissionId)) {
+      throw new HttpsError("invalid-argument", "El registro de prueba no es válido.");
+    }
+    if (request.data?.confirmTestQuery !== true) {
+      throw new HttpsError("failed-precondition", "Confirma expresamente la consulta al entorno de pruebas de la AEAT.");
+    }
+    const result = await aeatTestReconciliationWorker.run({
+      companyId, submissionId, confirmTestQuery: true, actorId: request.auth.uid,
+    });
+    if (result.blocked) throw new HttpsError("failed-precondition", result.blocked);
+    if (result.ignored) throw new HttpsError("aborted", "Esta consulta ha caducado. Actualiza la cola para ver su estado.");
+    return result;
+  },
+);
+
 exports.localConnectorHeartbeat = onRequest(
   { region: "europe-west1", memory: "256MiB", timeoutSeconds: 30, cors: false },
   async (request, response) => {
@@ -2536,26 +2468,21 @@ exports.localConnectorHeartbeat = onRequest(
     }
     const safeUpdate = {
       status: "connected",
+      environment: "test",
+      protocolVersion: body.protocolVersion === 2 ? 2 : 0,
+      capabilities: Array.isArray(body.capabilities)
+        ? body.capabilities.filter(value => value === "query_reconciliation_v1").slice(0, 1) : [],
       connectorName: String(body.connectorName || "Este ordenador").slice(0, 100),
       certificateSubject: String(body.certificateSubject || "").slice(0, 500),
       certificateThumbprint: String(body.certificateThumbprint || "").replace(/[^a-fA-F0-9]/g, "").slice(0, 64).toUpperCase(),
       certificateValidTo: String(body.certificateValidTo || "").slice(0, 40),
+      certificateValidFrom: String(body.certificateValidFrom || "").slice(0, 40),
       daysRemaining: Math.max(0, Math.min(5000, Number(body.daysRemaining) || 0)),
       aeatTestReachable: body.aeatTestReachable === true,
       lastSeenAt: FieldValue.serverTimestamp(),
     };
     await ref.set(safeUpdate, { merge: true });
-    await db.doc(`companies/${companyId}/settings/billing`).set({
-      aeatConnection: {
-        channel: "local_connector",
-        environment: "test",
-        connectorName: safeUpdate.connectorName,
-        credentialsStored: false,
-        productionEnabled: false,
-        schemaValidationStatus: "official_test_xsd_ready",
-      },
-      aeatConnectionUpdatedAt: FieldValue.serverTimestamp(),
-    }, { merge: true });
+    // Heartbeats report health only. They must never switch the selected channel.
     return response.status(200).json({
       ok: true,
       environment: "test",
@@ -2565,150 +2492,93 @@ exports.localConnectorHeartbeat = onRequest(
   },
 );
 
+const localTestWorker = createAeatCloudWorker({
+  db, timestamp: (millis) => Timestamp.fromMillis(millis), assertTenantEnabled, channel: "local_connector",
+});
+
+const localTestReconciliationWorker = createAeatReconciliationWorker({
+  db, timestamp: (millis) => Timestamp.fromMillis(millis), assertTenantEnabled, channel: "local_connector",
+});
+
+exports.requestAeatLocalTestReconciliation = onCall(
+  { region: "europe-west1", memory: "256MiB", timeoutSeconds: 60 },
+  async (request) => {
+    const companyId = await requireTenantAdmin(request);
+    const submissionId = String(request.data?.submissionId || "").trim();
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(submissionId)) throw new HttpsError("invalid-argument", "El registro de prueba no es válido.");
+    const result = await localTestReconciliationWorker.requestLocal({ companyId, submissionId,
+      confirmTestQuery: request.data?.confirmTestQuery === true, actorId: request.auth.uid });
+    if (result.blocked) throw new HttpsError("failed-precondition", result.blocked);
+    return result;
+  },
+);
+
 exports.localConnectorClaim = onRequest(
-  { region: "europe-west1", memory: "256MiB", timeoutSeconds: 30, cors: false },
+  { region: "europe-west1", memory: "256MiB", timeoutSeconds: 60, cors: false },
   async (request, response) => {
     if (request.method !== "POST") return response.status(405).json({ error: "method_not_allowed" });
     const body = parseConnectorBody(request);
     const authenticated = await authenticateLocalConnector(request, body);
     if (!authenticated) return response.status(401).json({ error: "unauthorized" });
-    const { companyId } = authenticated;
-    const channelSettingsSnap = await db.doc(`companies/${companyId}/settings/billing`).get();
-    if (channelSettingsSnap.data()?.aeatConnection?.channel !== "local_connector") {
-      return response.status(409).json({
-        error: "local_connector_disabled",
-        job: null,
-      });
-    }
-    const submissionsRef = db.collection(`companies/${companyId}/aeatSubmissions`);
-    const candidateSnaps = [];
-    for (const status of ["awaiting_local_connector", "retry_pending", "processing"]) {
-      const snap = await submissionsRef.where("status", "==", status).limit(10).get();
-      candidateSnaps.push(...snap.docs);
-    }
-    const now = Date.now();
-    const candidate = candidateSnaps
-      .filter((entry) => {
-        const data = entry.data();
-        if (data.status === "processing") {
-          return data.leaseUntil?.toMillis?.() < now;
+    if (body.protocolVersion !== 2) return response.status(426).json({ error: "connector_update_required", message: "Actualiza el conector Windows antes de enviar.", job: null });
+    const { companyId, data } = authenticated;
+    await assertTenantEnabled(companyId);
+    if (Array.isArray(data.capabilities) && data.capabilities.includes("query_reconciliation_v1")) {
+      const reviews = await db.collection(`companies/${companyId}/aeatSubmissions`)
+        .where("status", "==", "needs_review").orderBy("createdAt", "asc").limit(50).get();
+      for (const candidate of reviews.docs) {
+        if (candidate.data().reconciliation?.status !== "awaiting_local_connector") continue;
+        const result = await localTestReconciliationWorker.claimLocal({
+          companyId, submissionId: candidate.id, protocolVersion: body.protocolVersion,
+        });
+        if (result.job) return response.status(200).json({ job: { ...result.job, endpoint: AEAT_TEST_ENDPOINT, soapAction: "" } });
+        if (["company_busy", "cooldown"].includes(result.reason)) {
+          return response.status(200).json({ job: null, message: result.blocked, retryAfterSeconds: 30 });
         }
-        return !data.nextAttemptAt || data.nextAttemptAt.toMillis() <= now;
-      })
-      .sort((a, b) => (a.data().createdAt?.toMillis?.() || 0) - (b.data().createdAt?.toMillis?.() || 0))[0];
-    if (!candidate) return response.status(200).json({ job: null, retryAfterSeconds: 30 });
-    const claimed = await db.runTransaction(async (transaction) => {
-      const fresh = await transaction.get(candidate.ref);
-      const data = fresh.data();
-      if (!fresh.exists || !["awaiting_local_connector", "retry_pending", "processing"].includes(data.status)) return null;
-      if (data.status === "processing" && (!data.leaseUntil || data.leaseUntil.toMillis() >= Date.now())) return null;
-      if (data.nextAttemptAt && data.nextAttemptAt.toMillis() > Date.now()) return null;
-      transaction.update(candidate.ref, {
-        status: "processing",
-        attempts: FieldValue.increment(1),
-        leaseUntil: Timestamp.fromMillis(Date.now() + 2 * 60 * 1000),
-        claimedAt: FieldValue.serverTimestamp(),
-      });
-      return data;
-    });
-    if (!claimed) return response.status(200).json({ job: null, retryAfterSeconds: 10 });
-    const [fiscalSnap, settingsSnap] = await Promise.all([
-      db.doc(`companies/${companyId}/fiscalRecords/${claimed.fiscalRecordId}`).get(),
-      db.doc(`companies/${companyId}/settings/billing`).get(),
-    ]);
-    if (!fiscalSnap.exists) {
-      await candidate.ref.update({ status: "rejected", lastError: "Registro fiscal no encontrado", processedAt: FieldValue.serverTimestamp() });
-      return response.status(500).json({ error: "missing_fiscal_record" });
+      }
     }
-    const fiscalRecord = fiscalSnap.data();
-    let previousFiscalRecord = null;
-    if (fiscalRecord.chain?.previousFiscalRecordId) {
-      const previousSnap = await db.doc(`companies/${companyId}/fiscalRecords/${fiscalRecord.chain.previousFiscalRecordId}`).get();
-      previousFiscalRecord = previousSnap.exists ? previousSnap.data() : null;
+    let cursor = null;
+    while (true) {
+      let query = db.collection(`companies/${companyId}/aeatSubmissions`)
+        .where("channel", "==", "local_connector")
+        .where("status", "in", ["awaiting_local_connector", "retry_pending", "processing"])
+        .orderBy("createdAt", "asc").limit(50);
+      if (cursor) query = query.startAfter(cursor);
+      const pending = await query.get();
+      if (pending.empty) return response.status(200).json({ job: null, retryAfterSeconds: 30 });
+      for (const candidate of pending.docs) {
+        const result = await localTestWorker.claimLocal({
+          companyId, submissionId: candidate.id, protocolVersion: body.protocolVersion, binding: data.connectorTokenHash,
+        });
+        if (result.job) return response.status(200).json({ job: { ...result.job, endpoint: AEAT_TEST_ENDPOINT, soapAction: "" } });
+        if (result.status || ["company_busy", "cooldown"].includes(result.reason)) {
+          return response.status(200).json({ job: null, message: result.message || result.blocked, retryAfterSeconds: 30 });
+        }
+      }
+      cursor = pending.docs[pending.docs.length - 1];
     }
-    const soapXml = buildAeatOfficialSoapEnvelope(
-      fiscalRecord,
-      { ...(settingsSnap.data() || {}), companyId },
-      previousFiscalRecord,
-    );
-    return response.status(200).json({
-      job: {
-        submissionId: candidate.id,
-        environment: "test",
-        endpoint: "https://prewww1.aeat.es/wlpl/TIKE-CONT/ws/SistemaFacturacion/VerifactuSOAP",
-        soapAction: "",
-        soapXml,
-      },
-    });
   },
 );
 
 exports.localConnectorResult = onRequest(
-  { region: "europe-west1", memory: "256MiB", timeoutSeconds: 30, cors: false },
+  { region: "europe-west1", memory: "256MiB", timeoutSeconds: 60, cors: false },
   async (request, response) => {
     if (request.method !== "POST") return response.status(405).json({ error: "method_not_allowed" });
     const body = parseConnectorBody(request);
     const authenticated = await authenticateLocalConnector(request, body);
     if (!authenticated) return response.status(401).json({ error: "unauthorized" });
-    const { companyId } = authenticated;
-    const submissionId = String(body?.submissionId || "").trim();
+    if (body.protocolVersion !== 2) return response.status(426).json({ error: "connector_update_required" });
+    const submissionId = String(body.submissionId || "").trim();
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(submissionId)) return response.status(400).json({ error: "invalid_submission" });
-    const ref = db.doc(`companies/${companyId}/aeatSubmissions/${submissionId}`);
-    const result = await db.runTransaction(async (transaction) => {
-      const snap = await transaction.get(ref);
-      if (!snap.exists) return null;
-      const submission = snap.data();
-      if (submission.environment !== "test" || submission.productionEnabled === true) throw new Error("production_blocked");
-      const transportOk = body.transportOk === true;
-      const permanentFailure = body.permanentFailure === true;
-      const recordState = String(body.recordState || "").slice(0, 50);
-      const status = !transportOk
-        ? (permanentFailure ? "rejected" : "retry_pending")
-        : recordState === "Correcto"
-          ? "accepted"
-          : recordState === "AceptadoConErrores"
-            ? "accepted_with_errors"
-            : "rejected";
-      const nextAttemptAt = status === "retry_pending" && Number(submission.attempts || 0) < MAX_SUBMISSION_ATTEMPTS
-        ? Timestamp.fromDate(getNextRetryDate(Number(submission.attempts || 0)))
-        : null;
-      const finalStatus = status === "retry_pending" && !nextAttemptAt ? "rejected" : status;
-      const aeatResponse = {
-        csv: String(body.csv || "").slice(0, 100),
-        code: String(body.code || "").slice(0, 100),
-        message: String(body.message || "").slice(0, 1500),
-        shipmentState: String(body.shipmentState || "").slice(0, 50),
-        recordState,
-        waitSeconds: Math.max(0, Math.min(3600, Number(body.waitSeconds) || 0)),
-        httpStatus: Math.max(0, Math.min(999, Number(body.httpStatus) || 0)),
-      };
-      transaction.update(ref, {
-        status: finalStatus,
-        nextAttemptAt,
-        leaseUntil: null,
-        aeatResponse,
-        lastError: ["rejected", "retry_pending"].includes(finalStatus) ? aeatResponse.message : null,
-        processedAt: FieldValue.serverTimestamp(),
-        processedBy: "local_connector",
-      });
-      transaction.update(db.doc(`companies/${companyId}/invoices/${submission.invoiceId}`), {
-        aeatStatus: finalStatus,
-        aeatEnvironment: "test",
-        aeatProductionAccepted: false,
-        aeatResponseCode: aeatResponse.code,
-        aeatCsv: aeatResponse.csv,
-        aeatProcessedAt: FieldValue.serverTimestamp(),
-      });
-      return { status: finalStatus };
+    const handler = body.operation === "query" ? localTestReconciliationWorker : localTestWorker;
+    const result = await handler.resultLocal({
+      companyId: authenticated.companyId, binding: authenticated.data.connectorTokenHash,
+      submissionId, protocolVersion: body.protocolVersion, attemptToken: body.attemptToken,
+      attemptNumber: body.attemptNumber, httpStatus: body.httpStatus, responseXml: body.responseXml, failureKind: body.failureKind,
     });
-    if (!result) return response.status(404).json({ error: "not_found" });
-    await recordVerifactuEvent(companyId, {
-      type: "aeat_connector_result_recorded",
-      actorId: "local_connector",
-      submissionId,
-      details: { status: result.status },
-    });
-    return response.status(200).json({ ok: true, ...result });
+    // A stale receipt stays in the Windows journal for review, never discarded as success.
+    if (result.ignored) await authenticated.ref.set({ pendingReview: { submissionId, reason: result.reason } }, { merge: true });
+    return response.status(200).json({ ...result, ok: !result.ignored, acknowledged: !result.ignored });
   },
 );
 
@@ -2907,11 +2777,14 @@ exports.recordAeatTestResult = onCall(
         throw new HttpsError("not-found", "El envío no existe.");
       }
       const submission = submissionSnap.data();
-      if (submission.environment !== "test" || submission.productionEnabled) {
+      if (!isTestSubmissionEligible(submission, companyId)) {
         throw new HttpsError(
           "failed-precondition",
           "Esta función solo admite resultados del entorno de pruebas.",
         );
+      }
+      if (["cloud_worker", "local_worker_v2"].includes(submission.deliveryOwner) || ["cloud_certificate", "local_connector"].includes(submission.channel)) {
+        throw new HttpsError("failed-precondition", "Los resultados del certificado PFX/P12 solo pueden registrarse desde su envío seguro.");
       }
       if (!AEAT_JOB_STATUSES.has(status)) {
         throw new HttpsError("invalid-argument", "Estado no permitido.");
@@ -3029,11 +2902,17 @@ exports.cancelInvoiceFiscalRecord = onCall(
         );
       }
 
+      const { ref: fiscalStateRef, state: fiscalState } = await readFiscalState(
+        transaction, db, companyId, "test", settings,
+      );
+      const originalSnap = await transaction.get(db.doc(`companies/${companyId}/fiscalRecords/${invoice.fiscalRecordId}`));
+      assertFiscalScope(originalSnap.exists ? originalSnap.data() : null, companyId, "test");
+
       const generationDate = new Date();
       const generationTimestamp = getMadridIsoTimestamp(generationDate);
-      const previousFiscalRecordId = settings.lastFiscalRecordId || null;
+      const previousFiscalRecordId = fiscalState.lastFiscalRecordId || null;
       const previousHash = previousFiscalRecordId
-        ? settings.lastInvoiceHash || ""
+        ? fiscalState.lastInvoiceHash || ""
         : "";
       const issueDate = invoice.issueDate?.toDate
         ? invoice.issueDate.toDate()
@@ -3049,11 +2928,7 @@ exports.cancelInvoiceFiscalRecord = onCall(
 
       const cancellationRecord = {
         schemaVersion: "verifactu-pre-aeat-v1",
-        system: {
-          name: "RyB App",
-          version: "0.1.0-phase4",
-          producer: "Limpiezas Rayba S.L",
-        },
+        system: { ...SYSTEM },
         companyId,
         invoiceId,
         originalFiscalRecordId: invoice.fiscalRecordId,
@@ -3125,6 +3000,10 @@ exports.cancelInvoiceFiscalRecord = onCall(
         },
         { merge: true },
       );
+      transaction.set(fiscalStateRef, {
+        ...fiscalState, lastInvoiceHash: hash, lastFiscalRecordId: cancellationRef.id,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
       return {
         invoiceId,
         cancellationFiscalRecordId: cancellationRef.id,
@@ -3241,11 +3120,17 @@ exports.subsanateInvoiceFiscalRecord = onCall(
       );
       Object.assign(correctedInvoice, totals);
 
+      const { ref: fiscalStateRef, state: fiscalState } = await readFiscalState(
+        transaction, db, companyId, "test", settings,
+      );
+      const originalSnap = await transaction.get(db.doc(`companies/${companyId}/fiscalRecords/${invoice.fiscalRecordId}`));
+      assertFiscalScope(originalSnap.exists ? originalSnap.data() : null, companyId, "test");
+
       const generationDate = new Date();
       const generationTimestamp = getMadridIsoTimestamp(generationDate);
-      const previousFiscalRecordId = settings.lastFiscalRecordId || null;
+      const previousFiscalRecordId = fiscalState.lastFiscalRecordId || null;
       const previousHash = previousFiscalRecordId
-        ? settings.lastInvoiceHash || ""
+        ? fiscalState.lastInvoiceHash || ""
         : "";
       const issueDate = invoice.issueDate?.toDate
         ? invoice.issueDate.toDate()
@@ -3340,6 +3225,10 @@ exports.subsanateInvoiceFiscalRecord = onCall(
         },
         { merge: true },
       );
+      transaction.set(fiscalStateRef, {
+        ...fiscalState, lastInvoiceHash: hash, lastFiscalRecordId: subsanationRef.id,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
       return {
         invoiceId,
         subsanationFiscalRecordId: subsanationRef.id,

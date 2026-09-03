@@ -3,7 +3,7 @@
   "short_name": "LimpiaGest",
   "id": "/",
   "description": "Gestión de servicios de limpieza de comunidades",
-  "start_url": "/",
+  "start_url": "/app",
   "scope": "/",
   "display": "standalone",
   "launch_handler": {

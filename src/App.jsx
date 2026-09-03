@@ -874,7 +874,7 @@ function OperarioLayout() {
 }
 
 // ==================== ROOT REDIRECT ====================
-function RootRedirect() {
+function RootRedirect({ appEntry = false } = {}) {
   const { currentUser, userProfile, loading } = useAuth();
   if (loading) {
     return (
@@ -886,6 +886,13 @@ function RootRedirect() {
   }
 
   if (!currentUser) {
+    // Older installations still launch at /; keep them out of the public landing.
+    const isInstalledApp =
+      window.matchMedia?.("(display-mode: standalone)").matches ||
+      window.navigator.standalone === true;
+    if (appEntry || isInstalledApp) {
+      return <Navigate to="/login" replace />;
+    }
     return <LandingPage />;
   }
 
@@ -931,6 +938,7 @@ export default function App() {
 
                 {/* Root */}
                 <Route path="/" element={<RootRedirect />} />
+                <Route path="/app" element={<RootRedirect appEntry />} />
 
                 {/* Admin */}
                 <Route

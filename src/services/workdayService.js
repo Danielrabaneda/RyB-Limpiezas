@@ -24,6 +24,7 @@ import {
 } from "date-fns";
 import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
 import { calculateDailyMileage } from "./mileageService";
+import { selectCanonicalActiveWorkday } from "../utils/workdaySelection";
 
 const COLLECTION_NAME = "workdays";
 
@@ -121,31 +122,6 @@ export async function endWorkday(
     originalEndTime: customEndTime ? Timestamp.fromDate(new Date()) : null,
   });
 
-  // A companion can also be referenced by another operator's active
-  // workday. Clear those reciprocal links when their own day ends so stale
-  // companion data cannot keep them active or expose someone else's work.
-  if (workdayData?.userId) {
-    try {
-      const companionLinksSnap = await getDocs(
-        query(
-          tenantCollection(db, companyId, COLLECTION_NAME),
-          where("currentCompanionId", "==", workdayData.userId),
-          where("status", "==", "active"),
-        ),
-      );
-      await Promise.all(
-        companionLinksSnap.docs.map((companionWorkday) =>
-          updateDoc(companionWorkday.ref, { currentCompanionId: null }),
-        ),
-      );
-    } catch (err) {
-      console.error(
-        "[Workday] Error limpiando vínculos de acompañante al finalizar jornada:",
-        err,
-      );
-    }
-  }
-
   // Trigger mileage calculation
   // Usamos la fecha "lógica" de la jornada (workdayData.date) para que el kilometraje
   // se guarde en el día correcto, incluso si la jornada termina después de medianoche.
@@ -182,10 +158,9 @@ export async function getActiveWorkday(companyId, userId) {
   );
 
   const snap = await getDocs(q);
-  const activeDoc = snap.docs.find((docSnap) => docSnap.data().status === "active");
-  if (!activeDoc) return null;
-
-  return { id: activeDoc.id, ...activeDoc.data() };
+  return selectCanonicalActiveWorkday(
+    snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() })),
+  );
 }
 
 export async function getWorkdaysForAdmin(companyId, startDate, endDate, userId = null) {

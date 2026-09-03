@@ -1,3 +1,4 @@
+const SYSTEM = require("./verifactuRelease.json");
 const AEAT_CHANNELS = new Set([
   "disabled",
   "delegated",
@@ -14,6 +15,7 @@ const AEAT_JOB_STATUSES = new Set([
   "accepted_with_errors",
   "rejected",
   "retry_pending",
+  "needs_review",
 ]);
 const MAX_SUBMISSION_ATTEMPTS = 8;
 
@@ -84,9 +86,13 @@ function buildAeatOfficialSoapEnvelope(fiscalRecord, settings = {}, previousFisc
   const issuerName = String(settings.companyName || fiscalRecord.system?.producer || "").slice(0, 120);
   const invoiceDate = fiscalRecord.fechaExpedicionFactura || formatAeatDate(fiscalRecord.issueDate);
   const chainXml = buildOfficialChainXml(fiscalRecord, previousFiscalRecord);
-  const systemName = String(settings.softwareName || "LimpiaGest").slice(0, 30);
-  const producerName = String(settings.softwareProducerName || "LIMPIEZAS RAIBA SOCIEDAD LIMITADA").slice(0, 120);
-  const producerNif = normalizeTaxId(settings.softwareProducerNif || "B04843843");
+  const systemName = SYSTEM.name;
+  const producerName = SYSTEM.producer;
+  const producerNif = SYSTEM.producerNif;
+  // Historical phase records were sent as 1.0.0. Never relabel them on retry.
+  const recordVersion = fiscalRecord.system?.version;
+  const systemVersion = recordVersion?.startsWith("0.1.0-phase")
+    ? "1.0.0" : recordVersion || "1.0.0";
   const installation = String(fiscalRecord.companyId || settings.companyId || "tenant").slice(0, 100);
   const systemXml = [
     "<sf:SistemaInformatico>",
@@ -94,7 +100,7 @@ function buildAeatOfficialSoapEnvelope(fiscalRecord, settings = {}, previousFisc
     `<sf:NIF>${escapeXml(producerNif)}</sf:NIF>`,
     `<sf:NombreSistemaInformatico>${escapeXml(systemName)}</sf:NombreSistemaInformatico>`,
     "<sf:IdSistemaInformatico>LG</sf:IdSistemaInformatico>",
-    "<sf:Version>1.0.0</sf:Version>",
+    `<sf:Version>${escapeXml(systemVersion)}</sf:Version>`,
     `<sf:NumeroInstalacion>${escapeXml(installation)}</sf:NumeroInstalacion>`,
     "<sf:TipoUsoPosibleSoloVerifactu>S</sf:TipoUsoPosibleSoloVerifactu>",
     "<sf:TipoUsoPosibleMultiOT>S</sf:TipoUsoPosibleMultiOT>",

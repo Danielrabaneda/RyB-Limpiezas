@@ -18,6 +18,7 @@ import {
 import { format, isSameDay } from "date-fns";
 import { getCurrentLocation, getDistance } from "../utils/geolocation";
 import { groupServicesByTaskPresentation } from "../utils/taskPresentation";
+import { selectCanonicalActiveWorkday } from "../utils/workdaySelection";
 import {
   getLatestNativeLocation,
   getNativeLocationStatus,
@@ -115,8 +116,12 @@ export function useTodayData(userProfile) {
             totalMinutes:
               canonicalSummary.totalMinutes + legacySummary.totalMinutes,
             hasActive: canonicalSummary.hasActive || legacySummary.hasActive,
-            activeWorkday:
-              canonicalSummary.activeWorkday || legacySummary.activeWorkday,
+            activeWorkday: selectCanonicalActiveWorkday(
+              [
+                canonicalSummary.activeWorkday,
+                legacySummary.activeWorkday,
+              ].filter(Boolean),
+            ),
             firstStartTime:
               [canonicalSummary.firstStartTime, legacySummary.firstStartTime]
                 .filter(Boolean)
@@ -409,7 +414,12 @@ export function useTodayData(userProfile) {
       qWorkdays,
       (snap) => {
         const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        const myWorkday = docs.find((d) => d.userId === userProfile.uid);
+        const validUserIds = new Set(
+          [userProfile.uid, userProfile.legacyUid].filter(Boolean),
+        );
+        const myWorkday = selectCanonicalActiveWorkday(
+          docs.filter((d) => validUserIds.has(d.userId)),
+        );
 
         setActiveWorkdaysList(docs);
         setActiveWorkday(myWorkday || null);

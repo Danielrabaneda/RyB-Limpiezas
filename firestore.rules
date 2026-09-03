@@ -526,7 +526,20 @@ service cloud.firestore {
       // settings
       match /settings/{id} {
         allow read: if isTenant(companyId) && (id == 'global' ? isEmployeeActive() : isAdminActive());
-        allow write: if isTenant(companyId) && isAdminActive();
+        // Fiscal chain/counters are server-owned, including legacy migration fields.
+        allow create: if isTenant(companyId) && isAdminActive() && (
+          id != 'billing' || !request.resource.data.keys().hasAny([
+            'lastInvoiceHash', 'lastFiscalRecordId', 'seriesCounters',
+            'lastEmissionMode', 'verifactuProduction'
+          ])
+        );
+        allow update: if isTenant(companyId) && isAdminActive() && (
+          id != 'billing' || !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'lastInvoiceHash', 'lastFiscalRecordId', 'seriesCounters',
+            'lastEmissionMode', 'verifactuProduction'
+          ])
+        );
+        allow delete: if isTenant(companyId) && isAdminActive() && id != 'billing';
       }
 
       // invoices (VERIFACTU logic)
