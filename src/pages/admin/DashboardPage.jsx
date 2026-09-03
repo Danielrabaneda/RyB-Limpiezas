@@ -1,22 +1,136 @@
-import { useState, useEffect } from 'react';
-import { useAuth } from '../../contexts/AuthContext';
-import { useNavigate } from 'react-router-dom';
-import { getCommunities } from '../../services/communityService';
-import { getOperarios } from '../../services/authService';
-import { getScheduledServicesRange } from '../../services/scheduleService';
-import { getCheckInsRange } from '../../services/checkInService';
-import { generateServicesForDays, generateServicesForRange, cleanupDuplicateScheduledServices, checkAndRolloverGarages } from '../../services/scheduleService';
-import { startOfDay, endOfDay, subDays, format } from 'date-fns';
-import { es } from 'date-fns/locale';
-import PlanningCalendar from '../../components/PlanningCalendar';
-import TransferRequestsPanel from '../../components/admin/TransferRequestsPanel';
-import GPSSuggestionsPanel from '../../components/admin/GPSSuggestionsPanel';
-import { collection, query, where, onSnapshot, getDocs } from 'firebase/firestore';
-import { db } from '../../config/firebase';
-import { createSystemNotification } from '../../services/notificationService';
+import { useState, useEffect } from "react";
+import { useAuth } from "../../contexts/AuthContext";
+import { useNavigate } from "react-router-dom";
+import { useTenant } from "../../contexts/TenantContext";
+import { getCommunities } from "../../services/communityService";
+import { getOperarios } from "../../services/authService";
+import { getScheduledServicesRange } from "../../services/scheduleService";
+import { getCheckInsRange } from "../../services/checkInService";
+import {
+  generateServicesForDays,
+  generateServicesForRange,
+  checkAndRolloverGarages,
+} from "../../services/scheduleService";
+import { startOfDay, endOfDay, subDays, format } from "date-fns";
+import { es } from "date-fns/locale";
+import PlanningCalendar from "../../components/PlanningCalendar";
+import TransferRequestsPanel from "../../components/admin/TransferRequestsPanel";
+import GPSSuggestionsPanel from "../../components/admin/GPSSuggestionsPanel";
+import MissingCoordinatesPanel from "../../components/admin/MissingCoordinatesPanel";
+import { getCommunityCoordinates } from "../../utils/navigation";
+import {
+  collection,
+  query,
+  where,
+  onSnapshot,
+  getDocs,
+  limit,
+} from "firebase/firestore";
+import { db } from "../../config/firebase";
+import { tenantCollection } from "../../utils/tenantFirestore";
+import { createSystemNotification } from "../../services/notificationService";
+import {
+  buildSystemNotificationArgs,
+  getNotificationRecipientIds,
+} from "../../utils/notificationRequest";
+
+function TrialOnboarding({ companyId, company, stats, navigate }) {
+  const storageKey = `limpiagest-onboarding-collapsed-${companyId}`;
+  const [collapsed, setCollapsed] = useState(
+    () => window.localStorage.getItem(storageKey) === "true",
+  );
+
+  if (company?.subscriptionStatus !== "trialing") return null;
+
+  const steps = [
+    { label: "Crear empresa", done: true, path: "/admin/ajustes" },
+    { label: "Añadir operarios", done: stats.operarios > 0, path: "/admin/operarios" },
+    { label: "Añadir clientes o comunidades", done: stats.communities > 0, path: "/admin/comunidades" },
+    { label: "Crear el primer servicio", done: stats.hasAnyService, path: "/admin/comunidades" },
+    { label: "Configurar facturación", done: !!company.stripeCustomerId, path: "/admin/ajustes" },
+  ];
+  const completed = steps.filter((step) => step.done).length;
+
+  const updateCollapsed = (nextValue) => {
+    setCollapsed(nextValue);
+    window.localStorage.setItem(storageKey, String(nextValue));
+  };
+
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        className="btn btn-secondary mb-5"
+        onClick={() => updateCollapsed(false)}
+      >
+        Abrir configuración inicial · {completed}/5
+      </button>
+    );
+  }
+
+  return (
+    <section
+      className="mb-6"
+      aria-labelledby="trial-onboarding-title"
+      style={{
+        padding: "20px",
+        borderRadius: "18px",
+        color: "#e2e8f0",
+        background: "linear-gradient(135deg,#0f172a,#172554)",
+        boxShadow: "0 16px 40px rgba(15,23,42,.18)",
+      }}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+        <div>
+          <div style={{ color: "#7dd3fc", fontSize: ".72rem", fontWeight: 800, letterSpacing: ".08em" }}>
+            CONFIGURACIÓN GUIADA · {completed}/5
+          </div>
+          <h3 id="trial-onboarding-title" style={{ margin: "5px 0 0", color: "white", fontSize: "1.18rem" }}>
+            Prepara tu primera operación
+          </h3>
+        </div>
+        <button
+          type="button"
+          onClick={() => updateCollapsed(true)}
+          style={{ border: 0, color: "#cbd5e1", background: "transparent", cursor: "pointer" }}
+        >
+          Ocultar por ahora
+        </button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: "10px" }}>
+        {steps.map((step, index) => (
+          <button
+            key={step.label}
+            type="button"
+            onClick={() => navigate(step.path)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              minHeight: "54px",
+              padding: "10px 12px",
+              borderRadius: "12px",
+              border: step.done ? "1px solid rgba(74,222,128,.35)" : "1px solid rgba(148,163,184,.22)",
+              color: "white",
+              background: step.done ? "rgba(22,163,74,.16)" : "rgba(255,255,255,.06)",
+              textAlign: "left",
+              cursor: "pointer",
+            }}
+          >
+            <span aria-hidden="true" style={{ color: step.done ? "#4ade80" : "#7dd3fc", fontWeight: 800 }}>
+              {step.done ? "✓" : String(index + 1).padStart(2, "0")}
+            </span>
+            <span>{step.label}</span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
 
 export default function DashboardPage() {
   const { userProfile } = useAuth();
+  const { companyId, company } = useTenant();
   const navigate = useNavigate();
   const [refreshKey, setRefreshKey] = useState(0);
   const [stats, setStats] = useState({
@@ -26,20 +140,24 @@ export default function DashboardPage() {
     pendingServices: 0,
     completedToday: 0,
     activeCheckIns: 0,
+    hasAnyService: false,
   });
   const [operarios, setOperarios] = useState([]);
+  const [communitiesWithoutCoordinates, setCommunitiesWithoutCoordinates] =
+    useState([]);
   const [loading, setLoading] = useState(true);
   const [pendingTransfers, setPendingTransfers] = useState(0);
   const [pendingGPS, setPendingGPS] = useState(0);
+  const [showGPSPanel, setShowGPSPanel] = useState(false);
   const [activeOpsNames, setActiveOpsNames] = useState([]);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
   const [notifForm, setNotifForm] = useState({
-    recipient: 'all',
-    userId: '',
-    type: 'info',
-    triggerEvent: 'immediate',
-    title: '',
-    body: ''
+    recipient: "all",
+    userId: "",
+    type: "info",
+    triggerEvent: "immediate",
+    title: "",
+    body: "",
   });
   const [notifLoading, setNotifLoading] = useState(false);
 
@@ -47,60 +165,155 @@ export default function DashboardPage() {
     loadDashboard();
   }, []);
 
+  // Keep the "active operators" card in sync when a workday starts or ends.
+  useEffect(() => {
+    if (!companyId) return undefined;
+    let receivedInitialSnapshot = false;
+    const todayWorkdaysQuery = query(
+      tenantCollection(db, companyId, "workdays"),
+      where("date", ">=", startOfDay(new Date())),
+      where("date", "<=", endOfDay(new Date())),
+    );
+    const unsubscribe = onSnapshot(todayWorkdaysQuery, () => {
+      if (!receivedInitialSnapshot) {
+        receivedInitialSnapshot = true;
+        return;
+      }
+      loadDashboard();
+    });
+    return unsubscribe;
+  }, [companyId]);
+
   // Real-time listeners for pending counts
   useEffect(() => {
-    const qT = query(collection(db, 'transfers'), where('status', '==', 'pending'));
-    const unsubT = onSnapshot(qT, snap => setPendingTransfers(snap.size));
-    const qG = query(collection(db, 'gpsSuggestions'), where('status', '==', 'pending'));
-    const unsubG = onSnapshot(qG, snap => setPendingGPS(snap.size));
-    return () => { unsubT(); unsubG(); };
-  }, []);
+    if (!companyId) return;
+    const qT = query(
+      tenantCollection(db, companyId, "transfers"),
+      where("status", "==", "pending"),
+    );
+    const unsubT = onSnapshot(qT, (snap) => setPendingTransfers(snap.size));
+    const qG = query(
+      tenantCollection(db, companyId, "gpsSuggestions"),
+      where("status", "==", "pending"),
+    );
+    const unsubG = onSnapshot(qG, (snap) => setPendingGPS(snap.size));
+    return () => {
+      unsubT();
+      unsubG();
+    };
+  }, [companyId]);
 
   async function loadDashboard() {
     try {
-      await checkAndRolloverGarages();
-      const [communitiesList, ops, todayServices, checkIns, activeWorkdaysSnap] = await Promise.all([
-        getCommunities(),
-        getOperarios(),
-        getScheduledServicesRange(new Date(), new Date()),
-        getCheckInsRange(new Date(), new Date()),
-        getDocs(query(collection(db, 'workdays'), where('status', '==', 'active')))
+      await checkAndRolloverGarages(companyId);
+      const [
+        communitiesList,
+        ops,
+        todayServices,
+        checkIns,
+        firstServiceSnapshot,
+      ] = await Promise.all([
+        getCommunities(companyId),
+        getOperarios(companyId),
+        getScheduledServicesRange(companyId, new Date(), new Date()),
+        getCheckInsRange(companyId, new Date(), new Date()),
+        getDocs(query(tenantCollection(db, companyId, "scheduledServices"), limit(1))),
       ]);
 
-      const activeWorkdays = activeWorkdaysSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // Las estadísticas de jornada son complementarias. Un índice pendiente
+      // no debe impedir cargar los operarios ni bloquear las notificaciones.
+      let todayWorkdays = [];
+      try {
+        const todayWorkdaysSnap = await getDocs(
+          query(
+            tenantCollection(db, companyId, "workdays"),
+            where("date", ">=", startOfDay(new Date())),
+            where("date", "<=", endOfDay(new Date())),
+          ),
+        );
+        todayWorkdays = todayWorkdaysSnap.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        }));
+      } catch (workdayError) {
+        console.warn(
+          "No se pudieron cargar las jornadas activas del dashboard:",
+          workdayError,
+        );
+      }
 
-      const completed = todayServices.filter(s => s.status === 'completed').length;
-      const pending = todayServices.filter(s => s.status === 'pending').length;
 
-      // Calculate real-time active operators (must have active workday)
+      const completed = todayServices.filter(
+        (s) => s.status === "completed",
+      ).length;
+      const pending = todayServices.filter(
+        (s) => s.status === "pending",
+      ).length;
+
+      // Calculate real-time active operators (active workday OR active check-in/service in progress)
       const activeUserIds = new Set();
-      
-      // Get set of UIDs of users with active workdays
-      const activeWdUserIds = new Set();
-      activeWorkdays.forEach(wd => {
-        if (wd.userId) activeWdUserIds.add(wd.userId);
-        if (wd.currentCompanionId) activeWdUserIds.add(wd.currentCompanionId);
-      });
+      const canonicalUserId = (val) => {
+        if (!val) return "";
+        const rawUid = typeof val === "object" ? val.uid || val.id || "" : val;
+        return ops.find((op) => op.uid === rawUid || op.legacyUid === rawUid)?.uid || rawUid;
+      };
 
-      // 1. Add all operators with active workdays (and their global companions)
-      activeWorkdays.forEach(wd => {
-        if (wd.userId) activeUserIds.add(wd.userId);
-        if (wd.currentCompanionId) activeUserIds.add(wd.currentCompanionId);
-      });
-
-      // 2. Add all operators with active check-ins (and service-specific companions) only if they have an active workday
-      const activeCheckInDocs = checkIns.filter(c => !c.checkOutTime);
-      activeCheckInDocs.forEach(c => {
-        if (c.userId && activeWdUserIds.has(c.userId)) {
-          activeUserIds.add(c.userId);
+      // 1. Use the latest session state for each operator. This prevents an
+      // orphaned duplicate session from keeping someone active after a newer
+      // session has already been completed.
+      const latestWorkdayByUser = new Map();
+      todayWorkdays.forEach((workday) => {
+        if (!workday.userId) return;
+        const uid = canonicalUserId(workday.userId);
+        const rawActivityTime =
+          workday.status === "active"
+            ? workday.startTime
+            : workday.endTime || workday.updatedAt || workday.startTime;
+        const activityDate = rawActivityTime?.toDate
+          ? rawActivityTime.toDate()
+          : new Date(rawActivityTime);
+        const activityTime = Number.isNaN(activityDate.getTime())
+          ? 0
+          : activityDate.getTime();
+        const current = latestWorkdayByUser.get(uid);
+        if (!current || activityTime >= current.activityTime) {
+          latestWorkdayByUser.set(uid, { workday, activityTime });
         }
-        
+      });
+
+      const canAppearAsActive = (uid) => {
+        if (!uid) return false;
+        const latest = latestWorkdayByUser.get(canonicalUserId(uid));
+        return latest?.workday?.status === "active";
+      };
+
+      latestWorkdayByUser.forEach(({ workday: wd }, uid) => {
+        if (wd.status !== "active") return;
+        activeUserIds.add(uid);
+        if (
+          wd.currentCompanionId &&
+          canAppearAsActive(wd.currentCompanionId)
+        ) {
+          activeUserIds.add(canonicalUserId(wd.currentCompanionId));
+        }
+      });
+
+      // 2. Add all operators with active check-ins (and service-specific companions)
+      const activeCheckInDocs = checkIns.filter((c) => !c.checkOutTime);
+      activeCheckInDocs.forEach((c) => {
+        const checkInUserId = canonicalUserId(c.userId);
+        // An open service check-in alone must not keep an operator active after
+        // their workday has been closed.
+        if (!c.userId || !activeUserIds.has(checkInUserId)) return;
+
         if (c.scheduledServiceId) {
-          const service = todayServices.find(s => s.id === c.scheduledServiceId);
+          const service = todayServices.find(
+            (s) => s.id === c.scheduledServiceId,
+          );
           if (service && Array.isArray(service.companionIds)) {
-            service.companionIds.forEach(companionId => {
-              if (companionId && activeWdUserIds.has(companionId)) {
-                activeUserIds.add(companionId);
+            service.companionIds.forEach((companionId) => {
+              if (companionId && canAppearAsActive(companionId)) {
+                activeUserIds.add(canonicalUserId(companionId));
               }
             });
           }
@@ -112,9 +325,9 @@ export default function DashboardPage() {
       const activeCount = uniqueActiveUserIds.length;
 
       // Map UIDs to actual operator names
-      const names = uniqueActiveUserIds.map(uid => {
-        const op = ops.find(o => o.uid === uid);
-        return op ? (op.name || op.email) : 'Desconocido';
+      const names = uniqueActiveUserIds.map((uid) => {
+        const op = ops.find((o) => o.uid === uid || o.legacyUid === uid);
+        return op ? op.name || op.email : "Desconocido";
       });
 
       setStats({
@@ -124,12 +337,18 @@ export default function DashboardPage() {
         pendingServices: pending,
         completedToday: completed,
         activeCheckIns: activeCount,
+        hasAnyService: !firstServiceSnapshot.empty,
       });
 
       setActiveOpsNames(names);
       setOperarios(ops);
+      setCommunitiesWithoutCoordinates(
+        communitiesList.filter(
+          (community) => !getCommunityCoordinates(community),
+        ),
+      );
     } catch (err) {
-      console.error('Error loading dashboard:', err);
+      console.error("Error loading dashboard:", err);
     } finally {
       setLoading(false);
     }
@@ -147,64 +366,61 @@ export default function DashboardPage() {
   const totalPending = pendingTransfers + pendingGPS;
 
   const scrollTo = (id) => {
-    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document
+      .getElementById(id)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   const handleSendNotification = async (e) => {
     e.preventDefault();
     if (!notifForm.title.trim() || !notifForm.body.trim()) {
-      alert('Por favor, rellena el título y el cuerpo de la notificación.');
+      alert("Por favor, rellena el título y el cuerpo de la notificación.");
       return;
     }
-    
-    if (notifForm.recipient === 'specific' && !notifForm.userId) {
-      alert('Por favor, selecciona un operario.');
+
+    if (notifForm.recipient === "specific" && !notifForm.userId) {
+      alert("Por favor, selecciona un operario.");
       return;
     }
 
     setNotifLoading(true);
     try {
-      if (notifForm.recipient === 'all') {
+      if (notifForm.recipient === "all") {
         // Enviar a todos los operarios
-        const promises = operarios.map(op => 
+        const recipientIds = getNotificationRecipientIds(operarios);
+        const promises = recipientIds.map((userId) =>
           createSystemNotification(
-            op.uid,
-            notifForm.title.trim(),
-            notifForm.body.trim(),
-            notifForm.type,
-            null,
-            null,
-            notifForm.triggerEvent
-          )
+            ...buildSystemNotificationArgs(companyId, userId, notifForm),
+          ),
         );
         await Promise.all(promises);
-        alert('Notificación enviada con éxito a todos los trabajadores.');
+        alert("Notificación enviada con éxito a todos los trabajadores.");
       } else {
         // Enviar a un operario concreto
-        const selectedOp = operarios.find(op => op.uid === notifForm.userId);
+        const selectedOp = operarios.find((op) => op.uid === notifForm.userId);
         await createSystemNotification(
-          notifForm.userId,
-          notifForm.title.trim(),
-          notifForm.body.trim(),
-          notifForm.type,
-          null,
-          null,
-          notifForm.triggerEvent
+          ...buildSystemNotificationArgs(
+            companyId,
+            notifForm.userId,
+            notifForm,
+          ),
         );
-        alert(`Notificación enviada con éxito a ${selectedOp?.name || 'el operario seleccionado'}.`);
+        alert(
+          `Notificación enviada con éxito a ${selectedOp?.name || "el operario seleccionado"}.`,
+        );
       }
       setShowNotificationModal(false);
       setNotifForm({
-        recipient: 'all',
-        userId: '',
-        type: 'info',
-        triggerEvent: 'immediate',
-        title: '',
-        body: ''
+        recipient: "all",
+        userId: "",
+        type: "info",
+        triggerEvent: "immediate",
+        title: "",
+        body: "",
       });
     } catch (error) {
-      console.error('Error al enviar notificaciones:', error);
-      alert('Ocurrió un error al enviar la notificación: ' + error.message);
+      console.error("Error al enviar notificaciones:", error);
+      alert("Ocurrió un error al enviar la notificación: " + error.message);
     } finally {
       setNotifLoading(false);
     }
@@ -212,37 +428,90 @@ export default function DashboardPage() {
 
   return (
     <div className="animate-fadeIn">
+      <TrialOnboarding
+        companyId={companyId}
+        company={company}
+        stats={stats}
+        navigate={navigate}
+      />
+      {/* Mobile-friendly banner for Admins to switch to Operario view */}
+      <div
+        className="mb-6 p-4 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
+        style={{
+          background: "linear-gradient(135deg, var(--color-primary-50) 0%, #e0e7ff 100%)",
+          border: "1px solid var(--color-primary-100)",
+        }}
+      >
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700, color: "var(--color-primary)", marginBottom: "4px", display: "flex", alignItems: "center", gap: "8px" }}>
+            <span>📱</span> Vista de Operario Móvil
+          </div>
+          <div style={{ fontSize: "0.85rem", color: "var(--color-text-muted)" }}>
+            Como administrador, puedes usar la aplicación de operario en ruta para pedir productos, registrar jornadas o realizar check-ins en tiempo real.
+          </div>
+        </div>
+        <button
+          onClick={() => navigate("/operario")}
+          className="btn btn-primary btn-sm flex items-center gap-2"
+          style={{ whiteSpace: "nowrap", width: "100%", sm: { width: "auto" } }}
+        >
+          👷 Entrar como Operario
+        </button>
+      </div>
+
       <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
         <div>
-          <h2 style={{ fontSize: 'var(--font-2xl)', fontWeight: 800, color: 'var(--color-text)' }}>
-            Hola, {userProfile?.name || 'Admin'} 👋
+          <h2
+            style={{
+              fontSize: "var(--font-2xl)",
+              fontWeight: 800,
+              color: "var(--color-text)",
+            }}
+          >
+            Hola, {userProfile?.name || "Admin"} 👋
           </h2>
           <p className="text-muted text-sm">
             {format(new Date(), "EEEE, d 'de' MMMM yyyy", { locale: es })}
           </p>
         </div>
-        <div>
+        <div className="flex flex-wrap gap-2">
+          {companyId === "rayba" && userProfile?.platformAdmin === true && (
+            <button
+              onClick={() => navigate("/plataforma/empresas")}
+              className="btn"
+              style={{
+                padding: "10px 20px",
+                borderRadius: "14px",
+                fontWeight: 800,
+                color: "white",
+                background: "linear-gradient(135deg,#0f172a,#1d4ed8)",
+                boxShadow: "0 6px 18px rgba(15,23,42,.2)",
+              }}
+            >
+              ◈ Consola global
+            </button>
+          )}
           <button
             onClick={() => {
               setNotifForm({
-                recipient: 'all',
-                userId: '',
-                type: 'info',
-                triggerEvent: 'immediate',
-                title: '',
-                body: ''
+                recipient: "all",
+                userId: "",
+                type: "info",
+                triggerEvent: "immediate",
+                title: "",
+                body: "",
               });
               setShowNotificationModal(true);
             }}
             className="btn btn-primary"
             style={{
-              padding: '10px 20px',
-              borderRadius: '14px',
-              fontWeight: '700',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              boxShadow: '0 4px 12px rgba(37,99,235,0.2)'
+              padding: "10px 20px",
+              borderRadius: "14px",
+              fontWeight: "700",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              boxShadow: "0 4px 12px rgba(37,99,235,0.2)",
             }}
           >
             📢 Enviar Notificación
@@ -252,68 +521,119 @@ export default function DashboardPage() {
 
       {/* ===== BANNER DE PENDIENTES ===== */}
       {totalPending > 0 && (
-        <div style={{
-          background: 'linear-gradient(135deg, #1e40af 0%, #1d4ed8 50%, #2563eb 100%)',
-          borderRadius: '16px',
-          padding: '16px 20px',
-          marginBottom: '24px',
-          boxShadow: '0 4px 24px rgba(37,99,235,0.35)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: '12px',
-          flexWrap: 'wrap',
-          animation: 'pendingPulse 3s ease-in-out infinite',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-            <div style={{
-              width: '44px', height: '44px', borderRadius: '12px',
-              background: 'rgba(255,255,255,0.2)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: '22px', flexShrink: 0,
-            }}>🔔</div>
+        <div
+          style={{
+            background:
+              "linear-gradient(135deg, #1e40af 0%, #1d4ed8 50%, #2563eb 100%)",
+            borderRadius: "16px",
+            padding: "16px 20px",
+            marginBottom: "24px",
+            boxShadow: "0 4px 24px rgba(37,99,235,0.35)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "12px",
+            flexWrap: "wrap",
+            animation: "pendingPulse 3s ease-in-out infinite",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+            <div
+              style={{
+                width: "44px",
+                height: "44px",
+                borderRadius: "12px",
+                background: "rgba(255,255,255,0.2)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "22px",
+                flexShrink: 0,
+              }}
+            >
+              🔔
+            </div>
             <div>
-              <div style={{ color: 'white', fontWeight: 800, fontSize: '1rem', lineHeight: 1.2 }}>
-                {totalPending} acción{totalPending > 1 ? 'es' : ''} pendiente{totalPending > 1 ? 's' : ''} de revisión
+              <div
+                style={{
+                  color: "white",
+                  fontWeight: 800,
+                  fontSize: "1rem",
+                  lineHeight: 1.2,
+                }}
+              >
+                {totalPending} acción{totalPending > 1 ? "es" : ""} pendiente
+                {totalPending > 1 ? "s" : ""} de revisión
               </div>
-              <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: '0.75rem', marginTop: '2px' }}>
-                {pendingTransfers > 0 && <span>📋 {pendingTransfers} traspaso{pendingTransfers > 1 ? 's' : ''}</span>}
-                {pendingTransfers > 0 && pendingGPS > 0 && <span style={{ margin: '0 6px' }}>·</span>}
-                {pendingGPS > 0 && <span>📍 {pendingGPS} ubicación{pendingGPS > 1 ? 'es' : ''} GPS</span>}
+              <div
+                style={{
+                  color: "rgba(255,255,255,0.75)",
+                  fontSize: "0.75rem",
+                  marginTop: "2px",
+                }}
+              >
+                {pendingTransfers > 0 && (
+                  <span>
+                    📋 {pendingTransfers} traspaso
+                    {pendingTransfers > 1 ? "s" : ""}
+                  </span>
+                )}
+                {pendingTransfers > 0 && pendingGPS > 0 && (
+                  <span style={{ margin: "0 6px" }}>·</span>
+                )}
+                {pendingGPS > 0 && (
+                  <span>
+                    📍 {pendingGPS} ubicación{pendingGPS > 1 ? "es" : ""} GPS
+                  </span>
+                )}
               </div>
             </div>
           </div>
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
             {pendingTransfers > 0 && (
               <button
-                onClick={() => scrollTo('panel-transfers')}
+                onClick={() => scrollTo("panel-transfers")}
                 style={{
-                  background: 'rgba(255,255,255,0.2)', color: 'white',
-                  border: '1px solid rgba(255,255,255,0.35)', borderRadius: '10px',
-                  padding: '8px 16px', fontWeight: 700, fontSize: '0.8rem',
-                  cursor: 'pointer', backdropFilter: 'blur(4px)',
-                  transition: 'background 0.2s',
-                  whiteSpace: 'normal',
+                  background: "rgba(255,255,255,0.2)",
+                  color: "white",
+                  border: "1px solid rgba(255,255,255,0.35)",
+                  borderRadius: "10px",
+                  padding: "8px 16px",
+                  fontWeight: 700,
+                  fontSize: "0.8rem",
+                  cursor: "pointer",
+                  backdropFilter: "blur(4px)",
+                  transition: "background 0.2s",
+                  whiteSpace: "normal",
                 }}
-                onMouseOver={e => e.currentTarget.style.background = 'rgba(255,255,255,0.3)'}
-                onMouseOut={e => e.currentTarget.style.background = 'rgba(255,255,255,0.2)'}
+                onMouseOver={(e) =>
+                  (e.currentTarget.style.background = "rgba(255,255,255,0.3)")
+                }
+                onMouseOut={(e) =>
+                  (e.currentTarget.style.background = "rgba(255,255,255,0.2)")
+                }
               >
                 Ver traspasos →
               </button>
             )}
             {pendingGPS > 0 && (
               <button
-                onClick={() => scrollTo('panel-gps')}
+                onClick={() => setShowGPSPanel(true)}
                 style={{
-                  background: 'white', color: '#1d4ed8',
-                  border: 'none', borderRadius: '10px',
-                  padding: '8px 16px', fontWeight: 700, fontSize: '0.8rem',
-                  cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-                  transition: 'opacity 0.2s',
-                  whiteSpace: 'normal',
+                  background: "white",
+                  color: "#1d4ed8",
+                  border: "none",
+                  borderRadius: "10px",
+                  padding: "8px 16px",
+                  fontWeight: 700,
+                  fontSize: "0.8rem",
+                  cursor: "pointer",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+                  transition: "opacity 0.2s",
+                  whiteSpace: "normal",
                 }}
-                onMouseOver={e => e.currentTarget.style.opacity = '0.9'}
-                onMouseOut={e => e.currentTarget.style.opacity = '1'}
+                onMouseOver={(e) => (e.currentTarget.style.opacity = "0.9")}
+                onMouseOut={(e) => (e.currentTarget.style.opacity = "1")}
               >
                 Ver ubicaciones GPS →
               </button>
@@ -346,117 +666,142 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      <MissingCoordinatesPanel
+        companyId={companyId}
+        communities={communitiesWithoutCoordinates}
+        onCoordinatesSaved={(communityId) =>
+          setCommunitiesWithoutCoordinates((current) =>
+            current.filter((community) => community.id !== communityId),
+          )
+        }
+      />
+
       {/* Acciones Rápidas */}
       <h3 className="section-title mb-4">⚡ Acciones Rápidas</h3>
       <div className="grid grid-3 gap-3 mb-8">
-        <button 
-          onClick={() => navigate('/admin/inventory')}
+        <button
+          onClick={() => navigate("/admin/inventory")}
           className="btn btn-ghost p-4 flex flex-col items-center gap-2 border border-slate-100 hover:border-primary hover:bg-white shadow-sm"
-          style={{ height: 'auto', background: 'white' }}
+          style={{ height: "auto", background: "white" }}
         >
-          <span style={{ fontSize: '1.5rem' }}>📦</span>
-          <span className="text-xs font-bold uppercase tracking-wider">Materiales</span>
+          <span style={{ fontSize: "1.5rem" }}>📦</span>
+          <span className="text-xs font-bold uppercase tracking-wider">
+            Materiales
+          </span>
         </button>
-        <button 
-          onClick={() => navigate('/admin/reports')}
+        <button
+          onClick={() => navigate("/admin/informes")}
           className="btn btn-ghost p-4 flex flex-col items-center gap-2 border border-slate-100 hover:border-primary hover:bg-white shadow-sm"
-          style={{ height: 'auto', background: 'white' }}
+          style={{ height: "auto", background: "white" }}
         >
-          <span style={{ fontSize: '1.5rem' }}>📄</span>
-          <span className="text-xs font-bold uppercase tracking-wider">Informes</span>
+          <span style={{ fontSize: "1.5rem" }}>📄</span>
+          <span className="text-xs font-bold uppercase tracking-wider">
+            Informes
+          </span>
         </button>
-        <button 
-          onClick={() => navigate('/admin/evidencias')}
+        <button
+          onClick={() => navigate("/admin/evidencias")}
           className="btn btn-ghost p-4 flex flex-col items-center gap-2 border border-slate-100 hover:border-primary hover:bg-white shadow-sm"
-          style={{ height: 'auto', background: 'white' }}
+          style={{ height: "auto", background: "white" }}
         >
-          <span style={{ fontSize: '1.5rem' }}>📸</span>
-          <span className="text-xs font-bold uppercase tracking-wider">Evidencias</span>
+          <span style={{ fontSize: "1.5rem" }}>📸</span>
+          <span className="text-xs font-bold uppercase tracking-wider">
+            Evidencias
+          </span>
         </button>
-        <button 
-          onClick={() => navigate('/admin/communities')}
+        <button
+          onClick={() => navigate("/admin/comunidades")}
           className="btn btn-ghost p-4 flex flex-col items-center gap-2 border border-slate-100 hover:border-primary hover:bg-white shadow-sm"
-          style={{ height: 'auto', background: 'white' }}
+          style={{ height: "auto", background: "white" }}
         >
-          <span style={{ fontSize: '1.5rem' }}>🏢</span>
-          <span className="text-xs font-bold uppercase tracking-wider">Comunidades</span>
+          <span style={{ fontSize: "1.5rem" }}>🏢</span>
+          <span className="text-xs font-bold uppercase tracking-wider">
+            Comunidades
+          </span>
         </button>
-        <button 
-          onClick={() => navigate('/admin/operarios')}
+        <button
+          onClick={() => navigate("/admin/operarios")}
           className="btn btn-ghost p-4 flex flex-col items-center gap-2 border border-slate-100 hover:border-primary hover:bg-white shadow-sm"
-          style={{ height: 'auto', background: 'white' }}
+          style={{ height: "auto", background: "white" }}
         >
-          <span style={{ fontSize: '1.5rem' }}>👷</span>
-          <span className="text-xs font-bold uppercase tracking-wider">Operarios</span>
+          <span style={{ fontSize: "1.5rem" }}>👷</span>
+          <span className="text-xs font-bold uppercase tracking-wider">
+            Operarios
+          </span>
         </button>
-        <button 
-          onClick={async () => {
-            if (!window.confirm('¿Eliminar servicios duplicados de la base de datos? Esta operación no se puede deshacer.')) return;
-            try {
-              const n = await cleanupDuplicateScheduledServices();
-              alert(`✅ Limpieza completada. ${n} duplicado(s) eliminado(s).`);
-              loadDashboard();
-            } catch (err) {
-              alert('❌ Error durante la limpieza: ' + err.message);
-            }
-          }}
-          className="btn btn-ghost p-4 flex flex-col items-center gap-2 border border-slate-100 hover:border-red-200 hover:bg-red-50 shadow-sm"
-          style={{ height: 'auto', background: 'white' }}
+        <button
+          onClick={() => navigate("/admin/servicios-pendientes")}
+          className="btn btn-ghost p-4 flex flex-col items-center gap-2 border border-slate-100 hover:border-primary hover:bg-white shadow-sm"
+          style={{ height: "auto", background: "white" }}
         >
-          <span style={{ fontSize: '1.5rem' }}>🧹</span>
-          <span className="text-xs font-bold uppercase tracking-wider" style={{ color: '#dc2626' }}>Limpiar Dup.</span>
+          <span style={{ fontSize: "1.5rem" }}>⏰</span>
+          <span className="text-xs font-bold uppercase tracking-wider">
+            Servicios pendientes
+          </span>
         </button>
       </div>
 
       {/* Panels with scroll anchors */}
       <div id="panel-transfers">
-        <TransferRequestsPanel onActionComplete={() => {
-          loadDashboard();
-          setRefreshKey(prev => prev + 1);
-        }} />
-      </div>
-
-      <div id="panel-gps">
-        <GPSSuggestionsPanel onActionComplete={() => {
-          loadDashboard();
-          setRefreshKey(prev => prev + 1);
-        }} />
+        <TransferRequestsPanel
+          onActionComplete={() => {
+            loadDashboard();
+            setRefreshKey((prev) => prev + 1);
+          }}
+        />
       </div>
 
       <div className="mb-12">
         <h3 className="section-title mb-6">📅 Planificación Mensual</h3>
-        <div className="bg-white rounded-3xl p-2 shadow-sm border border-slate-100" style={{ overflowX: 'auto' }}>
+        <div
+          className="bg-white rounded-3xl p-2 shadow-sm border border-slate-100"
+          style={{ overflowX: "auto" }}
+        >
           <PlanningCalendar key={refreshKey} isAdmin operarios={operarios} />
         </div>
       </div>
 
       {/* Operarios activos */}
-      <div className="card shadow-md border-0 bg-white" style={{ borderLeft: '4px solid #3b82f6' }}>
+      <div
+        className="card shadow-md border-0 bg-white"
+        style={{ borderLeft: "4px solid #3b82f6" }}
+      >
         <div className="card-header border-0 bg-transparent flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-3">
             <span className="text-xl">📍</span>
-            <h3 className="card-title text-slate-800 m-0">Operarios activos actualmente</h3>
+            <h3 className="card-title text-slate-800 m-0">
+              Operarios activos actualmente
+            </h3>
           </div>
           <span className="badge badge-primary">{stats.activeCheckIns}</span>
         </div>
 
         <div className="p-4">
           {stats.activeCheckIns === 0 ? (
-            <p className="text-muted text-sm italic">Ningún operario fichado en este momento.</p>
+            <p className="text-muted text-sm italic">
+              Ningún operario fichado en este momento.
+            </p>
           ) : (
             <div className="flex flex-col gap-3">
               <div className="flex items-center gap-2">
                 <span className="pulse-dot"></span>
                 <span className="text-sm font-medium text-blue-700">
-                  {stats.activeCheckIns} operario{stats.activeCheckIns > 1 ? 's' : ''} realizando servicios en tiempo real.
+                  {stats.activeCheckIns} operario
+                  {stats.activeCheckIns > 1 ? "s" : ""} realizando servicios en
+                  tiempo real.
                 </span>
               </div>
               {activeOpsNames.length > 0 && (
                 <div className="mt-1 p-3 bg-slate-50 rounded-xl border border-slate-100 flex flex-col gap-2">
-                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Operarios en servicio:</span>
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    Operarios en servicio:
+                  </span>
                   <div className="flex flex-wrap gap-2">
                     {activeOpsNames.map((name, idx) => (
-                      <span key={idx} className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-100">
+                      <span
+                        key={idx}
+                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-100"
+                      >
                         <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>
                         {name}
                       </span>
@@ -469,100 +814,223 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* ===== MODAL CENTRO DE NOTIFICACIONES ===== */}
-      {showNotificationModal && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.5)',
-          zIndex: 9999,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '20px',
-          backdropFilter: 'blur(4px)'
-        }}>
-          <div 
-            className="animate-scaleUp"
+      {showGPSPanel && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Ubicaciones GPS pendientes"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 10000,
+            background: "rgba(15, 23, 42, 0.65)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "20px",
+            backdropFilter: "blur(4px)",
+          }}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setShowGPSPanel(false);
+          }}
+        >
+          <div
             style={{
-              background: 'white',
-              borderRadius: '24px',
-              width: '100%',
-              maxWidth: '500px',
-              padding: '28px',
-              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-              maxHeight: '90vh',
-              overflowY: 'auto'
+              width: "min(900px, 100%)",
+              maxHeight: "90vh",
+              overflowY: "auto",
+              background: "#f8fafc",
+              borderRadius: "20px",
+              padding: "20px",
+              boxShadow: "0 24px 60px rgba(0,0,0,.3)",
             }}
           >
-            <h3 style={{
-              fontSize: '1.25rem',
-              fontWeight: 800,
-              color: '#1e293b',
-              margin: '0 0 20px 0',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px'
-            }}>
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div>
+                <h3 className="text-xl font-black text-slate-900">
+                  Ubicaciones GPS pendientes
+                </h3>
+                <p className="text-sm text-slate-600 mt-1">
+                  «Aplicar ubicación» sustituye las coordenadas actuales de la
+                  comunidad por las enviadas por el operario.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setShowGPSPanel(false)}
+              >
+                Cerrar
+              </button>
+            </div>
+            <GPSSuggestionsPanel
+              onActionComplete={() => {
+                loadDashboard();
+                setRefreshKey((prev) => prev + 1);
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ===== MODAL CENTRO DE NOTIFICACIONES ===== */}
+      {showNotificationModal && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: "rgba(0, 0, 0, 0.5)",
+            zIndex: 9999,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "20px",
+            backdropFilter: "blur(4px)",
+          }}
+        >
+          <div
+            className="animate-scaleUp"
+            style={{
+              background: "white",
+              borderRadius: "24px",
+              width: "100%",
+              maxWidth: "500px",
+              padding: "28px",
+              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+              maxHeight: "90vh",
+              overflowY: "auto",
+            }}
+          >
+            <h3
+              style={{
+                fontSize: "1.25rem",
+                fontWeight: 800,
+                color: "#1e293b",
+                margin: "0 0 20px 0",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+              }}
+            >
               📢 Crear y Enviar Notificación
             </h3>
 
-            <form onSubmit={handleSendNotification} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <form
+              onSubmit={handleSendNotification}
+              style={{ display: "flex", flexDirection: "column", gap: "16px" }}
+            >
               <div className="form-group">
-                <label className="form-label" style={{ fontWeight: 600, color: '#475569', fontSize: '0.85rem' }}>Destinatarios</label>
-                <div style={{ display: 'flex', gap: '16px', marginTop: '6px' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', cursor: 'pointer' }}>
+                <label
+                  className="form-label"
+                  style={{
+                    fontWeight: 600,
+                    color: "#475569",
+                    fontSize: "0.85rem",
+                  }}
+                >
+                  Destinatarios
+                </label>
+                <div style={{ display: "flex", gap: "16px", marginTop: "6px" }}>
+                  <label
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      fontSize: "0.85rem",
+                      cursor: "pointer",
+                    }}
+                  >
                     <input
                       type="radio"
                       name="recipient"
                       value="all"
-                      checked={notifForm.recipient === 'all'}
-                      onChange={() => setNotifForm(f => ({ ...f, recipient: 'all', userId: '' }))}
+                      checked={notifForm.recipient === "all"}
+                      onChange={() =>
+                        setNotifForm((f) => ({
+                          ...f,
+                          recipient: "all",
+                          userId: "",
+                        }))
+                      }
                     />
                     Todos los trabajadores
                   </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', cursor: 'pointer' }}>
+                  <label
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      fontSize: "0.85rem",
+                      cursor: "pointer",
+                    }}
+                  >
                     <input
                       type="radio"
                       name="recipient"
                       value="specific"
-                      checked={notifForm.recipient === 'specific'}
-                      onChange={() => setNotifForm(f => ({ ...f, recipient: 'specific' }))}
+                      checked={notifForm.recipient === "specific"}
+                      onChange={() =>
+                        setNotifForm((f) => ({ ...f, recipient: "specific" }))
+                      }
                     />
                     Un trabajador en concreto
                   </label>
                 </div>
               </div>
 
-              {notifForm.recipient === 'specific' && (
+              {notifForm.recipient === "specific" && (
                 <div className="form-group animate-fadeIn">
-                  <label className="form-label" style={{ fontWeight: 600, color: '#475569', fontSize: '0.85rem' }}>Seleccionar Trabajador</label>
+                  <label
+                    className="form-label"
+                    style={{
+                      fontWeight: 600,
+                      color: "#475569",
+                      fontSize: "0.85rem",
+                    }}
+                  >
+                    Seleccionar Trabajador
+                  </label>
                   <select
                     className="form-select"
                     value={notifForm.userId}
-                    onChange={(e) => setNotifForm(f => ({ ...f, userId: e.target.value }))}
-                    style={{ marginTop: '6px' }}
+                    onChange={(e) =>
+                      setNotifForm((f) => ({ ...f, userId: e.target.value }))
+                    }
+                    style={{ marginTop: "6px" }}
                     required
                   >
                     <option value="">-- Elige un operario --</option>
-                    {operarios.map(op => (
-                      <option key={op.uid} value={op.uid}>{op.name || op.email}</option>
+                    {operarios.map((op) => (
+                      <option key={op.uid} value={op.uid}>
+                        {op.name || op.email}
+                      </option>
                     ))}
                   </select>
                 </div>
               )}
 
-              <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-                <div className="form-group" style={{ flex: '1 1 200px' }}>
-                  <label className="form-label" style={{ fontWeight: 600, color: '#475569', fontSize: '0.85rem' }}>Tipo de Notificación</label>
+              <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
+                <div className="form-group" style={{ flex: "1 1 200px" }}>
+                  <label
+                    className="form-label"
+                    style={{
+                      fontWeight: 600,
+                      color: "#475569",
+                      fontSize: "0.85rem",
+                    }}
+                  >
+                    Tipo de Notificación
+                  </label>
                   <select
                     className="form-select"
                     value={notifForm.type}
-                    onChange={(e) => setNotifForm(f => ({ ...f, type: e.target.value }))}
-                    style={{ marginTop: '6px' }}
+                    onChange={(e) =>
+                      setNotifForm((f) => ({ ...f, type: e.target.value }))
+                    }
+                    style={{ marginTop: "6px" }}
                   >
                     <option value="info">🔵 Info / Sugerencia</option>
                     <option value="warning">🟡 Precaución</option>
@@ -571,54 +1039,110 @@ export default function DashboardPage() {
                   </select>
                 </div>
 
-                <div className="form-group" style={{ flex: '1 1 200px' }}>
-                  <label className="form-label" style={{ fontWeight: 600, color: '#475569', fontSize: '0.85rem' }}>Cuándo Mostrar</label>
+                <div className="form-group" style={{ flex: "1 1 200px" }}>
+                  <label
+                    className="form-label"
+                    style={{
+                      fontWeight: 600,
+                      color: "#475569",
+                      fontSize: "0.85rem",
+                    }}
+                  >
+                    Cuándo Mostrar
+                  </label>
                   <select
                     className="form-select"
                     value={notifForm.triggerEvent}
-                    onChange={(e) => setNotifForm(f => ({ ...f, triggerEvent: e.target.value }))}
-                    style={{ marginTop: '6px' }}
+                    onChange={(e) =>
+                      setNotifForm((f) => ({
+                        ...f,
+                        triggerEvent: e.target.value,
+                      }))
+                    }
+                    style={{ marginTop: "6px" }}
                   >
-                    <option value="immediate">⚡ Al enviarla (tiempo real)</option>
+                    <option value="immediate">
+                      ⚡ Al enviarla (tiempo real)
+                    </option>
                     <option value="workday_start">🌅 Al iniciar jornada</option>
-                    <option value="workday_end">🚪 Al finalizar jornada laboral</option>
+                    <option value="workday_end">
+                      🚪 Al finalizar jornada laboral
+                    </option>
                   </select>
                 </div>
               </div>
 
               <div className="form-group">
-                <label className="form-label" style={{ fontWeight: 600, color: '#475569', fontSize: '0.85rem' }}>Título / Asunto</label>
+                <label
+                  className="form-label"
+                  style={{
+                    fontWeight: 600,
+                    color: "#475569",
+                    fontSize: "0.85rem",
+                  }}
+                >
+                  Título / Asunto
+                </label>
                 <input
                   type="text"
                   className="form-input"
                   placeholder="Ej: Retraso en servicio..."
                   value={notifForm.title}
-                  onChange={(e) => setNotifForm(f => ({ ...f, title: e.target.value }))}
-                  style={{ marginTop: '6px' }}
+                  onChange={(e) =>
+                    setNotifForm((f) => ({ ...f, title: e.target.value }))
+                  }
+                  style={{ marginTop: "6px" }}
                   maxLength={50}
                   required
                 />
               </div>
 
               <div className="form-group">
-                <label className="form-label" style={{ fontWeight: 600, color: '#475569', fontSize: '0.85rem' }}>Mensaje</label>
+                <label
+                  className="form-label"
+                  style={{
+                    fontWeight: 600,
+                    color: "#475569",
+                    fontSize: "0.85rem",
+                  }}
+                >
+                  Mensaje
+                </label>
                 <textarea
                   className="form-input"
                   placeholder="Escribe el mensaje detallado..."
                   value={notifForm.body}
-                  onChange={(e) => setNotifForm(f => ({ ...f, body: e.target.value }))}
-                  style={{ marginTop: '6px', minHeight: '100px', resize: 'vertical' }}
+                  onChange={(e) =>
+                    setNotifForm((f) => ({ ...f, body: e.target.value }))
+                  }
+                  style={{
+                    marginTop: "6px",
+                    minHeight: "100px",
+                    resize: "vertical",
+                  }}
                   maxLength={500}
                   required
                 />
               </div>
 
-              <div style={{ display: 'flex', justifyStyle: 'flex-end', gap: '12px', marginTop: '12px', justifyContent: 'flex-end' }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyStyle: "flex-end",
+                  gap: "12px",
+                  marginTop: "12px",
+                  justifyContent: "flex-end",
+                }}
+              >
                 <button
                   type="button"
                   onClick={() => setShowNotificationModal(false)}
                   className="btn btn-secondary"
-                  style={{ padding: '8px 16px', borderRadius: '12px', border: '1px solid var(--color-border)' }}
+                  style={{
+                    padding: "8px 16px",
+                    borderRadius: "12px",
+                    border: "1px solid var(--color-border)",
+                  }}
                   disabled={notifLoading}
                 >
                   Cancelar
@@ -627,13 +1151,13 @@ export default function DashboardPage() {
                   type="submit"
                   className="btn btn-primary"
                   style={{
-                    padding: '8px 20px',
-                    borderRadius: '12px',
-                    boxShadow: '0 4px 12px rgba(37,99,235,0.25)'
+                    padding: "8px 20px",
+                    borderRadius: "12px",
+                    boxShadow: "0 4px 12px rgba(37,99,235,0.25)",
                   }}
                   disabled={notifLoading}
                 >
-                  {notifLoading ? 'Enviando...' : 'Enviar Notificación 🚀'}
+                  {notifLoading ? "Enviando..." : "Enviar Notificación 🚀"}
                 </button>
               </div>
             </form>

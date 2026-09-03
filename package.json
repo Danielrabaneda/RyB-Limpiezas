@@ -6,15 +6,25 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "android:add": "cap add android",
+    "android:sync": "npm run build && cap sync android",
+    "android:open": "cap open android",
+    "android:run": "npm run android:sync && cap run android"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.5.0",
+    "@firebase/rules-unit-testing": "^5.0.1",
     "@vitejs/plugin-react": "^4.3.4",
+    "firebase-admin": "^14.2.0",
+    "mocha": "^11.7.6",
     "typescript": "~6.0.2",
     "vite": "^6.0.0",
     "vite-plugin-pwa": "^0.21.1"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/core": "^8.5.0",
     "date-fns": "^4.1.0",
     "firebase": "^12.12.0",
     "html2canvas": "^1.4.1",
@@ -24,8 +34,23 @@
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^7.14.1",
+    "react-router-dom": "^7.18.2",
     "recharts": "^3.9.2",
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.1"
+  },
+  "overrides": {
+    "gaxios": {
+      "uuid": "^11.1.1"
+    },
+    "mocha": {
+      "diff": "^8.0.3",
+      "serialize-javascript": "^7.1.0"
+    },
+    "teeny-request": {
+      "uuid": "^11.1.1"
+    },
+    "xcode": {
+      "uuid": "^11.1.1"
+    }
   }
 }

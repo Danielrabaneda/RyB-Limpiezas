@@ -1,26 +1,73 @@
-import { useState, useEffect, useRef } from 'react';
-import { format, startOfWeek, endOfWeek } from 'date-fns';
-import { getEntryDetection, getExitDetection } from '../services/geoDetectionService';
-import { getCommunity } from '../services/communityService';
-import { getCheckInsForDate, createCheckIn, completeCheckOut, isWithinRange } from '../services/checkInService';
-import { getCommunityTasks } from '../services/taskService';
-import { shouldScheduleOnDay, addCompanionToService, updateScheduledServiceStatus, passTaskToNextService } from '../services/scheduleService';
-import { createGPSSuggestion } from '../services/gpsSuggestionService';
-import { getDistance } from '../utils/geolocation';
-import { collection, query, where, getDocs, Timestamp, doc, updateDoc, arrayUnion } from 'firebase/firestore';
-import { db } from '../config/firebase';
-import { createTaskExecution } from '../services/checkInService';
-import { parseHHMM, formatTimeToHHMM } from '../utils/formatTime';
+import { useState, useEffect, useRef } from "react";
+import { format, startOfWeek, endOfWeek } from "date-fns";
+import {
+  getEntryDetection,
+  getExitDetection,
+} from "../services/geoDetectionService";
+import { getCommunity } from "../services/communityService";
+import {
+  getCheckInsForDate,
+  createCheckIn,
+  completeCheckOut,
+  isWithinRange,
+} from "../services/checkInService";
+import { getCommunityTasks } from "../services/taskService";
+import {
+  shouldScheduleOnDay,
+  addCompanionToService,
+  updateScheduledServiceStatus,
+  passTaskToNextService,
+} from "../services/scheduleService";
+import { createGPSSuggestion } from "../services/gpsSuggestionService";
+import {
+  closeServiceNotifications,
+  getDistance,
+} from "../utils/geolocation";
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  Timestamp,
+  doc,
+  updateDoc,
+  arrayUnion,
+} from "firebase/firestore";
+import { db } from "../config/firebase";
+import { createTaskExecution } from "../services/checkInService";
+import { parseHHMM, formatTimeToHHMM } from "../utils/formatTime";
+import { useTenant } from "../contexts/TenantContext";
+import { tenantCollection } from "../utils/tenantFirestore";
+import { getCurrentServiceGroup } from "../utils/serviceGroup";
+import {
+  clearCheckoutInProgress,
+  markCheckoutInProgress,
+} from "../utils/checkoutGuard";
+import {
+  getCommunityExitRadiusMeters,
+  getCommunityGeofenceRadiusMeters,
+} from "../config/gpsConfig";
+import {
+  getLatestNativeLocation,
+  getNativeLocationStatus,
+  isNativeLocationAvailable,
+  openNativeLocationSettings,
+} from "../services/nativeBackgroundLocationService";
+import { shouldNeverCarryTask } from "../utils/taskRolloverPolicy";
 
-export function useCheckInFlow(serviceId, userProfile, serviceData, {
-  navigate,
-  getCurrentPosition,
-  getFilteredPosition,
-  clientSignature,
-  setClientSignature,
-  actionLoading: externalActionLoading,
-  setActionLoading: externalSetActionLoading
-}) {
+export function useCheckInFlow(
+  serviceId,
+  userProfile,
+  serviceData,
+  {
+    navigate,
+    getCurrentPosition,
+    clientSignature,
+    setClientSignature,
+    actionLoading: externalActionLoading,
+    setActionLoading: externalSetActionLoading,
+  },
+) {
   const {
     service,
     community,
@@ -30,28 +77,88 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
     setActiveCheckIn,
     activeWorkday,
     groupedServices,
-    loadStaticData
+    loadStaticData,
   } = serviceData;
 
+  const { companyId } = useTenant();
+
   const [localActionLoading, setLocalActionLoading] = useState(false);
-  const actionLoading = externalActionLoading !== undefined ? externalActionLoading : localActionLoading;
-  const setActionLoading = externalSetActionLoading !== undefined ? externalSetActionLoading : setLocalActionLoading;
+  const actionLoading =
+    externalActionLoading !== undefined
+      ? externalActionLoading
+      : localActionLoading;
+  const setActionLoading =
+    externalSetActionLoading !== undefined
+      ? externalSetActionLoading
+      : setLocalActionLoading;
   const [distanceInfo, setDistanceInfo] = useState(null);
   const [sendingGPS, setSendingGPS] = useState(false);
   const [gpsSent, setGpsSent] = useState(false);
   const [suggestedIn, setSuggestedIn] = useState(null);
-  const [entrySource, setEntrySource] = useState('realtime');
+  const [entrySource, setEntrySource] = useState("realtime");
   const [suggestedOut, setSuggestedOut] = useState(null);
-  
+  const [entryDetails, setEntryDetails] = useState(null);
+
   const [estimatedIn, setEstimatedIn] = useState(null);
   const [estimatedOut, setEstimatedOut] = useState(null);
   const [showManualEntryForm, setShowManualEntryForm] = useState(false);
   const [showManualExitForm, setShowManualExitForm] = useState(false);
   const [showFullManualForm, setShowFullManualForm] = useState(false);
-  const [manualEntryTime, setManualEntryTime] = useState('');
-  const [manualExitTime, setManualExitTime] = useState('');
+  const [manualEntryTime, setManualEntryTime] = useState("");
+  const [manualExitTime, setManualExitTime] = useState("");
+  const [pendingAction, setPendingAction] = useState(null);
 
   const lastEstimatedServiceId = useRef(null);
+
+  const beginCheckoutAttempt = () => {
+    markCheckoutInProgress(serviceId);
+    void closeServiceNotifications(serviceId);
+  };
+
+  const getFastPosition = async ({ allowLiveRequest = true } = {}) => {
+    if (isNativeLocationAvailable()) {
+      const status = await getNativeLocationStatus();
+      if (status?.locationServicesEnabled === false) {
+        const error = new Error("La ubicación del teléfono está desactivada.");
+        error.code = "LOCATION_SERVICES_DISABLED";
+        throw error;
+      }
+    }
+
+    const nativePosition = await getLatestNativeLocation();
+    const nativeAge = nativePosition?.timestamp
+      ? Date.now() - nativePosition.timestamp
+      : Infinity;
+    if (
+      nativePosition &&
+      nativeAge <= 2 * 60_000 &&
+      nativePosition.accuracy <= 75
+    ) {
+      return nativePosition;
+    }
+
+    // Las actualizaciones visuales de distancia no deben abrir una nueva
+    // búsqueda GPS. La lectura en vivo se reserva para acciones del operario.
+    if (!allowLiveRequest) return null;
+
+    return getCurrentPosition({
+      enableHighAccuracy: true,
+      timeout: 5_000,
+      maximumAge: 30_000,
+      retryLowAccuracy: false,
+    });
+  };
+
+  const getEntryAllowedRadius = (pos) =>
+    getCommunityGeofenceRadiusMeters(community) +
+    Math.max(100, Number(pos?.accuracy) || 0);
+
+  const cancelPendingAction = () => {
+    if (pendingAction?.type === "checkout") {
+      clearCheckoutInProgress(serviceId);
+    }
+    setPendingAction(null);
+  };
 
   // Cargar sugerencias de geolocalización
   useEffect(() => {
@@ -59,63 +166,162 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
 
     const loadGeoSuggestions = async () => {
       try {
+        const dismissedUntil = localStorage.getItem(
+          `dismissed_until_${serviceId}`,
+        );
+        if (dismissedUntil && Date.now() < parseInt(dismissedUntil)) {
+          setSuggestedIn(null);
+          setSuggestedOut(null);
+          setEntryDetails(null);
+          return;
+        }
+
         const sIn = localStorage.getItem(`detected_entry_${serviceId}`);
         const sOut = localStorage.getItem(`detected_exit_${serviceId}`);
-        
+        const detailsRaw = localStorage.getItem(
+          `detected_entry_${serviceId}_details`,
+        );
+
+        if (detailsRaw) {
+          try {
+            setEntryDetails(JSON.parse(detailsRaw));
+          } catch (e) {}
+        }
+
         if (sIn) {
           setSuggestedIn(new Date(sIn));
-          setEntrySource(localStorage.getItem(`detected_entry_source_${serviceId}`) || 'realtime');
+          setEntrySource(
+            localStorage.getItem(`detected_entry_source_${serviceId}`) ||
+              "realtime",
+          );
         } else {
-          const dbEntry = await getEntryDetection(userProfile.uid, serviceId);
+          const dbEntry = await getEntryDetection(companyId, userProfile.uid, serviceId);
           if (dbEntry && dbEntry.detectedAt) {
-            setSuggestedIn(dbEntry.detectedAt.toDate ? dbEntry.detectedAt.toDate() : new Date(dbEntry.detectedAt));
-            setEntrySource(dbEntry.source || 'realtime');
+            setSuggestedIn(
+              dbEntry.detectedAt.toDate
+                ? dbEntry.detectedAt.toDate()
+                : new Date(dbEntry.detectedAt),
+            );
+            setEntrySource(dbEntry.source || "realtime");
+            setEntryDetails({
+              distance: dbEntry.distance,
+              accuracy: dbEntry.accuracy || dbEntry.gpsAccuracy,
+              communityName: dbEntry.communityName,
+              detectedAt: dbEntry.detectedAt.toDate
+                ? dbEntry.detectedAt.toDate().toISOString()
+                : new Date(dbEntry.detectedAt).toISOString(),
+            });
           }
         }
 
+        const applySanitizedExit = (rawDate) => {
+          if (!rawDate) return;
+          const d = rawDate instanceof Date ? rawDate : new Date(rawDate);
+          if (isNaN(d.getTime())) return;
+          const now = Date.now();
+
+          // Topar a la hora actual si está en el futuro
+          if (d.getTime() > now) {
+            setSuggestedOut(new Date(now));
+            return;
+          }
+
+          // Descartar si es anterior al checkIn activo
+          if (activeCheckIn?.checkInTime) {
+            const checkInMs = activeCheckIn.checkInTime.toDate
+              ? activeCheckIn.checkInTime.toDate().getTime()
+              : new Date(activeCheckIn.checkInTime).getTime();
+
+            if (!isNaN(checkInMs) && checkInMs > 0 && d.getTime() < checkInMs) {
+              setSuggestedOut(null);
+              return;
+            }
+          }
+
+          setSuggestedOut(d);
+        };
+
         if (sOut) {
-          setSuggestedOut(new Date(sOut));
+          applySanitizedExit(sOut);
         } else {
-          const dbExit = await getExitDetection(userProfile.uid, serviceId);
+          const dbExit = await getExitDetection(companyId, userProfile.uid, serviceId);
           if (dbExit && dbExit.detectedAt) {
-            setSuggestedOut(dbExit.detectedAt.toDate ? dbExit.detectedAt.toDate() : new Date(dbExit.detectedAt));
+            applySanitizedExit(
+              dbExit.detectedAt.toDate
+                ? dbExit.detectedAt.toDate()
+                : new Date(dbExit.detectedAt),
+            );
           } else {
-            const pendingRaw = localStorage.getItem(`detected_exit_pending_${serviceId}`);
+            const pendingRaw = localStorage.getItem(
+              `detected_exit_pending_${serviceId}`,
+            );
             if (pendingRaw) {
               try {
                 const pending = JSON.parse(pendingRaw);
                 const elapsed = Date.now() - pending.firstDetectedAt;
                 if (elapsed >= 5 * 60 * 1000) {
-                  localStorage.setItem(`detected_exit_${serviceId}`, pending.exitTime);
+                  localStorage.setItem(
+                    `detected_exit_${serviceId}`,
+                    pending.exitTime,
+                  );
                   localStorage.removeItem(`detected_exit_pending_${serviceId}`);
-                  setSuggestedOut(new Date(pending.exitTime));
+                  applySanitizedExit(pending.exitTime);
                 }
-              } catch (e) { /* ignore */ }
+              } catch (e) {
+                /* ignore */
+              }
             }
           }
         }
       } catch (err) {
-        console.warn('[useCheckInFlow] Error loading suggestions:', err);
+        console.warn("[useCheckInFlow] Error loading suggestions:", err);
       }
     };
     loadGeoSuggestions();
 
     const exitPollInterval = setInterval(() => {
+      const dismissedUntil = localStorage.getItem(
+        `dismissed_until_${serviceId}`,
+      );
+      if (dismissedUntil && Date.now() < parseInt(dismissedUntil)) {
+        setSuggestedIn(null);
+        setSuggestedOut(null);
+        setEntryDetails(null);
+        return;
+      }
+
       const confirmedExit = localStorage.getItem(`detected_exit_${serviceId}`);
       if (confirmedExit && !suggestedOut) {
-        setSuggestedOut(new Date(confirmedExit));
+        const d = new Date(confirmedExit);
+        if (!isNaN(d.getTime())) {
+          if (d.getTime() > Date.now()) {
+            setSuggestedOut(new Date());
+          } else {
+            setSuggestedOut(d);
+          }
+        }
       } else if (!confirmedExit && !suggestedOut) {
-        const pendingRaw = localStorage.getItem(`detected_exit_pending_${serviceId}`);
+        const pendingRaw = localStorage.getItem(
+          `detected_exit_pending_${serviceId}`,
+        );
         if (pendingRaw) {
           try {
             const pending = JSON.parse(pendingRaw);
             const elapsed = Date.now() - pending.firstDetectedAt;
             if (elapsed >= 5 * 60 * 1000) {
-              localStorage.setItem(`detected_exit_${serviceId}`, pending.exitTime);
+              localStorage.setItem(
+                `detected_exit_${serviceId}`,
+                pending.exitTime,
+              );
               localStorage.removeItem(`detected_exit_pending_${serviceId}`);
-              setSuggestedOut(new Date(pending.exitTime));
+              const d = new Date(pending.exitTime);
+              if (!isNaN(d.getTime())) {
+                setSuggestedOut(d.getTime() > Date.now() ? new Date() : d);
+              }
             }
-          } catch (e) { /* ignore */ }
+          } catch (e) {
+            /* ignore */
+          }
         }
       }
     }, 10_000);
@@ -123,11 +329,16 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
     return () => {
       clearInterval(exitPollInterval);
     };
-  }, [serviceId, userProfile?.uid]);
+  }, [serviceId, userProfile?.uid, suggestedOut]);
 
   // Efecto para calcular estimaciones al cargar datos estáticos (ejecuta una vez por servicio)
   useEffect(() => {
-    if (service && service.id === serviceId && activeWorkday && lastEstimatedServiceId.current !== serviceId) {
+    if (
+      service &&
+      service.id === serviceId &&
+      activeWorkday &&
+      lastEstimatedServiceId.current !== serviceId
+    ) {
       calculateEstimates(userProfile.uid, service, activeWorkday);
       lastEstimatedServiceId.current = serviceId;
     }
@@ -142,12 +353,21 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
 
     const updateDistance = async () => {
       try {
-        const pos = await getCurrentPosition({ maximumAge: 5000 });
+        const pos = await getFastPosition({ allowLiveRequest: false });
+        if (!pos) return;
         if (!active) return;
-        const commLat = community.location._lat || community.location.latitude || 0;
-        const commLng = community.location._long || community.location.longitude || 0;
+        const commLat =
+          community.location._lat || community.location.latitude || 0;
+        const commLng =
+          community.location._long || community.location.longitude || 0;
         if (commLat && commLng) {
-          const check = isWithinRange(pos.lat, pos.lng, commLat, commLng, 500);
+          const check = isWithinRange(
+            pos.lat,
+            pos.lng,
+            commLat,
+            commLng,
+            getEntryAllowedRadius(pos),
+          );
           setDistanceInfo(check);
         }
       } catch (err) {
@@ -168,12 +388,16 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
   const calculateEstimates = async (userId, currentSvc, workday) => {
     try {
       const today = new Date();
-      const checkIns = await getCheckInsForDate(userId, today);
+      const checkIns = await getCheckInsForDate(companyId, userId, today);
       const completedCheckIns = checkIns
-        .filter(c => c.checkOutTime !== null)
+        .filter((c) => c.checkOutTime !== null)
         .sort((a, b) => {
-          const aTime = a.checkOutTime?.toDate ? a.checkOutTime.toDate().getTime() : new Date(a.checkOutTime).getTime();
-          const bTime = b.checkOutTime?.toDate ? b.checkOutTime.toDate().getTime() : new Date(b.checkOutTime).getTime();
+          const aTime = a.checkOutTime?.toDate
+            ? a.checkOutTime.toDate().getTime()
+            : new Date(a.checkOutTime).getTime();
+          const bTime = b.checkOutTime?.toDate
+            ? b.checkOutTime.toDate().getTime()
+            : new Date(b.checkOutTime).getTime();
           return bTime - aTime;
         });
 
@@ -182,35 +406,45 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
 
       if (completedCheckIns.length > 0) {
         const lastCheckIn = completedCheckIns[0];
-        const lastExitTime = lastCheckIn.checkOutTime?.toDate ? lastCheckIn.checkOutTime.toDate() : new Date(lastCheckIn.checkOutTime);
-        
+        const lastExitTime = lastCheckIn.checkOutTime?.toDate
+          ? lastCheckIn.checkOutTime.toDate()
+          : new Date(lastCheckIn.checkOutTime);
+
         let travelMinutes = 15;
-        
+
         try {
-          const lastComm = await getCommunity(lastCheckIn.communityId);
+          const lastComm = await getCommunity(companyId, lastCheckIn.communityId);
           if (lastComm?.location && currentSvc?.communityId) {
-            const currentComm = await getCommunity(currentSvc.communityId);
+            const currentComm = await getCommunity(companyId, currentSvc.communityId);
             if (currentComm?.location) {
-              const lat1 = lastComm.location._lat || lastComm.location.latitude || 0;
-              const lng1 = lastComm.location._long || lastComm.location.longitude || 0;
-              const lat2 = currentComm.location._lat || currentComm.location.latitude || 0;
-              const lng2 = currentComm.location._long || currentComm.location.longitude || 0;
-              
+              const lat1 =
+                lastComm.location._lat || lastComm.location.latitude || 0;
+              const lng1 =
+                lastComm.location._long || lastComm.location.longitude || 0;
+              const lat2 =
+                currentComm.location._lat || currentComm.location.latitude || 0;
+              const lng2 =
+                currentComm.location._long ||
+                currentComm.location.longitude ||
+                0;
+
               if (lat1 && lng1 && lat2 && lng2) {
                 const dist = getDistance(lat1, lng1, lat2, lng2);
-                travelMinutes = Math.round(dist / 666) + 2; 
+                travelMinutes = Math.round(dist / 666) + 2;
                 if (travelMinutes < 2) travelMinutes = 2;
                 if (travelMinutes > 120) travelMinutes = 15;
               }
             }
           }
         } catch (e) {
-          console.warn('[Estimator] Error calculating distance:', e);
+          console.warn("[Estimator] Error calculating distance:", e);
         }
 
         estIn = new Date(lastExitTime.getTime() + travelMinutes * 60 * 1000);
       } else if (workday?.startTime) {
-        const workdayStart = workday.startTime.toDate ? workday.startTime.toDate() : new Date(workday.startTime);
+        const workdayStart = workday.startTime.toDate
+          ? workday.startTime.toDate()
+          : new Date(workday.startTime);
         estIn = new Date(workdayStart.getTime() + 10 * 60 * 1000);
       } else {
         estIn = new Date();
@@ -229,15 +463,14 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
       setEstimatedOut(estOut);
 
       const formatTime = (date) => {
-        const h = String(date.getHours()).padStart(2, '0');
-        const m = String(date.getMinutes()).padStart(2, '0');
+        const h = String(date.getHours()).padStart(2, "0");
+        const m = String(date.getMinutes()).padStart(2, "0");
         return `${h}:${m}`;
       };
       setManualEntryTime(formatTime(estIn));
       setManualExitTime(formatTime(estOut));
-
     } catch (err) {
-      console.error('[Estimator] Error calculating estimates:', err);
+      console.error("[Estimator] Error calculating estimates:", err);
     }
   };
 
@@ -246,38 +479,89 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
     try {
       let pos = null;
       try {
-        pos = await getFilteredPosition();
+        pos = await getFastPosition();
       } catch (geoErr) {
-        console.warn('[useCheckInFlow] Error al obtener posición filtrada, usando fallback:', geoErr);
-        try {
-          pos = await getCurrentPosition({ enableHighAccuracy: false, timeout: 5000 });
-        } catch (rawErr) {
-          console.warn('[useCheckInFlow] Error al obtener posición rápida, usando fallback de la comunidad:', rawErr);
-          const commLat = community?.location?._lat || community?.location?.latitude || 0;
-          const commLng = community?.location?._long || community?.location?.longitude || 0;
-          pos = { lat: commLat, lng: commLng };
+        console.warn("[useCheckInFlow] No se pudo obtener una posición válida:", geoErr);
+        if (geoErr?.code === "LOCATION_SERVICES_DISABLED") {
+          alert(
+            "La ubicación del teléfono está desactivada. Actívala para iniciar el servicio.",
+          );
+          await openNativeLocationSettings();
+        } else {
+          alert(
+            "No se ha podido obtener una ubicación reciente. Comprueba el GPS y vuelve a intentarlo.",
+          );
         }
-      }
-      
-      if (community?.location) {
-        const commLat = community.location._lat || community.location.latitude || 0;
-        const commLng = community.location._long || community.location.longitude || 0;
-        const check = isWithinRange(pos.lat, pos.lng, commLat, commLng, 500);
-        setDistanceInfo(check);
+        setActionLoading(false);
+        return;
       }
 
+      let needsException = false;
+      let isOutOfBounds = false;
+      let isManual = !!manualTime;
+
+      if (community?.location) {
+        const commLat =
+          community.location._lat || community.location.latitude || 0;
+        const commLng =
+          community.location._long || community.location.longitude || 0;
+        const check = isWithinRange(
+          pos.lat,
+          pos.lng,
+          commLat,
+          commLng,
+          getEntryAllowedRadius(pos),
+        );
+        setDistanceInfo(check);
+
+        isOutOfBounds = !check.withinRange;
+
+        if (isOutOfBounds || isManual) {
+          needsException = true;
+        }
+      } else if (isManual) {
+        needsException = true;
+      }
+
+      if (needsException) {
+        setPendingAction({
+          type: "checkin",
+          manualTime,
+          pos,
+          isOutOfBounds,
+          isManual,
+        });
+        setActionLoading(false);
+        return;
+      }
+
+      await executeCheckIn(pos, manualTime, null);
+    } catch (err) {
+      alert("Error al iniciar servicio: " + err);
+      console.error(err);
+      setActionLoading(false);
+    }
+  }
+
+  async function executeCheckIn(pos, manualTime, exceptionReason) {
+    setActionLoading(true);
+    try {
       if (activeCheckIn) {
-        console.warn('Ya hay un fichaje activo. No se creará otro.');
+        console.warn("Ya hay un fichaje activo. No se creará otro.");
+        setActionLoading(false);
         return;
       }
 
       const checkInId = await createCheckIn({
         userId: userProfile.uid,
-        communityId: service.communityId,
         scheduledServiceId: serviceId,
         lat: pos.lat,
         lng: pos.lng,
-        manualTime: manualTime
+        accuracy: pos.accuracy,
+        speed: pos.speed,
+        timestamp: pos.timestamp,
+        manualTime: manualTime,
+        exceptionReason: exceptionReason,
       });
 
       setActiveCheckIn({
@@ -286,39 +570,69 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
         communityId: service.communityId,
         scheduledServiceId: serviceId,
         checkInTime: manualTime ? new Date(manualTime) : new Date(),
-        checkOutTime: null
+        checkOutTime: null,
       });
 
-      const currentGroup = groupedServices.length > 0 ? groupedServices : [service];
+      const currentGroup = getCurrentServiceGroup(groupedServices, service);
       for (const s of currentGroup) {
-        await updateScheduledServiceStatus(s.id, 'in_progress');
-      }
-
-      if (activeWorkday?.currentCompanionId) {
-        for (const s of currentGroup) {
-          if (!s.companionIds?.includes(activeWorkday.currentCompanionId)) {
-            await addCompanionToService(s.id, activeWorkday.currentCompanionId);
+        await updateScheduledServiceStatus(companyId, s.id, "in_progress");
+        if (s.assignedUserId !== userProfile.uid) {
+          if (
+            !s.companionIds?.includes(userProfile.uid) ||
+            !s.participantIds?.includes(userProfile.uid)
+          ) {
+            await addCompanionToService(companyId, s.id, userProfile.uid);
+          }
+        }
+        if (activeWorkday?.currentCompanionId) {
+          if (
+            !s.companionIds?.includes(activeWorkday.currentCompanionId) ||
+            !s.participantIds?.includes(activeWorkday.currentCompanionId)
+          ) {
+            await addCompanionToService(companyId, s.id, activeWorkday.currentCompanionId);
           }
         }
       }
 
-      const companionsToCheckIn = [...(service.companionIds || [])];
-      if (activeWorkday?.currentCompanionId && !companionsToCheckIn.includes(activeWorkday.currentCompanionId)) {
-        companionsToCheckIn.push(activeWorkday.currentCompanionId);
+      const otherUsers = new Set();
+      if (
+        service.assignedUserId &&
+        service.assignedUserId !== userProfile.uid
+      ) {
+        otherUsers.add(service.assignedUserId);
+      }
+      if (service.companionIds && Array.isArray(service.companionIds)) {
+        service.companionIds.forEach((cid) => {
+          if (cid && cid !== userProfile.uid) {
+            otherUsers.add(cid);
+          }
+        });
+      }
+      if (
+        activeWorkday?.currentCompanionId &&
+        activeWorkday.currentCompanionId !== userProfile.uid
+      ) {
+        otherUsers.add(activeWorkday.currentCompanionId);
       }
 
-      for (const companionId of companionsToCheckIn) {
+      for (const companionId of otherUsers) {
         try {
           await createCheckIn({
             userId: companionId,
-            communityId: service.communityId,
             scheduledServiceId: serviceId,
             lat: pos.lat,
             lng: pos.lng,
-            manualTime: manualTime
+            accuracy: pos.accuracy,
+            speed: pos.speed,
+            timestamp: pos.timestamp,
+            manualTime: manualTime,
+            exceptionReason: exceptionReason,
           });
         } catch (compErr) {
-          console.warn(`[Companion] Error al fichar automáticamente al compañero ${companionId}:`, compErr);
+          console.warn(
+            `[Companion] Error al fichar automáticamente al compañero ${companionId}:`,
+            compErr,
+          );
         }
       }
 
@@ -327,84 +641,115 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
 
       let allTasks = tasks;
       if (allTasks.length === 0) {
-        allTasks = await getCommunityTasks(service.communityId);
+        allTasks = await getCommunityTasks(companyId, service.communityId);
       }
 
-      const svcDate = service.scheduledDate?.toDate ? service.scheduledDate.toDate() : new Date(service.scheduledDate);
-      
+      const svcDate = service.scheduledDate?.toDate
+        ? service.scheduledDate.toDate()
+        : new Date(service.scheduledDate);
+
       let completedTaskIdsThisWeek = new Set();
       try {
-        const startW = Timestamp.fromDate(startOfWeek(svcDate, { weekStartsOn: 1 }));
-        const endW = Timestamp.fromDate(endOfWeek(svcDate, { weekStartsOn: 1 }));
-        
+        const startW = Timestamp.fromDate(
+          startOfWeek(svcDate, { weekStartsOn: 1 }),
+        );
+        const endW = Timestamp.fromDate(
+          endOfWeek(svcDate, { weekStartsOn: 1 }),
+        );
+
         const qWeeklyExecs = query(
-          collection(db, 'taskExecutions'),
-          where('userId', '==', userProfile.uid),
-          where('createdAt', '>=', startW),
-          where('createdAt', '<=', endW)
+          tenantCollection(db, companyId, "taskExecutions"),
+          where("userId", "==", userProfile.uid),
+          where("createdAt", ">=", startW),
+          where("createdAt", "<=", endW),
         );
         const weeklyExecsSnap = await getDocs(qWeeklyExecs);
         completedTaskIdsThisWeek = new Set(
           weeklyExecsSnap.docs
-            .map(d => d.data())
-            .filter(e => e.status === 'completed')
-            .map(e => e.communityTaskId)
+            .map((d) => d.data())
+            .filter((e) => e.status === "completed")
+            .map((e) => e.communityTaskId),
         );
       } catch (err) {
-        console.warn('Error fetching weekly task executions:', err);
+        console.warn("Error fetching weekly task executions:", err);
       }
 
-      const groupedTaskIds = new Set(currentGroup.map(s => s.communityTaskId).filter(Boolean));
-
-      const currentSpecificTask = allTasks.find(t => t.id === service.communityTaskId);
-      const currentLowerName = (service.taskName || '').toLowerCase();
-      const currentPrintColor = currentSpecificTask?.printColor || (
-        currentLowerName.includes('escalera') ? '#22c55e' :
-        currentLowerName.includes('portal') || currentLowerName.includes('repaso') ? '#eab308' :
-        currentLowerName.includes('oficina') ? '#3b82f6' : '#ef4444'
+      const groupedTaskIds = new Set(
+        currentGroup.map((s) => s.communityTaskId).filter(Boolean),
       );
-      const currentIsGarage = !!currentSpecificTask?.isGarage || currentLowerName.includes('garaje') || !!service.isGarage;
-      const currentIsOtras = currentPrintColor === '#ef4444' && !currentIsGarage;
+
+      const currentSpecificTask = allTasks.find(
+        (t) => t.id === service.communityTaskId,
+      );
+      const currentLowerName = (service.taskName || "").toLowerCase();
+      const currentPrintColor =
+        currentSpecificTask?.printColor ||
+        (currentLowerName.includes("escalera")
+          ? "#22c55e"
+          : currentLowerName.includes("portal") ||
+              currentLowerName.includes("repaso")
+            ? "#eab308"
+            : currentLowerName.includes("oficina")
+              ? "#3b82f6"
+              : "#ef4444");
+      const currentIsGarage =
+        !!currentSpecificTask?.isGarage ||
+        currentLowerName.includes("garaje") ||
+        !!service.isGarage;
+      const currentIsOtras =
+        currentPrintColor === "#ef4444" && !currentIsGarage;
 
       // Obtener tareas rojas ("otras") pendientes de la base de datos para esta comunidad
       let pendingRedTaskIds = new Set();
       try {
         const qPendingRed = query(
-          collection(db, 'scheduledServices'),
-          where('communityId', '==', service.communityId),
-          where('status', '==', 'pending')
+          tenantCollection(db, companyId, "scheduledServices"),
+          where("communityId", "==", service.communityId),
+          where("status", "==", "pending"),
         );
         const pendingSnap = await getDocs(qPendingRed);
-        pendingSnap.forEach(d => {
+        pendingSnap.forEach((d) => {
           const sData = d.data();
-          const t = allTasks.find(x => x.id === sData.communityTaskId);
+          const t = allTasks.find((x) => x.id === sData.communityTaskId);
           if (t) {
-            const taskLowerName = (t.taskName || '').toLowerCase();
-            const taskPrintColor = t.printColor || (
-              taskLowerName.includes('escalera') ? '#22c55e' :
-              taskLowerName.includes('portal') || taskLowerName.includes('repaso') ? '#eab308' :
-              taskLowerName.includes('oficina') ? '#3b82f6' : '#ef4444'
-            );
-            const taskIsGarage = !!t.isGarage || taskLowerName.includes('garaje');
-            const taskIsOtras = taskPrintColor === '#ef4444' && !taskIsGarage;
+            const taskLowerName = (t.taskName || "").toLowerCase();
+            const taskPrintColor =
+              t.printColor ||
+              (taskLowerName.includes("escalera")
+                ? "#22c55e"
+                : taskLowerName.includes("portal") ||
+                    taskLowerName.includes("repaso")
+                  ? "#eab308"
+                  : taskLowerName.includes("oficina")
+                    ? "#3b82f6"
+                    : "#ef4444");
+            const taskIsGarage =
+              !!t.isGarage || taskLowerName.includes("garaje");
+            const taskIsOtras = taskPrintColor === "#ef4444" && !taskIsGarage;
             if (taskIsOtras) {
               pendingRedTaskIds.add(sData.communityTaskId);
             }
           }
         });
       } catch (err) {
-        console.warn('Error fetching pending red services:', err);
+        console.warn("Error fetching pending red services:", err);
       }
 
-      const relevantTasks = allTasks.filter(task => {
-        const taskLowerName = (task.taskName || '').toLowerCase();
-        const taskPrintColor = task.printColor || (
-          taskLowerName.includes('escalera') ? '#22c55e' :
-          taskLowerName.includes('portal') || taskLowerName.includes('repaso') ? '#eab308' :
-          taskLowerName.includes('oficina') ? '#3b82f6' : '#ef4444'
-        );
-        const taskIsGarage = !!task.isGarage || taskLowerName.includes('garaje');
-        const taskIsOtras = taskPrintColor === '#ef4444' && !taskIsGarage;
+      const relevantTasks = allTasks.filter((task) => {
+        const taskLowerName = (task.taskName || "").toLowerCase();
+        const taskPrintColor =
+          task.printColor ||
+          (taskLowerName.includes("escalera")
+            ? "#22c55e"
+            : taskLowerName.includes("portal") ||
+                taskLowerName.includes("repaso")
+              ? "#eab308"
+              : taskLowerName.includes("oficina")
+                ? "#3b82f6"
+                : "#ef4444");
+        const taskIsGarage =
+          !!task.isGarage || taskLowerName.includes("garaje");
+        const taskIsOtras = taskPrintColor === "#ef4444" && !taskIsGarage;
 
         if (!currentIsOtras) {
           const isMainTask = service.communityTaskId
@@ -433,9 +778,11 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
       });
 
       for (const task of relevantTasks) {
-        const existing = taskExecutions.find(e => e.communityTaskId === task.id);
+        const existing = taskExecutions.find(
+          (e) => e.communityTaskId === task.id,
+        );
         if (!existing) {
-          await createTaskExecution({
+          await createTaskExecution(companyId, {
             scheduledServiceId: serviceId,
             communityTaskId: task.id,
             userId: userProfile.uid,
@@ -445,7 +792,7 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
 
       await loadStaticData();
     } catch (err) {
-      alert('Error: ' + err);
+      alert("Error: " + err);
     } finally {
       setActionLoading(false);
     }
@@ -455,79 +802,119 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
     if (!activeCheckIn) return;
 
     const pendingTasks = [];
-    const currentGroup = groupedServices.length > 0 ? groupedServices : [service];
+    const currentGroup = getCurrentServiceGroup(groupedServices, service);
     for (const s of currentGroup) {
       if (s.communityTaskId) {
-        const exec = taskExecutions.find(e => e.communityTaskId === s.communityTaskId);
-        const specificTask = tasks.find(t => t.id === s.communityTaskId);
-        const sName = (s.taskName || specificTask?.taskName || '').toLowerCase();
-        const isException = sName.includes('escalera') || sName.includes('portal') || sName.includes('garaje');
-        const isDone = exec && exec.status === 'completed';
-        
-        if (!isDone && !isException) {
-          pendingTasks.push(s.taskName || specificTask?.taskName || 'Tarea');
+        const exec = taskExecutions.find(
+          (e) => e.communityTaskId === s.communityTaskId,
+        );
+        const specificTask = tasks.find((t) => t.id === s.communityTaskId);
+        const sName = (
+          s.taskName ||
+          specificTask?.taskName ||
+          ""
+        ).toLowerCase();
+        const isException =
+          sName.includes("escalera") ||
+          sName.includes("portal") ||
+          sName.includes("garaje") ||
+          sName.includes("oficina");
+        const isEmbedded =
+          (specificTask?.displayMode || s.displayMode) === "embedded";
+        const isDone = exec && exec.status === "completed";
+
+        if (!isDone && (!isException || isEmbedded)) {
+          pendingTasks.push(s.taskName || specificTask?.taskName || "Tarea");
         }
       }
     }
 
     if (pendingTasks.length > 0) {
-      const confirmMsg = `No has marcado la tarea realizada: "${pendingTasks.join(', ')}".\n\n` +
-                         `¿Quieres volver atrás para marcarla como completada?\n\n` +
-                         `Aceptar (OK) = Volver atrás para marcarla\n` +
-                         `Cancelar = Continuar y finalizar el servicio (la tarea pasará al próximo día)`;
+      const confirmMsg =
+        `No has marcado la tarea realizada: "${pendingTasks.join(", ")}".\n\n` +
+        `¿Quieres volver atrás para marcarla como completada?\n\n` +
+        `Aceptar (OK) = Volver atrás para marcarla\n` +
+        `Cancelar = Continuar y finalizar el servicio (la tarea pasará al próximo día)`;
       if (window.confirm(confirmMsg)) {
         return;
       }
     }
 
+    beginCheckoutAttempt();
     setActionLoading(true);
     try {
       let pos = null;
       try {
-        pos = await getFilteredPosition();
+        pos = await getFastPosition();
       } catch (geoErr) {
-        console.warn('[useCheckInFlow] Error al obtener posición filtrada, usando fallback:', geoErr);
-        try {
-          pos = await getCurrentPosition({ enableHighAccuracy: false, timeout: 5000 });
-        } catch (rawErr) {
-          console.warn('[useCheckInFlow] Error al obtener posición rápida, usando fallback de check-in:', rawErr);
+        console.warn("[useCheckInFlow] No se pudo obtener GPS para finalizar:", geoErr);
+        if (!manualTime) {
+          if (geoErr?.code === "LOCATION_SERVICES_DISABLED") {
+            alert(
+              "La ubicación del teléfono está desactivada. Actívala para finalizar el servicio.",
+            );
+            await openNativeLocationSettings();
+          } else {
+            alert(
+              "No se ha podido obtener una ubicación reciente. Comprueba el GPS y vuelve a intentarlo.",
+            );
+          }
+          clearCheckoutInProgress(serviceId);
+          setActionLoading(false);
+          return;
         }
       }
-      
-      const lat = pos?.lat || activeCheckIn?.checkInLocation?.latitude || activeCheckIn?.checkInLocation?._lat || 0;
-      const lng = pos?.lng || activeCheckIn?.checkInLocation?.longitude || activeCheckIn?.checkInLocation?._long || 0;
-      
+
+      const lat = pos?.lat ?? null;
+      const lng = pos?.lng ?? null;
+
+      // First, check for exit geofence/detection if not manualTime and out of bounds
+      let check = null;
       if (!manualTime && community?.location) {
-        const commLat = community.location._lat || community.location.latitude || 0;
-        const commLng = community.location._long || community.location.longitude || 0;
-        const check = isWithinRange(lat, lng, commLat, commLng, 500);
+        const commLat =
+          community.location._lat || community.location.latitude || 0;
+        const commLng =
+          community.location._long || community.location.longitude || 0;
+        check = isWithinRange(
+          lat,
+          lng,
+          commLat,
+          commLng,
+          getCommunityExitRadiusMeters(community),
+        );
         setDistanceInfo(check);
-        
+
         if (!check.withinRange) {
           let detectedExitTime = null;
-          const confirmedRaw = localStorage.getItem(`detected_exit_${serviceId}`);
-          const pendingRaw = localStorage.getItem(`detected_exit_pending_${serviceId}`);
-          
+          const confirmedRaw = localStorage.getItem(
+            `detected_exit_${serviceId}`,
+          );
+          const pendingRaw = localStorage.getItem(
+            `detected_exit_pending_${serviceId}`,
+          );
+
           if (confirmedRaw) {
             detectedExitTime = new Date(confirmedRaw);
           } else if (pendingRaw) {
             try {
               const pending = JSON.parse(pendingRaw);
               detectedExitTime = new Date(pending.exitTime);
-            } catch (e) { /* ignore */ }
+            } catch (e) {
+              /* ignore */
+            }
           }
-          
+
           if (detectedExitTime) {
             const diffMs = Date.now() - detectedExitTime.getTime();
             const diffMinutes = Math.round(diffMs / 60000);
-            
+
             if (diffMinutes >= 5) {
               const useDetected = window.confirm(
                 `Estás a ${check.distance}m de la comunidad.\n\n` +
-                `Se detectó tu salida a las ${format(detectedExitTime, 'HH:mm')} (hace ${diffMinutes} min).\n\n` +
-                `¿Usar las ${format(detectedExitTime, 'HH:mm')} como hora de finalización?\n\n` +
-                `Aceptar = Usar hora detectada (${format(detectedExitTime, 'HH:mm')})\n` +
-                `Cancelar = Usar hora actual`
+                  `Se detectó tu salida a las ${format(detectedExitTime, "HH:mm")} (hace ${diffMinutes} min).\n\n` +
+                  `¿Usar las ${format(detectedExitTime, "HH:mm")} como hora de finalización?\n\n` +
+                  `Aceptar = Usar hora detectada (${format(detectedExitTime, "HH:mm")})\n` +
+                  `Cancelar = Usar hora actual`,
               );
               if (useDetected) {
                 manualTime = detectedExitTime;
@@ -536,41 +923,148 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
           }
         }
       }
-      
-      const result = await completeCheckOut(activeCheckIn.id, lat, lng, manualTime, clientSignature);
+
+      // Now determine if we need an exception reason
+      let needsException = false;
+      let isOutOfBounds = false;
+      let isManual = !!manualTime;
+
+      if (community?.location) {
+        const commLat =
+          community.location._lat || community.location.latitude || 0;
+        const commLng =
+          community.location._long || community.location.longitude || 0;
+        if (!check) {
+          check = isWithinRange(
+            lat,
+            lng,
+            commLat,
+            commLng,
+            getCommunityExitRadiusMeters(community),
+          );
+          setDistanceInfo(check);
+        }
+        isOutOfBounds = !check.withinRange;
+
+        if (isOutOfBounds || isManual) {
+          needsException = true;
+        }
+      } else if (isManual) {
+        needsException = true;
+      }
+
+      if (needsException) {
+        setPendingAction({
+          type: "checkout",
+          manualTime,
+          pos,
+          lat,
+          lng,
+          clientSignature,
+          isOutOfBounds,
+          isManual,
+        });
+        setActionLoading(false);
+        return;
+      }
+
+      await executeCheckOut(pos, lat, lng, manualTime, clientSignature, null);
+    } catch (err) {
+      console.error(err);
+      clearCheckoutInProgress(serviceId);
+      setActionLoading(false);
+    }
+  }
+
+  async function executeCheckOut(
+    pos,
+    lat,
+    lng,
+    manualTime,
+    clientSignature,
+    exceptionReason,
+  ) {
+    beginCheckoutAttempt();
+    setActionLoading(true);
+    try {
+      const currentGroup = getCurrentServiceGroup(groupedServices, service);
+      const result = await completeCheckOut(
+        activeCheckIn.id,
+        lat,
+        lng,
+        manualTime,
+        clientSignature,
+        {
+          ...pos,
+          exceptionReason,
+        },
+      );
 
       try {
         const qComp = query(
-          collection(db, 'checkIns'),
-          where('scheduledServiceId', '==', serviceId),
-          where('checkOutTime', '==', null)
+          tenantCollection(db, companyId, "checkIns"),
+          where("scheduledServiceId", "==", serviceId),
+          where("checkOutTime", "==", null),
         );
         const compSnap = await getDocs(qComp);
         for (const docSnap of compSnap.docs) {
           if (docSnap.id !== activeCheckIn.id) {
-            await completeCheckOut(docSnap.id, lat, lng, manualTime, null);
+            await completeCheckOut(docSnap.id, lat, lng, manualTime, null, {
+              ...pos,
+              exceptionReason,
+            });
           }
         }
       } catch (compErr) {
-        console.warn('[useCheckInFlow] Error al finalizar check-outs de los acompañantes:', compErr);
+        console.warn(
+          "[useCheckInFlow] Error al finalizar check-outs de los acompañantes:",
+          compErr,
+        );
       }
 
       for (const s of currentGroup) {
         if (s.communityTaskId) {
-          const exec = taskExecutions.find(e => e.communityTaskId === s.communityTaskId);
-          
-          const specificTask = tasks.find(t => t.id === s.communityTaskId);
-          const sName = (s.taskName || specificTask?.taskName || '').toLowerCase();
-          const isException = sName.includes('escalera') || sName.includes('portal') || sName.includes('garaje');
-          const isGarage = sName.includes('garaje');
+          const exec = taskExecutions.find(
+            (e) => e.communityTaskId === s.communityTaskId,
+          );
 
-          if ((exec && exec.status === 'completed') || isException) {
-            await updateScheduledServiceStatus(s.id, 'completed');
+          const specificTask = tasks.find((t) => t.id === s.communityTaskId);
+          const sName = (
+            s.taskName ||
+            specificTask?.taskName ||
+            ""
+          ).toLowerCase();
+          const isException =
+            sName.includes("escalera") ||
+            sName.includes("portal") ||
+            sName.includes("garaje") ||
+            sName.includes("oficina");
+          const isGarage = sName.includes("garaje");
+          const mustStayOnScheduledDay = shouldNeverCarryTask(sName);
+
+          const presentation =
+            specificTask?.displayMode || s.displayMode || "standalone";
+          const shouldCarryInCards =
+            presentation === "embedded" &&
+            (specificTask?.carryUntilCompleted ??
+              s.carryUntilCompleted ??
+              true);
+
+          if (
+            (exec && exec.status === "completed") ||
+            mustStayOnScheduledDay ||
+            (isException && presentation !== "embedded")
+          ) {
+            await updateScheduledServiceStatus(companyId, s.id, "completed");
+          } else if (shouldCarryInCards) {
+            // Se conserva la misma instancia pendiente. Al recargar, la
+            // agrupación la sitúa en la siguiente tarjeta configurada.
+            await updateScheduledServiceStatus(companyId, s.id, "pending");
           } else {
-            await passTaskToNextService(s, isGarage);
+            await passTaskToNextService(companyId, s, isGarage);
           }
         } else {
-          await updateScheduledServiceStatus(s.id, 'completed');
+          await updateScheduledServiceStatus(companyId, s.id, "completed");
         }
       }
 
@@ -583,8 +1077,9 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
       if (setClientSignature) setClientSignature(null);
       loadStaticData();
     } catch (err) {
-      alert('Error: ' + err);
+      alert("Error: " + err);
     } finally {
+      clearCheckoutInProgress(serviceId);
       setActionLoading(false);
     }
   }
@@ -595,31 +1090,49 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
     try {
       const entryDate = parseHHMM(manualEntryTime);
       const exitDate = parseHHMM(manualExitTime);
-      
+
       if (!entryDate || !exitDate) {
-        alert('Formato de hora inválido.');
+        alert("Formato de hora inválido.");
         setActionLoading(false);
         return;
       }
 
       if (exitDate.getTime() <= entryDate.getTime()) {
-        alert('La hora de salida debe ser posterior a la de entrada.');
+        alert("La hora de salida debe ser posterior a la de entrada.");
         setActionLoading(false);
         return;
       }
 
+      setPendingAction({
+        type: "fullManual",
+        entryDate,
+        exitDate,
+      });
+      setActionLoading(false);
+    } catch (err) {
+      console.error(err);
+      setActionLoading(false);
+    }
+  }
+
+  async function executeFullManual(entryDate, exitDate, exceptionReason) {
+    setActionLoading(true);
+    try {
       let pos = null;
       try {
-        pos = await getFilteredPosition();
+        pos = await getFastPosition();
       } catch (geoErr) {
-        console.warn('[useCheckInFlow] Error al obtener posición para manual, usando fallback:', geoErr);
-        try {
-          pos = await getCurrentPosition({ enableHighAccuracy: false, timeout: 5000 });
-        } catch (rawErr) {
-          const commLat = community?.location?._lat || community?.location?.latitude || 0;
-          const commLng = community?.location?._long || community?.location?.longitude || 0;
-          pos = { lat: commLat, lng: commLng };
-        }
+        console.warn(
+          "[useCheckInFlow] Registro manual sin posición GPS disponible:",
+          geoErr,
+        );
+        pos = {
+          lat: null,
+          lng: null,
+          accuracy: null,
+          speed: null,
+          timestamp: null,
+        };
       }
 
       const checkInId = await createCheckIn({
@@ -628,17 +1141,44 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
         scheduledServiceId: serviceId,
         lat: pos.lat,
         lng: pos.lng,
-        manualTime: entryDate
+        accuracy: pos.accuracy,
+        speed: pos.speed,
+        timestamp: pos.timestamp,
+        manualTime: entryDate,
+        exceptionReason,
       });
 
-      await completeCheckOut(checkInId, pos.lat, pos.lng, exitDate, clientSignature);
+      await completeCheckOut(
+        checkInId,
+        pos.lat,
+        pos.lng,
+        exitDate,
+        clientSignature,
+        { ...pos, exceptionReason },
+      );
 
-      const companionsToCheckIn = [...(service.companionIds || [])];
-      if (activeWorkday?.currentCompanionId && !companionsToCheckIn.includes(activeWorkday.currentCompanionId)) {
-        companionsToCheckIn.push(activeWorkday.currentCompanionId);
+      const otherUsers = new Set();
+      if (
+        service.assignedUserId &&
+        service.assignedUserId !== userProfile.uid
+      ) {
+        otherUsers.add(service.assignedUserId);
+      }
+      if (service.companionIds && Array.isArray(service.companionIds)) {
+        service.companionIds.forEach((cid) => {
+          if (cid && cid !== userProfile.uid) {
+            otherUsers.add(cid);
+          }
+        });
+      }
+      if (
+        activeWorkday?.currentCompanionId &&
+        activeWorkday.currentCompanionId !== userProfile.uid
+      ) {
+        otherUsers.add(activeWorkday.currentCompanionId);
       }
 
-      for (const companionId of companionsToCheckIn) {
+      for (const companionId of otherUsers) {
         try {
           const compCheckInId = await createCheckIn({
             userId: companionId,
@@ -646,25 +1186,60 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
             scheduledServiceId: serviceId,
             lat: pos.lat,
             lng: pos.lng,
-            manualTime: entryDate
+            accuracy: pos.accuracy,
+            speed: pos.speed,
+            timestamp: pos.timestamp,
+            manualTime: entryDate,
+            exceptionReason,
           });
-          await completeCheckOut(compCheckInId, pos.lat, pos.lng, exitDate, null);
+          await completeCheckOut(
+            compCheckInId,
+            pos.lat,
+            pos.lng,
+            exitDate,
+            null,
+            { ...pos, exceptionReason },
+          );
         } catch (compErr) {
-          console.warn(`[Companion] Error al fichar manualmente al compañero ${companionId}:`, compErr);
+          console.warn(
+            `[Companion] Error al fichar manualmente al compañero ${companionId}:`,
+            compErr,
+          );
         }
       }
 
-      const currentGroup = groupedServices.length > 0 ? groupedServices : [service];
+      const currentGroup = getCurrentServiceGroup(groupedServices, service);
       for (const s of currentGroup) {
         if (s.communityTaskId) {
-          const exec = taskExecutions.find(e => e.communityTaskId === s.communityTaskId);
-          if (exec && exec.status === 'completed') {
-            await updateScheduledServiceStatus(s.id, 'completed');
+          const exec = taskExecutions.find(
+            (e) => e.communityTaskId === s.communityTaskId,
+          );
+          if (exec && exec.status === "completed") {
+            await updateScheduledServiceStatus(companyId, s.id, "completed");
           } else {
-            await updateScheduledServiceStatus(s.id, 'missed');
+            await updateScheduledServiceStatus(companyId, s.id, "missed");
           }
         } else {
-          await updateScheduledServiceStatus(s.id, 'completed');
+          await updateScheduledServiceStatus(companyId, s.id, "completed");
+        }
+        if (s.assignedUserId !== userProfile.uid) {
+          if (
+            !s.companionIds?.includes(userProfile.uid) ||
+            !s.participantIds?.includes(userProfile.uid)
+          ) {
+            await addCompanionToService(companyId, s.id, userProfile.uid);
+          }
+        }
+        if (
+          activeWorkday?.currentCompanionId &&
+          (!s.companionIds?.includes(activeWorkday.currentCompanionId) ||
+            !s.participantIds?.includes(activeWorkday.currentCompanionId))
+        ) {
+          await addCompanionToService(
+            companyId,
+            s.id,
+            activeWorkday.currentCompanionId,
+          );
         }
       }
 
@@ -674,11 +1249,11 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
       setSuggestedIn(null);
       setSuggestedOut(null);
 
-      alert('Servicio registrado correctamente de forma retroactiva.');
+      alert("Servicio registrado correctamente de forma retroactiva.");
       setShowFullManualForm(false);
       await loadStaticData();
     } catch (err) {
-      alert('Error al registrar servicio: ' + err.message);
+      alert("Error al registrar servicio: " + err.message);
     } finally {
       setActionLoading(false);
     }
@@ -686,55 +1261,80 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
 
   async function handleForceComplete() {
     const pendingTasks = [];
-    const currentGroup = groupedServices.length > 0 ? groupedServices : [service];
+    const currentGroup = getCurrentServiceGroup(groupedServices, service);
     for (const s of currentGroup) {
       if (s.communityTaskId) {
-        const exec = taskExecutions.find(e => e.communityTaskId === s.communityTaskId);
-        const specificTask = tasks.find(t => t.id === s.communityTaskId);
-        const sName = (s.taskName || specificTask?.taskName || '').toLowerCase();
-        const isException = sName.includes('escalera') || sName.includes('portal') || sName.includes('garaje');
-        const isDone = exec && exec.status === 'completed';
-        
+        const exec = taskExecutions.find(
+          (e) => e.communityTaskId === s.communityTaskId,
+        );
+        const specificTask = tasks.find((t) => t.id === s.communityTaskId);
+        const sName = (
+          s.taskName ||
+          specificTask?.taskName ||
+          ""
+        ).toLowerCase();
+        const isException =
+          sName.includes("escalera") ||
+          sName.includes("portal") ||
+          sName.includes("garaje") ||
+          sName.includes("oficina");
+        const isDone = exec && exec.status === "completed";
+
         if (!isDone && !isException) {
-          pendingTasks.push(s.taskName || specificTask?.taskName || 'Tarea');
+          pendingTasks.push(s.taskName || specificTask?.taskName || "Tarea");
         }
       }
     }
 
     if (pendingTasks.length > 0) {
-      const confirmMsg = `No has marcado la tarea realizada: "${pendingTasks.join(', ')}".\n\n` +
-                         `¿Quieres volver atrás para marcarla como completada?\n\n` +
-                         `Aceptar (OK) = Volver atrás para marcarla\n` +
-                         `Cancelar = Continuar y forzar la finalización (la tarea pasará al próximo día)`;
+      const confirmMsg =
+        `No has marcado la tarea realizada: "${pendingTasks.join(", ")}".\n\n` +
+        `¿Quieres volver atrás para marcarla como completada?\n\n` +
+        `Aceptar (OK) = Volver atrás para marcarla\n` +
+        `Cancelar = Continuar y forzar la finalización (la tarea pasará al próximo día)`;
       if (window.confirm(confirmMsg)) {
         return;
       }
     }
 
-    if (window.confirm('No tienes un fichaje activo. ¿Deseas marcar este servicio como terminado directamente?')) {
+    if (
+      window.confirm(
+        "No tienes un fichaje activo. ¿Deseas marcar este servicio como terminado directamente?",
+      )
+    ) {
       setActionLoading(true);
       try {
         for (const s of currentGroup) {
           if (s.communityTaskId) {
-            const exec = taskExecutions.find(e => e.communityTaskId === s.communityTaskId);
-            const specificTask = tasks.find(t => t.id === s.communityTaskId);
-            const sName = (s.taskName || specificTask?.taskName || '').toLowerCase();
-            const isException = sName.includes('escalera') || sName.includes('portal') || sName.includes('garaje');
-            const isGarage = sName.includes('garaje');
+            const exec = taskExecutions.find(
+              (e) => e.communityTaskId === s.communityTaskId,
+            );
+            const specificTask = tasks.find((t) => t.id === s.communityTaskId);
+            const sName = (
+              s.taskName ||
+              specificTask?.taskName ||
+              ""
+            ).toLowerCase();
+            const isException =
+              sName.includes("escalera") ||
+              sName.includes("portal") ||
+              sName.includes("garaje") ||
+              sName.includes("oficina");
+            const isGarage = sName.includes("garaje");
 
-            if ((exec && exec.status === 'completed') || isException) {
-              await updateScheduledServiceStatus(s.id, 'completed');
+            if ((exec && exec.status === "completed") || isException) {
+              await updateScheduledServiceStatus(companyId, s.id, "completed");
             } else {
-              await passTaskToNextService(s, isGarage);
+              await passTaskToNextService(companyId, s, isGarage);
             }
           } else {
-            await updateScheduledServiceStatus(s.id, 'completed');
+            await updateScheduledServiceStatus(companyId, s.id, "completed");
           }
         }
-        alert('Servicio marcado como terminado');
-        navigate('/operario');
-      } catch(e) {
-        alert('Error: ' + e.message);
+        alert("Servicio marcado como terminado");
+        navigate("/operario");
+      } catch (e) {
+        alert("Error: " + e.message);
       } finally {
         setActionLoading(false);
       }
@@ -744,23 +1344,39 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
   async function sendGPSLocation() {
     setSendingGPS(true);
     try {
-      const pos = await getFilteredPosition();
-      await createGPSSuggestion({
+      const pos = await getFastPosition();
+      if (!pos || pos.accuracy > 100) {
+        throw new Error(
+          "La señal GPS no tiene suficiente precisión. Sal al exterior y vuelve a intentarlo.",
+        );
+      }
+      await createGPSSuggestion(companyId, {
         communityId: service.communityId,
         communityName: community.name,
         userId: userProfile.uid,
         userName: userProfile.name || userProfile.email,
         lat: pos.lat,
         lng: pos.lng,
-        accuracy: pos.accuracy
+        accuracy: pos.accuracy,
       });
       setGpsSent(true);
     } catch (err) {
-      alert('Error al capturar GPS: ' + err.message);
+      alert("Error al capturar GPS: " + err.message);
     } finally {
       setSendingGPS(false);
     }
   }
+
+  const handleDismissSuggestion = () => {
+    const silenceDuration = 25 * 60 * 1000; // 25 min
+    localStorage.setItem(
+      `dismissed_until_${serviceId}`,
+      (Date.now() + silenceDuration).toString(),
+    );
+    setSuggestedIn(null);
+    setSuggestedOut(null);
+    setEntryDetails(null);
+  };
 
   return {
     actionLoading,
@@ -772,6 +1388,8 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
     entrySource,
     suggestedOut,
     setSuggestedOut,
+    entryDetails,
+    handleDismissSuggestion,
     estimatedIn,
     estimatedOut,
     showManualEntryForm,
@@ -784,10 +1402,16 @@ export function useCheckInFlow(serviceId, userProfile, serviceData, {
     setManualEntryTime,
     manualExitTime,
     setManualExitTime,
+    pendingAction,
+    setPendingAction,
+    cancelPendingAction,
     handleCheckIn,
     handleCheckOut,
     handleFullManualSubmit,
     handleForceComplete,
-    sendGPSLocation
+    sendGPSLocation,
+    executeCheckIn,
+    executeCheckOut,
+    executeFullManual,
   };
 }

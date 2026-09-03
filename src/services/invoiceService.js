@@ -1,14 +1,27 @@
-import { 
-  collection, doc, addDoc, updateDoc, getDocs, getDoc, deleteDoc,
-  query, where, orderBy, limit, serverTimestamp, runTransaction, setDoc,
-  writeBatch
-} from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { httpsCallable } from 'firebase/functions';
-import { db, storage, functions } from '../config/firebase';
-import { getCommunities } from './communityService';
+import {
+  collection,
+  doc,
+  addDoc,
+  updateDoc,
+  getDocs,
+  getDoc,
+  deleteDoc,
+  query,
+  where,
+  orderBy,
+  limit,
+  serverTimestamp,
+  setDoc,
+  writeBatch,
+} from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { httpsCallable } from "firebase/functions";
+import { db, storage, functions } from "../config/firebase";
+import { getCommunities } from "./communityService";
+import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
+export { buildVerifactuQrUrl } from "../utils/verifactuQr";
 
-const COLLECTION = 'invoices';
+const COLLECTION = "invoices";
 
 // ==================== VERIFACTU: HASH ENCADENADO ====================
 /**
@@ -28,56 +41,77 @@ export async function computeInvoiceHash({
   cuotaTotal,
   importeTotal,
   huellaAnterior,
-  fechaHoraHusoGenRegistro
+  fechaHoraHusoGenRegistro,
 }) {
+  const normalizedIssuerNif = String(idEmisorFactura || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
   const cadena =
-    `IDEmisorFactura=${idEmisorFactura}` +
+    `IDEmisorFactura=${normalizedIssuerNif}` +
     `&NumSerieFactura=${numSerieFactura}` +
     `&FechaExpedicionFactura=${fechaExpedicionFactura}` +
     `&TipoFactura=${tipoFactura}` +
     `&CuotaTotal=${cuotaTotal}` +
     `&ImporteTotal=${importeTotal}` +
-    `&Huella=${huellaAnterior || ''}` +
+    `&Huella=${huellaAnterior || ""}` +
     `&FechaHoraHusoGenRegistro=${fechaHoraHusoGenRegistro}`;
 
   const encoder = new TextEncoder();
   const data = encoder.encode(cadena);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+  return hashArray
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .toUpperCase();
 }
 
 // ==================== BILLING SETTINGS ====================
 const DEFAULT_SETTINGS = {
-  companyName: "Limpiezas Rayba S.L",
-  nif: "B04843843",
-  address: "C/ Ilusión Nº6, 5Esc. 3º A, ALCANTARILLA, 30820",
-  phone: "687983162",
-  contactPerson: "Daniel Rabaneda",
-  inscriptionText: "Limpiezas Rayba S.L ha sido inscrita en el Registro Mercantil de Almería al tomo 1792, folio 20, inscripción 1 con hoja AL-46180",
+  companyName: "",
+  nif: "",
+  address: "",
+  phone: "",
+  contactPerson: "",
+  inscriptionText: "",
   logoBase64: "",
   logoWidth: 45,
   logoHeight: 20,
   bankAccount: "",
   nextInvoiceSeq: 1,
-  invoiceNumberFormat: 'numeric', // 'numeric' (59, 60...) or 'formatted' (F-2026-0059...)
-  fileNamePattern: 'Factura_{numero}_{comunidad}',
+  invoiceNumberFormat: "numeric", // 'numeric' (59, 60...) or 'formatted' (F-2026-0059...)
+  fileNamePattern: "Factura_{numero}_{comunidad}",
   useSaveAsDialog: false,
-  seqMode: 'manual',
-  issueDateMode: 'today',
-  customIssueDate: '',
-  smtpHost: '',
-  smtpPort: '587',
+  seqMode: "manual",
+  issueDateMode: "today",
+  customIssueDate: "",
+  verifactuEnabled: false,
+  verifactuMode: "disabled",
+  verifactuTestSeries: "TEST-VF",
+  aeatConnection: {
+    channel: "disabled",
+    environment: "test",
+    adviserName: "",
+    adviserTaxId: "",
+    adviserEmail: "",
+    connectorName: "",
+    productionEnabled: false,
+    credentialsStored: false,
+    schemaValidationStatus: "pending_official_xsd",
+  },
+  smtpHost: "",
+  smtpPort: "587",
   smtpSecure: false,
-  smtpEmail: '',
-  smtpPassword: '',
-  emailSubjectTemplate: 'Factura {numero} - RyB Limpiezas',
-  emailBodyTemplate: '<p>Hola,</p><p>Le adjuntamos la factura <strong>{numero}</strong> correspondiente al servicio de limpieza de la comunidad <strong>{comunidad}</strong>.</p><p>Atentamente,<br/>RyB Limpiezas</p>',
-  sepaSuffix: '000'
+  smtpEmail: "",
+  smtpPassword: "",
+  emailSubjectTemplate: "Factura {numero} - RyB Limpiezas",
+  emailBodyTemplate:
+    "<p>Hola,</p><p>Le adjuntamos la factura <strong>{numero}</strong> correspondiente al servicio de limpieza de la comunidad <strong>{comunidad}</strong>.</p><p>Atentamente,<br/>RyB Limpiezas</p>",
+  sepaSuffix: "000",
 };
 
-export async function getBillingSettings() {
-  const ref = doc(db, 'settings', 'billing');
+export async function getBillingSettings(companyId) {
+  const ref = tenantDoc(db, companyId, "settings", "billing");
   const snap = await getDoc(ref);
   if (!snap.exists()) {
     // Save defaults
@@ -87,64 +121,208 @@ export async function getBillingSettings() {
   return { ...DEFAULT_SETTINGS, ...snap.data() };
 }
 
-export async function saveBillingSettings(data) {
-  const ref = doc(db, 'settings', 'billing');
-  await setDoc(ref, data, { merge: true });
+export async function saveBillingSettings(companyId, data) {
+  const ref = tenantDoc(db, companyId, "settings", "billing");
+  // Never send back stale server-owned state when saving document preferences.
+  const editable = { ...data };
+  for (const key of ["lastInvoiceHash", "lastFiscalRecordId", "seriesCounters", "lastEmissionMode", "verifactuProduction"]) {
+    delete editable[key];
+  }
+  await setDoc(ref, editable, { merge: true });
+}
+
+export async function setVerifactuMode(companyId, enabled) {
+  await saveBillingSettings(companyId, {
+    verifactuEnabled: enabled === true,
+    verifactuMode: enabled === true ? "test" : "disabled",
+    verifactuModeUpdatedAt: serverTimestamp(),
+  });
+}
+
+export async function configureAeatConnection(profile, verifactuEnabled) {
+  const fn = httpsCallable(functions, "configureAeatConnection");
+  const result = await fn({ profile, verifactuEnabled });
+  return result.data;
+}
+
+export async function getAeatCertificateStatus() {
+  const fn = httpsCallable(functions, "getAeatCertificateStatus");
+  const result = await fn({});
+  return result.data;
+}
+
+export async function connectAeatCertificate(pfxBase64, password) {
+  const fn = httpsCallable(functions, "connectAeatCertificate");
+  const result = await fn({ pfxBase64, password });
+  return result.data;
+}
+
+export async function disconnectAeatCertificate() {
+  const fn = httpsCallable(functions, "disconnectAeatCertificate");
+  const result = await fn({});
+  return result.data;
+}
+
+export async function startLocalConnectorPairing() {
+  const fn = httpsCallable(functions, "startLocalConnectorPairing");
+  const result = await fn({});
+  return result.data;
+}
+
+export async function getLocalConnectorStatus() {
+  const fn = httpsCallable(functions, "getLocalConnectorStatus");
+  const result = await fn({});
+  return result.data;
+}
+
+export async function disconnectLocalConnector() {
+  const fn = httpsCallable(functions, "disconnectLocalConnector");
+  const result = await fn({});
+  return result.data;
+}
+
+export async function getAeatSubmissions(companyId) {
+  const q = query(
+    tenantCollection(db, companyId, "aeatSubmissions"),
+    orderBy("createdAt", "desc"),
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((entry) => ({ id: entry.id, ...entry.data() }));
+}
+
+export async function getVerifactuEvents(companyId) {
+  const q = query(
+    tenantCollection(db, companyId, "verifactuEvents"),
+    orderBy("createdAt", "desc"),
+    limit(100),
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((entry) => ({ id: entry.id, ...entry.data() }));
+}
+
+export async function prepareAeatSubmissions(invoiceIds) {
+  const fn = httpsCallable(functions, "prepareAeatSubmissions");
+  const result = await fn({ invoiceIds });
+  return result.data;
+}
+
+export async function sendAeatCloudTestSubmission(submissionId) {
+  const fn = httpsCallable(functions, "sendAeatCloudTestSubmission");
+  const result = await fn({ submissionId, confirmTestSend: true });
+  return result.data;
+}
+
+export async function reconcileAeatCloudTestSubmission(submissionId) {
+  const fn = httpsCallable(functions, "reconcileAeatCloudTestSubmission");
+  const result = await fn({ submissionId, confirmTestQuery: true });
+  return result.data;
+}
+
+export async function requestAeatLocalTestReconciliation(submissionId) {
+  const fn = httpsCallable(functions, "requestAeatLocalTestReconciliation");
+  const result = await fn({ submissionId, confirmTestQuery: true });
+  return result.data;
+}
+
+export async function getAeatSubmissionPackage(submissionId) {
+  const fn = httpsCallable(functions, "getAeatSubmissionPackage");
+  const result = await fn({ submissionId });
+  return result.data;
+}
+
+export async function recordAeatTestResult(
+  submissionId,
+  status,
+  response = {},
+) {
+  const fn = httpsCallable(functions, "recordAeatTestResult");
+  const result = await fn({ submissionId, status, response });
+  return result.data;
 }
 
 // ==================== INVOICE CRUD ====================
-export async function getInvoices(year, month) {
+export async function getInvoices(companyId, year, month) {
   let q = query(
-    collection(db, COLLECTION),
-    where('year', '==', parseInt(year)),
-    where('month', '==', parseInt(month)),
-    orderBy('createdAt', 'desc')
+    tenantCollection(db, companyId, COLLECTION),
+    where("year", "==", parseInt(year)),
+    where("month", "==", parseInt(month)),
+    orderBy("createdAt", "desc"),
   );
-  
+
   const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
-export async function createInvoice(data) {
-  const ref = await addDoc(collection(db, COLLECTION), {
+export async function createInvoice(companyId, data) {
+  if (data.status && data.status !== "draft") {
+    throw new Error(
+      "Las facturas nuevas deben guardarse como borrador antes de emitirlas",
+    );
+  }
+  const ref = await addDoc(tenantCollection(db, companyId, COLLECTION), {
     ...data,
-    createdAt: serverTimestamp()
+    invoiceNumber: "Borrador",
+    status: "draft",
+    issueDate: null,
+    dueDate: null,
+    createdAt: serverTimestamp(),
   });
   return ref.id;
 }
 
-export async function updateInvoice(id, data) {
-  const ref = doc(db, COLLECTION, id);
-  // VERIFACTU: Inmutabilidad — solo se pueden editar borradores
+export async function updateInvoice(companyId, id, data) {
+  const ref = tenantDoc(db, companyId, COLLECTION, id);
   const snap = await getDoc(ref);
-  if (!snap.exists()) throw new Error('La factura no existe');
-  if (snap.data().status !== 'draft') {
-    throw new Error('No se puede modificar una factura emitida (solo borradores)');
+  if (!snap.exists()) throw new Error("La factura no existe");
+  const invoice = snap.data();
+
+  // En facturas emitidas solo se admiten metadatos operativos que no alteran
+  // el documento ni su registro fiscal.
+  const emittedMetadataKeys = new Set([
+    "pdfUrl",
+    "pdfStoragePath",
+    "emailSent",
+    "emailSentAt",
+    "emailError",
+    "lastEmailErrorAt",
+  ]);
+  const changedKeys = Object.keys(data);
+  if (
+    invoice.status !== "draft" &&
+    !changedKeys.every((key) => emittedMetadataKeys.has(key))
+  ) {
+    throw new Error(
+      "No se puede modificar el contenido de una factura emitida",
+    );
   }
   await updateDoc(ref, {
     ...data,
-    updatedAt: serverTimestamp()
+    updatedAt: serverTimestamp(),
   });
 }
 
-export async function deleteInvoice(id) {
-  const ref = doc(db, COLLECTION, id);
+export async function deleteInvoice(companyId, id) {
+  const ref = tenantDoc(db, companyId, COLLECTION, id);
   // VERIFACTU: Inmutabilidad — solo se pueden eliminar borradores
   const snap = await getDoc(ref);
-  if (!snap.exists()) throw new Error('La factura no existe');
-  if (snap.data().status !== 'draft') {
-    throw new Error('No se puede eliminar una factura emitida (solo borradores)');
+  if (!snap.exists()) throw new Error("La factura no existe");
+  if (snap.data().status !== "draft") {
+    throw new Error(
+      "No se puede eliminar una factura emitida (solo borradores)",
+    );
   }
   await deleteDoc(ref);
 }
 
-export async function deleteMultipleInvoices(ids) {
+export async function deleteMultipleInvoices(companyId, ids) {
   if (!ids || ids.length === 0) return;
   // VERIFACTU: Inmutabilidad — verificar que todas son borradores antes de eliminar
   for (const id of ids) {
-    const snap = await getDoc(doc(db, COLLECTION, id));
-    if (snap.exists() && snap.data().status !== 'draft') {
-      throw new Error(`No se puede eliminar la factura ${snap.data().invoiceNumber || id}: solo se pueden eliminar borradores`);
+    const snap = await getDoc(tenantDoc(db, companyId, COLLECTION, id));
+    if (snap.exists() && snap.data().status !== "draft") {
+      throw new Error(
+        `No se puede eliminar la factura ${snap.data().invoiceNumber || id}: solo se pueden eliminar borradores`,
+      );
     }
   }
   const CHUNK_SIZE = 400;
@@ -152,141 +330,87 @@ export async function deleteMultipleInvoices(ids) {
     const chunk = ids.slice(i, i + CHUNK_SIZE);
     const batch = writeBatch(db);
     for (const id of chunk) {
-      batch.delete(doc(db, COLLECTION, id));
+      batch.delete(tenantDoc(db, companyId, COLLECTION, id));
     }
     await batch.commit();
   }
 }
 
 // Get the next invoice number for display/preview purposes
-export async function getNextInvoiceNumber(year) {
-  const settings = await getBillingSettings();
+export async function getNextInvoiceNumber(companyId, year) {
+  const settings = await getBillingSettings(companyId);
   const nextSeq = parseInt(settings.nextInvoiceSeq) || 1;
-  const fmt = settings.invoiceNumberFormat || 'numeric';
-  
-  if (fmt === 'formatted') {
-    return `F-${year}-${String(nextSeq).padStart(4, '0')}`;
+  const fmt = settings.invoiceNumberFormat || "numeric";
+
+  if (fmt === "formatted") {
+    return `F-${year}-${String(nextSeq).padStart(4, "0")}`;
   }
   return String(nextSeq);
 }
 
-// Emit Invoice: Change status from draft to pending, assign number atomically
-// VERIFACTU: Calcula y almacena hash encadenado con la factura anterior
-export async function emitInvoice(id) {
-  // Obtener hash de la última factura emitida ANTES de la transacción
-  const lastEmitted = await getLastEmittedInvoice();
-  const previousHash = lastEmitted?.hash || '';
-
-  const invoiceRef = doc(db, COLLECTION, id);
-  const settingsRef = doc(db, 'settings', 'billing');
-  
-  await runTransaction(db, async (transaction) => {
-    const [invoiceSnap, settingsSnap] = await Promise.all([
-      transaction.get(invoiceRef),
-      transaction.get(settingsRef)
-    ]);
-    
-    if (!invoiceSnap.exists()) throw new Error("La factura no existe");
-    const data = invoiceSnap.data();
-    if (data.status !== 'draft') throw new Error("Solo se pueden emitir facturas en borrador");
-    
-    const settings = settingsSnap.exists() ? settingsSnap.data() : {};
-    const nextSeq = parseInt(settings.nextInvoiceSeq) || 1;
-    const fmt = settings.invoiceNumberFormat || 'numeric';
-    
-    let invoiceNumber;
-    if (fmt === 'formatted') {
-      invoiceNumber = `F-${data.year}-${String(nextSeq).padStart(4, '0')}`;
-    } else {
-      invoiceNumber = String(nextSeq);
-    }
-    
-    let issueDate;
-    if (settings.issueDateMode === 'custom' && settings.customIssueDate) {
-      issueDate = new Date(settings.customIssueDate + 'T00:00:00');
-    } else {
-      issueDate = new Date();
-    }
-    const dueDate = new Date(issueDate.getTime() + 30 * 24 * 60 * 60 * 1000);
-
-    // VERIFACTU: Calcular hash encadenado
-    const dd = String(issueDate.getDate()).padStart(2, '0');
-    const mm = String(issueDate.getMonth() + 1).padStart(2, '0');
-    const yyyy = issueDate.getFullYear();
-    const fechaExpedicion = `${dd}-${mm}-${yyyy}`;
-    const tipoFactura = data.rectifiesInvoiceId ? 'R1' : 'F1';
-
-    const hash = await computeInvoiceHash({
-      idEmisorFactura: settings.nif || 'B04843843',
-      numSerieFactura: invoiceNumber,
-      fechaExpedicionFactura: fechaExpedicion,
-      tipoFactura,
-      cuotaTotal: parseFloat(data.taxAmount || 0).toFixed(2),
-      importeTotal: parseFloat(data.totalAmount || 0).toFixed(2),
-      huellaAnterior: previousHash,
-      fechaHoraHusoGenRegistro: new Date().toISOString()
-    });
-
-    // Update invoice with assigned number and hash chain
-    transaction.update(invoiceRef, {
-      status: 'pending',
-      invoiceNumber: invoiceNumber,
-      invoiceSeq: nextSeq,
-      issueDate: issueDate,
-      dueDate: dueDate,
-      hash: hash,
-      previousHash: previousHash,
-      tipoFactura: tipoFactura
-    });
-    
-    // Increment sequence counter atomically
-    transaction.update(settingsRef, {
-      nextInvoiceSeq: nextSeq + 1
-    });
-  });
+// La numeración, el bloqueo y el posible registro fiscal se realizan
+// exclusivamente en Cloud Functions.
+export async function emitInvoice(companyId, id) {
+  const fn = httpsCallable(functions, "emitInvoices");
+  const result = await fn({ invoiceIds: [id] });
+  return result.data;
 }
 
 // Mark invoice as Paid
-export async function updateInvoiceStatus(id, status) {
-  const ref = doc(db, COLLECTION, id);
+export async function updateInvoiceStatus(companyId, id, status) {
+  if (!["pending", "paid"].includes(status)) {
+    throw new Error("Estado de cobro no válido");
+  }
+  const ref = tenantDoc(db, companyId, COLLECTION, id);
   await updateDoc(ref, {
     status,
-    updatedAt: serverTimestamp()
+    paymentStatus: status,
+    updatedAt: serverTimestamp(),
   });
 }
 
 // ==================== AUTO GENERATE DRAFTS ====================
-export async function generateMonthlyDrafts(month, year) {
+export async function generateMonthlyDrafts(companyId, month, year) {
   const [comms, existing] = await Promise.all([
-    getCommunities(),
-    getInvoices(year, month)
+    getCommunities(companyId),
+    getInvoices(companyId, year, month),
   ]);
-  
+
   // Filter communities that have a base price greater than 0
-  const activeComms = comms.filter(c => c.active && (c.basePrice || 0) > 0);
-  
+  const activeComms = comms.filter((c) => c.active && (c.basePrice || 0) > 0);
+
   // Find communities that don't have an invoice for this period
   const commsToInvoice = activeComms.filter(
-    c => !existing.some(inv => inv.client.communityId === c.id)
+    (c) => !existing.some((inv) => inv.client.communityId === c.id),
   );
-  
+
   if (commsToInvoice.length === 0) {
     return 0; // No new drafts created
   }
-  
+
   const monthNames = [
-    'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
-    'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
   ];
   const periodLabel = `${monthNames[month]} de ${year}`;
-  
+
   let count = 0;
   for (const comm of commsToInvoice) {
     const base = parseFloat(comm.basePrice) || 0;
     const taxRate = 21; // 21% VAT
     const taxAmount = parseFloat((base * (taxRate / 100)).toFixed(2));
     const totalAmount = parseFloat((base + taxAmount).toFixed(2));
-    
+
     const invoiceData = {
       invoiceNumber: "Borrador",
       status: "draft",
@@ -301,15 +425,15 @@ export async function generateMonthlyDrafts(month, year) {
         iban: comm.billingIban || "",
         mandateRef: comm.billingMandateRef || "",
         mandateDate: comm.billingMandateDate || "",
-        administratorId: comm.administratorId || ""
+        administratorId: comm.administratorId || "",
       },
       items: [
         {
           description: `Limpieza de comunidad mes de ${periodLabel}`,
           quantity: 1,
           price: base,
-          total: base
-        }
+          total: base,
+        },
       ],
       subtotal: base,
       taxRate: taxRate,
@@ -318,166 +442,109 @@ export async function generateMonthlyDrafts(month, year) {
       paymentMethod: comm.paymentMethod || "transferencia",
       issueDate: null,
       dueDate: null,
-      createdAt: serverTimestamp()
+      createdAt: serverTimestamp(),
     };
-    
-    await addDoc(collection(db, COLLECTION), invoiceData);
+
+    await addDoc(tenantCollection(db, companyId, COLLECTION), invoiceData);
     count++;
   }
-  
+
   return count;
 }
 
 // ==================== INVOICE TEMPLATES ====================
-export async function getInvoiceTemplates() {
-  const q = query(collection(db, 'invoice_templates'), orderBy('name', 'asc'));
+export async function getInvoiceTemplates(companyId) {
+  const q = query(tenantCollection(db, companyId, "invoice_templates"), orderBy("name", "asc"));
   const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
-export async function saveInvoiceTemplate(data) {
-  const q = query(collection(db, 'invoice_templates'), where('name', '==', data.name));
+export async function saveInvoiceTemplate(companyId, data) {
+  const q = query(
+    tenantCollection(db, companyId, "invoice_templates"),
+    where("name", "==", data.name),
+  );
   const snap = await getDocs(q);
-  
+
   const templateData = {
     ...data,
-    updatedAt: serverTimestamp()
+    updatedAt: serverTimestamp(),
   };
-  
+
   if (!snap.empty) {
-    const docRef = doc(db, 'invoice_templates', snap.docs[0].id);
+    const docRef = tenantDoc(db, companyId, "invoice_templates", snap.docs[0].id);
     await updateDoc(docRef, templateData);
     return snap.docs[0].id;
   } else {
     templateData.createdAt = serverTimestamp();
-    const docRef = await addDoc(collection(db, 'invoice_templates'), templateData);
+    const docRef = await addDoc(
+      tenantCollection(db, companyId, "invoice_templates"),
+      templateData,
+    );
     return docRef.id;
   }
 }
 
-export async function deleteInvoiceTemplate(id) {
-  await deleteDoc(doc(db, 'invoice_templates', id));
+export async function deleteInvoiceTemplate(companyId, id) {
+  await deleteDoc(tenantDoc(db, companyId, "invoice_templates", id));
 }
 
 // Get the last emitted invoice ordered by invoiceSeq descending
-export async function getLastEmittedInvoice() {
+export async function getLastEmittedInvoice(companyId) {
   const q = query(
-    collection(db, COLLECTION),
-    orderBy('invoiceSeq', 'desc'),
-    limit(1)
+    tenantCollection(db, companyId, COLLECTION),
+    orderBy("invoiceSeq", "desc"),
+    limit(1),
   );
   const snap = await getDocs(q);
   if (snap.empty) return null;
   return { id: snap.docs[0].id, ...snap.docs[0].data() };
 }
 
-// Emit multiple invoices at once atomically using a single transaction
-// VERIFACTU: Encadena hashes secuencialmente dentro del lote
-export async function emitAllInvoices(ids) {
+// Emisión en lote segura desde Cloud Functions.
+export async function emitAllInvoices(companyId, ids) {
   if (!ids || ids.length === 0) return;
-
-  // Obtener hash de la última factura emitida ANTES de la transacción
-  const lastEmitted = await getLastEmittedInvoice();
-  let chainHash = lastEmitted?.hash || '';
-
-  const settingsRef = doc(db, 'settings', 'billing');
-  
-  await runTransaction(db, async (transaction) => {
-    const settingsSnap = await transaction.get(settingsRef);
-    const settings = settingsSnap.exists() ? settingsSnap.data() : {};
-    let nextSeq = parseInt(settings.nextInvoiceSeq) || 1;
-    const fmt = settings.invoiceNumberFormat || 'numeric';
-    
-    const invoiceSnaps = [];
-    for (const id of ids) {
-      const ref = doc(db, COLLECTION, id);
-      const snap = await transaction.get(ref);
-      invoiceSnaps.push({ ref, snap });
-    }
-    
-    let issueDate;
-    if (settings.issueDateMode === 'custom' && settings.customIssueDate) {
-      issueDate = new Date(settings.customIssueDate + 'T00:00:00');
-    } else {
-      issueDate = new Date();
-    }
-    const dueDate = new Date(issueDate.getTime() + 30 * 24 * 60 * 60 * 1000);
-
-    // VERIFACTU: Formatear fecha para el hash
-    const dd = String(issueDate.getDate()).padStart(2, '0');
-    const mm = String(issueDate.getMonth() + 1).padStart(2, '0');
-    const yyyy = issueDate.getFullYear();
-    const fechaExpedicion = `${dd}-${mm}-${yyyy}`;
-    
-    for (const { ref, snap } of invoiceSnaps) {
-      if (!snap.exists()) throw new Error("Una de las facturas no existe");
-      const data = snap.data();
-      if (data.status !== 'draft') throw new Error("Solo se pueden emitir facturas en borrador");
-      
-      let invoiceNumber;
-      if (fmt === 'formatted') {
-        invoiceNumber = `F-${data.year}-${String(nextSeq).padStart(4, '0')}`;
-      } else {
-        invoiceNumber = String(nextSeq);
-      }
-
-      // VERIFACTU: Hash encadenado secuencial
-      const tipoFactura = data.rectifiesInvoiceId ? 'R1' : 'F1';
-      const previousHash = chainHash;
-
-      const hash = await computeInvoiceHash({
-        idEmisorFactura: settings.nif || 'B04843843',
-        numSerieFactura: invoiceNumber,
-        fechaExpedicionFactura: fechaExpedicion,
-        tipoFactura,
-        cuotaTotal: parseFloat(data.taxAmount || 0).toFixed(2),
-        importeTotal: parseFloat(data.totalAmount || 0).toFixed(2),
-        huellaAnterior: previousHash,
-        fechaHoraHusoGenRegistro: new Date().toISOString()
-      });
-      
-      transaction.update(ref, {
-        status: 'pending',
-        invoiceNumber: invoiceNumber,
-        invoiceSeq: nextSeq,
-        issueDate: issueDate,
-        dueDate: dueDate,
-        hash: hash,
-        previousHash: previousHash,
-        tipoFactura: tipoFactura
-      });
-      
-      // Encadenar: el hash de esta factura es el previousHash de la siguiente
-      chainHash = hash;
-      nextSeq++;
-    }
-    
-    transaction.update(settingsRef, {
-      nextInvoiceSeq: nextSeq
-    });
-  });
+  const fn = httpsCallable(functions, "emitInvoices");
+  const result = await fn({ invoiceIds: ids });
+  return result.data;
 }
 
-export async function uploadInvoicePDFToStorage(invoiceId, pdfBlob, filename) {
-  const path = `invoices/${invoiceId}/${filename}`;
+export async function uploadInvoicePDFToStorage(companyId, invoiceId, pdfBlob, filename) {
+  const path = `companies/${companyId}/invoices/${invoiceId}/${filename}`;
   const storageRef = ref(storage, path);
   const metadata = {
-    contentType: 'application/pdf'
+    contentType: "application/pdf",
   };
   await uploadBytes(storageRef, pdfBlob, metadata);
   const url = await getDownloadURL(storageRef);
   return url;
 }
 
-export async function sendInvoiceEmails(invoiceIds) {
-  const fn = httpsCallable(functions, 'sendInvoiceEmails');
-  const result = await fn({ invoiceIds });
+export async function sendInvoiceEmails(companyId, invoiceIds) {
+  const fn = httpsCallable(functions, "sendInvoiceEmails");
+  const result = await fn({ companyId, invoiceIds });
   return result.data;
 }
 
-export async function sendGroupedInvoiceEmails(invoiceIds) {
-  const fn = httpsCallable(functions, 'sendGroupedInvoiceEmails');
-  const result = await fn({ invoiceIds });
+export async function sendGroupedInvoiceEmails(companyId, invoiceIds) {
+  const fn = httpsCallable(functions, "sendGroupedInvoiceEmails");
+  const result = await fn({ companyId, invoiceIds });
+  return result.data;
+}
+
+export async function cancelInvoiceFiscalRecord(invoiceId, reason) {
+  const fn = httpsCallable(functions, "cancelInvoiceFiscalRecord");
+  const result = await fn({ invoiceId, reason });
+  return result.data;
+}
+
+export async function subsanateInvoiceFiscalRecord(
+  invoiceId,
+  reason,
+  corrections,
+) {
+  const fn = httpsCallable(functions, "subsanateInvoiceFiscalRecord");
+  const result = await fn({ invoiceId, reason, corrections });
   return result.data;
 }
 
@@ -487,59 +554,97 @@ export async function sendGroupedInvoiceEmails(invoiceIds) {
  * NUNCA modifica ni elimina la factura original (inmutabilidad Verifactu).
  * La rectificativa pasa por el mismo flujo de emitInvoice() (número correlativo, hash encadenado).
  */
-export async function createRectifyingInvoice(originalInvoiceId, correctionData) {
-  const originalRef = doc(db, COLLECTION, originalInvoiceId);
+export async function createRectifyingInvoice(
+  companyId,
+  originalInvoiceId,
+  correctionData,
+) {
+  const originalRef = tenantDoc(db, companyId, COLLECTION, originalInvoiceId);
   const originalSnap = await getDoc(originalRef);
-  if (!originalSnap.exists()) throw new Error('La factura original no existe');
+  if (!originalSnap.exists()) throw new Error("La factura original no existe");
   const original = originalSnap.data();
-  
-  if (original.status === 'draft') {
-    throw new Error('No se puede rectificar una factura en borrador. Emítela primero.');
+
+  if (original.status === "draft") {
+    throw new Error(
+      "No se puede rectificar una factura en borrador. Emítela primero.",
+    );
   }
 
+  const method = correctionData.method || "I";
+  const rectifyingItems =
+    correctionData.items ||
+    (method === "I"
+      ? (original.items || []).map((item) => ({
+          ...item,
+          price: 0,
+          taxableBase: 0,
+          taxAmount: 0,
+          surchargeAmount: 0,
+          total: 0,
+        }))
+      : original.items);
+
   const rectifyingData = {
-    invoiceNumber: 'Borrador (Rectificativa)',
-    status: 'draft',
+    invoiceNumber: "Borrador",
+    status: "draft",
+    invoiceType: correctionData.invoiceType || "R1",
+    series: correctionData.series || "R",
+    operationDate:
+      correctionData.operationDate || original.operationDate || null,
     year: correctionData.year || original.year,
     month: correctionData.month || original.month,
     client: { ...original.client },
-    items: correctionData.items || original.items,
-    subtotal: correctionData.subtotal ?? original.subtotal,
+    items: rectifyingItems,
+    subtotal:
+      correctionData.subtotal ?? (method === "I" ? 0 : original.subtotal),
     taxRate: correctionData.taxRate ?? original.taxRate,
-    taxAmount: correctionData.taxAmount ?? original.taxAmount,
-    totalAmount: correctionData.totalAmount ?? original.totalAmount,
+    taxAmount:
+      correctionData.taxAmount ?? (method === "I" ? 0 : original.taxAmount),
+    surchargeAmount:
+      correctionData.surchargeAmount ??
+      (method === "I" ? 0 : original.surchargeAmount || 0),
+    totalAmount:
+      correctionData.totalAmount ??
+      (method === "I" ? 0 : original.totalAmount),
+    taxBreakdown: method === "I" ? [] : original.taxBreakdown || [],
     paymentMethod: correctionData.paymentMethod || original.paymentMethod,
     issueDate: null,
     dueDate: null,
-    // VERIFACTU: Referencia a la factura original
     rectifiesInvoiceId: originalInvoiceId,
     rectifiesInvoiceNumber: original.invoiceNumber,
-    createdAt: serverTimestamp()
+    rectification: {
+      invoiceType: correctionData.invoiceType || "R1",
+      method,
+      reason: correctionData.reason || "",
+      rectifiedInvoiceId: originalInvoiceId,
+      rectifiedInvoiceNumber: original.invoiceNumber,
+      rectifiedIssueDate: original.issueDate || null,
+      rectifiedBase:
+        method === "S"
+          ? Number(
+              correctionData.rectifiedBase ?? original.subtotal ?? 0,
+            )
+          : null,
+      rectifiedTax:
+        method === "S"
+          ? Number(
+              correctionData.rectifiedTax ?? original.taxAmount ?? 0,
+            )
+          : null,
+      rectifiedSurcharge:
+        method === "S"
+          ? Number(
+              correctionData.rectifiedSurcharge ??
+                original.surchargeAmount ??
+                0,
+            )
+          : null,
+    },
+    createdAt: serverTimestamp(),
   };
 
-  const newRef = await addDoc(collection(db, COLLECTION), rectifyingData);
+  const newRef = await addDoc(tenantCollection(db, companyId, COLLECTION), rectifyingData);
   return newRef.id;
 }
 
 // ==================== VERIFACTU: QR ====================
-/**
- * Construye la URL oficial de la AEAT para el código QR de verificación.
- * Formato: https://www2.agenciatributaria.es/wlpl/TIKE-CONT/ValidarQR?nif=X&numserie=X&fecha=DD-MM-YYYY&importe=X.XX
- */
-export function buildVerifactuQrUrl(invoice, billingSettings) {
-  const nif = encodeURIComponent(billingSettings?.nif || 'B04843843');
-  const numserie = encodeURIComponent(invoice.invoiceNumber || '');
-  
-  let fecha = '';
-  if (invoice.issueDate) {
-    const d = invoice.issueDate.toDate ? invoice.issueDate.toDate() : new Date(invoice.issueDate);
-    const dd = String(d.getDate()).padStart(2, '0');
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const yyyy = d.getFullYear();
-    fecha = `${dd}-${mm}-${yyyy}`;
-  }
-  
-  const importe = parseFloat(invoice.totalAmount || 0).toFixed(2);
-  
-  return `https://www2.agenciatributaria.es/wlpl/TIKE-CONT/ValidarQR?nif=${nif}&numserie=${numserie}&fecha=${fecha}&importe=${importe}`;
-}
