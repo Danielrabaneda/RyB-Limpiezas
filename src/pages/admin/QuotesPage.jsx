@@ -325,7 +325,7 @@ function PdfPreview({ quote, settings }) {
   const companyWebsite = quote.companyWebsite ?? settings.website ?? "";
   const websiteAlignment = ["left", "center", "right"].includes(quote.websiteAlignment) ? quote.websiteAlignment : "center";
   const websiteFontSize = Math.min(14, Math.max(7, Number(quote.websiteFontSize) || 9));
-  return <div className="paper" data-quote-pdf-preview>
+  return <div className={`paper ${global ? "paper-global" : "paper-detailed"}`} data-quote-pdf-preview>
     <div className="paper-accent" style={{ background: headerColor }} />
     <div className="paper-head"><div className="paper-company">{settings.logoBase64 ? <img src={settings.logoBase64} /> : <span>LG</span>}<strong>{settings.companyName || "LimpiaGest"}</strong><small>{settings.nif || "Servicios profesionales de limpieza"}<br/>{settings.address}</small>{companyPhone && <b className="paper-company-phone">Teléfono para aceptar: {companyPhone}</b>}</div><div><h2>PRESUPUESTO</h2><strong>{quote.number}</strong></div></div>
     <div className="paper-client"><div><small>PREPARADO PARA</small><strong>{quote.clientName || "Selecciona un cliente"}</strong><span>{quote.clientAddress}</span></div><div><small>EMISIÓN</small><strong>{formatQuoteDate(quote.issueDate, quote.dateFormat)}</strong><small>VÁLIDO HASTA</small><strong>{formatQuoteDate(quote.validUntil, quote.dateFormat)}</strong></div></div>
