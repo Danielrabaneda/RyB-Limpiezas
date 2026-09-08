@@ -18,14 +18,20 @@ service firebase.storage {
       return isAuthenticated() && 
         request.auth.token.companyId == companyId && 
         request.auth.token.active == true &&
-        company.status == 'active' &&
         (
-          !('subscriptionStatus' in company) ||
-          company.subscriptionStatus == 'active' ||
+          companyId == 'rayba' ||
           (
-            company.subscriptionStatus == 'trialing' &&
-            company.trialEndsAt != null &&
-            company.trialEndsAt > request.time
+            company.status == 'active' &&
+            (
+              !('subscriptionStatus' in company) ||
+              company.subscriptionStatus == 'active' ||
+              company.subscriptionStatus == 'legacy' ||
+              (
+                company.subscriptionStatus == 'trialing' &&
+                company.trialEndsAt != null &&
+                company.trialEndsAt > request.time
+              )
+            )
           )
         );
     }
