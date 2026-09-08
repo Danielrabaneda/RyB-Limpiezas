@@ -146,7 +146,9 @@ export async function convertQuoteToInvoice(companyId, quote) {
     clientAddress: quote.clientAddress || "",
     clientEmail: quote.clientEmail || "",
     paymentMethod: quote.paymentTerms || "transferencia",
-    items: (quote.lines || []).map((line) => ({ description: line.concept, quantity: line.quantity, price: line.unitPrice, total: line.total })),
+    items: quote.pricingMode === "global"
+      ? (quote.priceItems || []).map((item) => ({ description: `${item.concept}${item.description ? ` - ${item.description}` : ""}`, quantity: item.quantity, price: item.unitPrice, total: item.total }))
+      : (quote.lines || []).map((line) => ({ description: line.concept, quantity: line.quantity, price: line.unitPrice, total: line.total })),
     taxRate: 21,
     subtotal: quote.subtotal,
     tax: quote.taxTotal,
