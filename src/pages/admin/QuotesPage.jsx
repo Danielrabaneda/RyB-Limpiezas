@@ -220,11 +220,13 @@ export default function QuotesPage() {
       const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
-      const pageHeightPixels = Math.floor(canvas.width * pageHeight / pageWidth);
+      const pageHeightPixels = Math.ceil(canvas.width * pageHeight / pageWidth);
       let offsetY = 0;
       let pageIndex = 0;
       while (offsetY < canvas.height) {
-        const sliceHeight = Math.min(pageHeightPixels, canvas.height - offsetY);
+        const remainingHeight = canvas.height - offsetY;
+        if (pageIndex > 0 && remainingHeight <= 6) break;
+        const sliceHeight = Math.min(pageHeightPixels, remainingHeight);
         const pageCanvas = document.createElement("canvas");
         pageCanvas.width = canvas.width;
         pageCanvas.height = sliceHeight;
