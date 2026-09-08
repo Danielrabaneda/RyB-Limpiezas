@@ -39,6 +39,7 @@ export default function ServiceDetailPage() {
     community,
     tasks,
     taskExecutions,
+    completedDate,
     activeCheckIn,
     otherActiveCheckIn,
     loading,
@@ -226,6 +227,16 @@ export default function ServiceDetailPage() {
         sendGPSLocation={sendGPSLocation}
       />
 
+      <TasksList
+        tasks={tasks}
+        taskExecutions={taskExecutions}
+        service={service}
+        groupedServices={groupedServices}
+        completedDate={completedDate}
+        canEdit={canEdit}
+        toggleTaskStatus={toggleTaskStatus}
+      />
+
       <CommunityDocsCard communityDocs={communityDocs} />
 
       <TransferModal
@@ -261,6 +272,15 @@ export default function ServiceDetailPage() {
               : "Indica el motivo del fichaje manual o retroactivo (obligatorio):"
         }
         loading={actionLoading}
+      />
+
+      <CompanionsCard
+        isTitular={isTitular}
+        activeWorkday={activeWorkday}
+        service={service}
+        isCompleted={isCompleted}
+        operariosMap={operariosMap}
+        handleRemoveCompanion={handleRemoveCompanion}
       />
 
       <CheckInControl
@@ -300,15 +320,6 @@ export default function ServiceDetailPage() {
         handleForceComplete={handleForceComplete}
       />
 
-      <TasksList
-        showTasks={showTasks}
-        tasks={tasks}
-        taskExecutions={taskExecutions}
-        service={service}
-        canEdit={canEdit}
-        toggleTaskStatus={toggleTaskStatus}
-      />
-
       <GeneralEvidenceCard
         showTasks={showTasks}
         canEdit={canEdit}
@@ -320,15 +331,6 @@ export default function ServiceDetailPage() {
         submittedGeneralEvidence={submittedGeneralEvidence}
         handleSubmitGeneralEvidence={handleSubmitGeneralEvidence}
         submittingGeneralEvidence={submittingGeneralEvidence}
-      />
-
-      <CompanionsCard
-        isTitular={isTitular}
-        activeWorkday={activeWorkday}
-        service={service}
-        isCompleted={isCompleted}
-        operariosMap={operariosMap}
-        handleRemoveCompanion={handleRemoveCompanion}
       />
 
       {showSignatureModal && (

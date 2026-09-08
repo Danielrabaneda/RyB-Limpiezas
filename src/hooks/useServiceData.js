@@ -33,6 +33,7 @@ export function useServiceData(serviceId, userProfile) {
   const [community, setCommunity] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [taskExecutions, setTaskExecutions] = useState([]);
+  const [completedDate, setCompletedDate] = useState(null);
   const [activeCheckIn, setActiveCheckIn] = useState(null);
   const [otherActiveCheckIn, setOtherActiveCheckIn] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -65,6 +66,7 @@ export function useServiceData(serviceId, userProfile) {
     if (!serviceId || !userProfile?.uid || !companyId) return;
 
     // Reset state when service changes
+    setCompletedDate(null);
     setActiveCheckIn(null);
     setService(null);
     setCommunity(null);
@@ -186,6 +188,21 @@ export function useServiceData(serviceId, userProfile) {
       },
     );
 
+    // Actual completion date comes from the recorded checkout, including manual times.
+    const unsubCompletedCheckIns = onSnapshot(
+      query(
+        tenantCollection(db, companyId, "checkIns"),
+        where("scheduledServiceId", "==", serviceId),
+      ),
+      (snap) => {
+        const dates = snap.docs
+          .map((entry) => entry.data().checkOutTime?.toDate?.())
+          .filter((date) => date && !Number.isNaN(date.getTime()));
+        setCompletedDate(dates.length ? new Date(Math.max(...dates.map(Number))) : null);
+      },
+      (err) => console.warn("[useServiceData] Error loading completion date:", err),
+    );
+
     // 4. One-time fetches
     loadStaticData();
 
@@ -193,6 +210,7 @@ export function useServiceData(serviceId, userProfile) {
       unsubService();
       unsubCheckIn();
       unsubExecs();
+      unsubCompletedCheckIns();
     };
   }, [serviceId, userProfile?.uid, companyId]);
 
@@ -265,6 +283,7 @@ export function useServiceData(serviceId, userProfile) {
     community,
     tasks,
     taskExecutions,
+    completedDate,
     activeCheckIn,
     setActiveCheckIn,
     otherActiveCheckIn,

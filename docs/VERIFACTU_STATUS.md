@@ -1,6 +1,29 @@
 # Estado de cierre de facturación y VeriFactu
 
-Actualizado: 31 de agosto de 2026.
+Actualizado: 7 de septiembre de 2026. Los apartados fechados conservan el historial.
+
+## Revisión cloud del 07/09: no cerrar todavía producción
+
+Avance posterior 07/09: en `tmp/verifactu-production` se ha implementado recuperación justa de producción (8 pruebas y 3 de emulador) y conectado consulta cloud de incidencias, permiso independiente del envío, callable autenticado y botón con confirmación. Suite actual: 159 pruebas backend correctas; compilación web correcta. Este bloque NO está desplegado ni habilitado. Pendiente: pruebas conjuntas de consulta con política y emulador, revocación/cambio de certificado y respuestas tardías, revisión visual e integración selectiva con la web actual. Detalle en `tmp/verifactu-production/docs/VERIFACTU_PRODUCTION_QUERY.md`. Mantener producción bloqueada y firma Windows aplazada.
+
+Ver VERIFACTU_CIERRE_CLOUD_2026-09-07.md. La copia de producción supera 139 pruebas de servidor, pero aún no incorpora recuperación justa multiempresa y carece del circuito integrado de consulta de incidencias de producción. Estas son tareas de software, distintas de la firma Windows aplazada. Próximo paso: corregir recuperación en la copia aislada sin red ni activación, antes de integrar/publicar el bloque definitivo.
+
+## Decisión vigente: firma Windows aplazada
+
+El 06/09/2026 el usuario decide posponer la contratación del medio de firma de código. Editor acordado: Limpiezas Raiba S. L. No crear cuenta Azure, contratar servicios, autofirmar ni instalar certificados de confianza por esta decisión. El certificado fiscal de clientes no sustituye el del editor.
+
+- Punto 4 Windows: PENDIENTE, no cerrado comercialmente. Retomar firma del paquete, comprobación de firmas y piloto Windows limpio/actualización desde versión antigua cuando se autorice el medio de firma. Detalle en VERIFACTU_MIGRACION_WINDOWS.md.
+- Continuar con certificado cloud PFX/P12: no requiere instalar ni firmar el conector de Windows. No cambiar automáticamente el canal de empresas ya configuradas ni revincular equipos.
+- La firma Windows aplazada no equivale a aprobar producción cloud. Mantener los bloqueos y los criterios de aceptación siguientes.
+
+### Siguiente bloque: cierre operativo de la vía cloud
+
+1. Revisar evidencia existente de certificado, alta, subsanación, anulación y consulta TEST, sin nuevos envíos automáticos. La consulta del duplicado TEST-VF-2026-0001 funciona pero la discrepancia de huella histórica sigue pendiente; no convertirla en aceptación.
+2. Contrastar código preparado frente a publicado, especialmente la activación privada del worktree tmp/verifactu-production: no asumir que ese bloque está desplegado.
+3. Verificar preparación y recuperación de la vía cloud sin tráfico fiscal real; separar pruebas simuladas de evidencia externa.
+4. Cerrar versión y declaración del productor; el PDF firmado de pruebas no sustituye esa declaración. Renovar el certificado que caduca el 20/11/2026 antes de la puesta en marcha prevista.
+
+Esta continuación no autoriza nuevos cargos, firmas, publicación de paquetes Windows ni activación de producción.
 
 ## Objetivo acordado: preparado antes del 01/01/2027, sin envíos reales previos
 

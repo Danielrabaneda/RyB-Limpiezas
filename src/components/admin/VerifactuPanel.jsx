@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import VerifactuDocuments from "./VerifactuDocuments";
+import { queueDate, selectQueuePage } from "../../utils/verifactuQueue";
 import {
   cancelInvoiceFiscalRecord,
   connectAeatCertificate,
@@ -62,6 +63,12 @@ export default function VerifactuPanel({
     connectorName: initialProfile.connectorName || "",
   });
   const [submissions, setSubmissions] = useState([]);
+  const [queueYear, setQueueYear] = useState("");
+  const [queueMonth, setQueueMonth] = useState("");
+  const [queuePage, setQueuePage] = useState(1);
+  const queueYears = useMemo(() => [...new Set(submissions.map(item => queueDate(item.createdAt)?.year).filter(Boolean))].sort().reverse(), [submissions]);
+  const queueView = useMemo(() => selectQueuePage(submissions, queueYear, queueMonth, queuePage), [submissions, queueYear, queueMonth, queuePage]);
+  useEffect(() => { setQueueYear(""); setQueueMonth(""); setQueuePage(1); }, [companyId]);
   const [events, setEvents] = useState([]);
   const [certificate, setCertificate] = useState({ connected: false });
   const [certificateFile, setCertificateFile] = useState(null);
@@ -528,6 +535,25 @@ export default function VerifactuPanel({
 
       <section aria-label="Cola AEAT" style={{ marginTop: 24 }}>
       <h4 style={{ marginTop: 0 }}>Cola AEAT ({submissions.length})</h4>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "end" }}>
+        <label className="form-group">
+          <span className="form-label">Año del registro</span>
+          <select className="form-input" value={queueYear} onChange={event => { setQueueYear(event.target.value); setQueuePage(1); }}>
+            <option value="">Todos los años</option>
+            {queueYears.map(year => <option key={year} value={year}>{year}</option>)}
+          </select>
+        </label>
+        <label className="form-group">
+          <span className="form-label">Mes del registro</span>
+          <select className="form-input" value={queueMonth} onChange={event => { setQueueMonth(event.target.value); setQueuePage(1); }}>
+            <option value="">Todos los meses</option>
+            {["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"].map((month, index) => <option key={month} value={String(index + 1).padStart(2, "0")}>{month}</option>)}
+          </select>
+        </label>
+        <button type="button" className="btn btn-outline" onClick={() => { setQueueYear(""); setQueueMonth(""); setQueuePage(1); }}>Ver todos</button>
+      </div>
+      <p style={{ fontSize: 12, color: "#475569" }}>Filtra por la fecha de creación del registro en VeriFactu (hora de Madrid), no por la fecha de la factura. Solo cambia la consulta de la cola.</p>
+      <p role="status" style={{ fontSize: 13 }}>{queueView.total} registros encontrados de {submissions.length} · 10 por página</p>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14, marginBottom: 14 }}>
         <button type="button" className="btn btn-outline" disabled={busy || profile.channel === "disabled"} onClick={preparePending}>Preparar pendientes ({eligibleInvoices.length})</button>
         <button type="button" className="btn btn-outline" disabled={busy} onClick={() => openFiscalAction("cancel")}>Anular registro</button>
@@ -641,16 +667,17 @@ export default function VerifactuPanel({
         </div>
       )}
 
-      {submissions.length === 0 ? (
-        <p style={{ color: "#64748b", fontSize: 13 }}>Todavía no hay paquetes preparados.</p>
+      {queueView.total === 0 ? (
+        <p style={{ color: "#64748b", fontSize: 13 }}>{submissions.length === 0 ? "Todavía no hay paquetes preparados." : "No hay registros en el periodo seleccionado. Puedes cambiar los filtros o pulsar Ver todos."}</p>
       ) : (
         <div style={{ overflowX: "auto" }}>
           <table className="table">
-            <thead><tr><th>Factura</th><th>Tipo</th><th>Estado</th><th>Intentos</th><th>Respuesta AEAT</th><th></th></tr></thead>
+            <thead><tr><th>Factura</th><th>Fecha del registro</th><th>Tipo</th><th>Estado</th><th>Intentos</th><th>Respuesta AEAT</th><th></th></tr></thead>
             <tbody>
-              {submissions.slice(0, 50).map((item) => (
+              {queueView.items.map((item) => (
                 <tr key={item.id}>
                   <td>{item.invoiceNumber || item.invoiceId}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>{queueDate(item.createdAt)?.label || "Sin fecha"}</td>
                   <td>{item.recordType}</td>
                   <td>{STATUS_LABELS[item.status] || item.status}</td>
                   <td>{item.attempts || 0}</td>
@@ -667,7 +694,9 @@ export default function VerifactuPanel({
                         </button>
                       )}
                       {((profile.channel === "cloud_certificate" && certificate.connected) ||
-                        (profile.channel === "local_connector" && connectorStatus.online && !connectorStatus.updateRequired)) && item.status === "needs_review" && (
+                        (profile.channel === "local_connector" && connectorStatus.online && !connectorStatus.updateRequired)) && (item.status === "needs_review" ||
+                          (profile.channel === "cloud_certificate" && item.status === "rejected" &&
+                            /^Registro de facturaci[oó]n duplicado\.?$/i.test(String(item.aeatResponse?.message || "").trim()))) && (
                         <button type="button" className="btn btn-sm btn-primary" disabled={busy || ["processing", "awaiting_local_connector"].includes(item.reconciliation?.status)} onClick={() => reconcileCloudTest(item)}>
                           {item.reconciliation?.status === "awaiting_local_connector" ? "Pendiente del conector" : "Comprobar en AEAT"}
                         </button>
@@ -680,6 +709,12 @@ export default function VerifactuPanel({
           </table>
         </div>
       )}
+
+      {queueView.total > 0 && <nav aria-label="Páginas de la cola AEAT" style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", marginTop: 12 }}>
+        <button type="button" className="btn btn-outline" disabled={queueView.currentPage === 1} onClick={() => setQueuePage(queueView.currentPage - 1)}>Anterior</button>
+        <span>Página {queueView.currentPage} de {queueView.pages}</span>
+        <button type="button" className="btn btn-outline" disabled={queueView.currentPage === queueView.pages} onClick={() => setQueuePage(queueView.currentPage + 1)}>Siguiente</button>
+      </nav>}
 
       <details style={{ marginTop: 14 }}>
         <summary>Registro operativo ({events.length})</summary>

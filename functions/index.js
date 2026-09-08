@@ -12,6 +12,7 @@ const { shouldSendPushNotification } = require("./notificationPolicy");
 const { readFiscalState, assertFiscalScope, isTestSubmissionEligible } = require("./lib/verifactuEnvironment");
 const { createAeatCloudWorker } = require("./lib/aeatCloudWorker");
 const { createAeatReconciliationWorker } = require("./lib/aeatReconciliationWorker");
+const { createAeatRecoveryScheduler } = require("./lib/aeatRecoveryScheduler");
 const {
   clampAutoCloseEndTime,
   getMadridDateKey,
@@ -2249,47 +2250,38 @@ exports.onAeatCloudTestSubmissionCreated = onDocumentCreated(
   },
 );
 
-async function recoverAeatCompanyTest(companyRef) {
-  let cursor = null;
-  while (automaticAeatTestEnabled()) {
+async function recoverAeatCompanyTest(companyRef, active = async () => automaticAeatTestEnabled()) {
+  const progress = db.doc(`internalVerifactuRecovery/test/companies/${companyRef.id}`);
+  const saved = (await progress.get()).data() || {};
+  let cursor = saved.cursor || null;
+  const deadline = Date.now() + 5000;
+  for (let page = 0; page < 2 && await active(); page++) {
     let query = db.collection(`${companyRef.path}/aeatSubmissions`)
       .where("channel", "==", "cloud_certificate")
       .where("status", "in", ["awaiting_cloud_sender", "retry_pending", "processing"])
-      .orderBy("createdAt", "asc").limit(50);
-    if (cursor) query = query.startAfter(cursor);
+      .orderBy("createdAt", "asc").orderBy("__name__", "asc").limit(50);
+    if (cursor) query = query.startAfter(cursor.createdAt, db.doc(cursor.path));
     const pending = await query.get();
-    if (pending.empty) return;
+    if (pending.empty) { await progress.set({ cursor: null }); return; }
     // Equal creation timestamps are common in batch emission. Do not assume
     // document ID order equals fiscal-chain order: inspect other candidates.
     for (const job of pending.docs) {
-      if (!automaticAeatTestEnabled()) return;
+      if (Date.now() >= deadline || !await active()) return;
+      await progress.set({ cursor: { createdAt: job.data().createdAt, path: job.ref.path } });
+      if (!await active()) return;
       const result = await cloudTestWorker.run({ companyId: companyRef.id, submissionId: job.id });
       if (result.status || result.ignored || ["company_busy", "cooldown"].includes(result.reason)) return;
     }
-    cursor = pending.docs[pending.docs.length - 1];
+    const last = pending.docs[pending.docs.length - 1];
+    cursor = { createdAt: last.data().createdAt, path: last.ref.path };
   }
 }
 
 exports.recoverAeatCloudTestSubmissions = onSchedule(
   { schedule: "every 1 minutes", region: "europe-west1", timeZone: "Europe/Madrid",
     memory: "512MiB", timeoutSeconds: 540, maxInstances: 1 },
-  async () => {
-    if (!automaticAeatTestEnabled()) return;
-    // No activation is inferred from the calendar; these documents are server-write-only.
-    const configs = await db.collectionGroup("verifactuConfig").where("autoCloudTestEnabled", "==", true).get();
-    for (const config of configs.docs) {
-      if (!automaticAeatTestEnabled()) return;
-      if (config.id !== "automation" || config.data().environment !== "test") continue;
-      const companyRef = config.ref.parent.parent;
-      if (!companyRef || companyRef.parent.path !== "companies") continue;
-      try {
-        await recoverAeatCompanyTest(companyRef);
-      } catch {
-        // Keep credentials and raw SDK errors out of logs; other tenants still run.
-        logger.warn("Recuperación VeriFactu de pruebas pendiente de revisión", { companyId: companyRef.id });
-      }
-    }
-  },
+  async () => createAeatRecoveryScheduler({ db, enabled: automaticAeatTestEnabled,
+    recover: recoverAeatCompanyTest }).run(),
 );
 
 exports.startLocalConnectorPairing = onCall(
@@ -3496,6 +3488,57 @@ exports.sendInvoiceEmails = onCall(
     }
 
     return { results };
+  },
+);
+
+exports.sendQuoteEmail = onCall(
+  { region: "europe-west1", memory: "256MiB", timeoutSeconds: 120 },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    const companyId = request.auth.token.companyId;
+    const { quoteId, recipient, subject, message } = request.data || {};
+    if (!companyId || !quoteId || !/^[a-zA-Z0-9_-]{1,128}$/.test(quoteId)) {
+      throw new HttpsError("invalid-argument", "Presupuesto no válido.");
+    }
+    await assertTenantEnabled(companyId);
+    const userDoc = await db.collection("users").doc(request.auth.uid).get();
+    if (!userDoc.exists || userDoc.data().role !== "admin") {
+      throw new HttpsError("permission-denied", "No tienes permisos para enviar presupuestos.");
+    }
+    const [settingsSnap, quoteSnap] = await Promise.all([
+      db.collection(`companies/${companyId}/settings`).doc("billing").get(),
+      db.collection(`companies/${companyId}/quotes`).doc(quoteId).get(),
+    ]);
+    if (!quoteSnap.exists) throw new HttpsError("not-found", "El presupuesto no existe.");
+    const settings = settingsSnap.data() || {};
+    if (!settings.smtpHost || !settings.smtpEmail || !settings.smtpPassword) {
+      throw new HttpsError("failed-precondition", "Configura el correo de empresa en Ajustes antes de enviar.");
+    }
+    const quote = quoteSnap.data();
+    const to = String(recipient || quote.clientEmail || "").trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      throw new HttpsError("invalid-argument", "Indica un email de destinatario válido.");
+    }
+    if (!quote.pdfStoragePath) throw new HttpsError("failed-precondition", "Genera el PDF antes de enviarlo.");
+    const [pdfBuffer] = await getStorage().bucket().file(quote.pdfStoragePath).download();
+    const safeMessage = escapeHtml(String(message || `Hola, le adjuntamos el presupuesto ${quote.number}.`)).replace(/\n/g, "<br>");
+    const transporter = nodemailer.createTransport({
+      host: settings.smtpHost, port: parseInt(settings.smtpPort) || 587,
+      secure: settings.smtpSecure || false,
+      auth: { user: settings.smtpEmail, pass: settings.smtpPassword },
+    });
+    await transporter.sendMail({
+      from: `"${settings.companyName || "LimpiaGest"}" <${settings.smtpEmail}>`,
+      to,
+      subject: String(subject || `Presupuesto ${quote.number} - ${settings.companyName || "LimpiaGest"}`).slice(0, 180),
+      html: `<p>${safeMessage}</p>`,
+      attachments: [{ filename: `${quote.number || "Presupuesto"}.pdf`, content: pdfBuffer, contentType: "application/pdf" }],
+    });
+    await quoteSnap.ref.update({
+      emailSent: true, emailSentAt: FieldValue.serverTimestamp(), emailSentTo: to,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    return { success: true, recipient: to };
   },
 );
 

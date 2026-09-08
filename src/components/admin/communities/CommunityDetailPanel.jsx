@@ -1,5 +1,6 @@
 import React from "react";
 import { format } from "date-fns";
+import { useNavigate } from "react-router-dom";
 import { doc, updateDoc } from "firebase/firestore";
 import { db } from "../../../config/firebase";
 
@@ -30,6 +31,7 @@ export default function CommunityDetailPanel({
   WEEKDAYS,
   safeFormat,
 }) {
+  const navigate = useNavigate();
   const handlePrintQR = () => {
     const windowUrl = "about:blank";
     const uniqueName = new Date().getTime();
@@ -77,6 +79,12 @@ export default function CommunityDetailPanel({
         <div className="card-header">
           <h3 className="card-title">🏢 {selectedCommunity.name}</h3>
           <div className="flex gap-2">
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={() => navigate(`/admin/presupuestos?cliente=${selectedCommunity.id}`)}
+            >
+              🧾 Presupuesto
+            </button>
             <button
               className="btn btn-secondary btn-sm"
               onClick={() => openEditModal(selectedCommunity)}

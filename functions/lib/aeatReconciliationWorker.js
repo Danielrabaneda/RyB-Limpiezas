@@ -7,6 +7,19 @@ const id = value => /^[a-zA-Z0-9_-]{1,128}$/.test(String(value || ''));
 const millis = value => value?.toMillis?.() ?? (value ? new Date(value).getTime() : 0);
 const digest = value => createHash('sha256').update(String(value || ''), 'utf8').digest('hex');
 
+// Historical duplicates were classified as rejected by the old sender.
+// Querying them does not make them eligible for resubmission.
+function isHistoricalDuplicate(job) {
+  return job?.status === 'rejected' && (
+    /^Registro de facturaci[oó]n duplicado\.?$/i.test(String(job.aeatResponse?.message || '').trim())
+  );
+}
+
+function canReconcile(job, channel) {
+  return job?.status === 'needs_review' ||
+    (channel === 'cloud_certificate' && isHistoricalDuplicate(job));
+}
+
 function createAeatReconciliationWorker({ db, timestamp, assertTenantEnabled, loadCertificate, transport,
   now = Date.now, newToken = randomUUID, buildQuery = buildAeatQuerySoapEnvelope, channel = 'cloud_certificate' }) {
   if (!['cloud_certificate', 'local_connector'].includes(channel)) throw new Error('Unsupported reconciliation channel');
@@ -28,7 +41,7 @@ function createAeatReconciliationWorker({ db, timestamp, assertTenantEnabled, lo
       const snaps = await Promise.all([r.job, r.settings, r.certificate, r.lease].map(ref => tx.get(ref)));
       const [job, settings, rawCertificate, lease] = snaps.map(snap => snap.data() || {});
       const certificate = certificateData(rawCertificate);
-      if (!snaps[0].exists || !isTestSubmissionEligible(job, companyId) || job.status !== 'needs_review') {
+      if (!snaps[0].exists || !isTestSubmissionEligible(job, companyId) || !canReconcile(job, channel)) {
         return { blocked: 'Solo se pueden conciliar registros de pruebas que necesitan revisión.' };
       }
       if (settings.verifactuEnabled !== true || settings.verifactuMode !== 'test' ||
@@ -67,7 +80,10 @@ function createAeatReconciliationWorker({ db, timestamp, assertTenantEnabled, lo
       const attemptNumber = Number(job.reconciliation?.attempts || 0) + 1;
       const expected = { issuerNif: fiscal.issuerNif, invoiceNumber: fiscal.invoiceNumber,
         issueDate: fiscal.fechaExpedicionFactura, fingerprint: fiscal.chain.hash, recordType: fiscal.recordType };
-      tx.update(r.job, { reconciliation: { status: 'processing', attemptToken, attemptNumber, attempts: attemptNumber,
+      tx.update(r.job, { reconciliation: { originalSubmission: job.reconciliation?.originalSubmission || {
+        status: job.status, aeatResponse: job.aeatResponse || null, lastError: job.lastError || null,
+        processedAt: job.processedAt || null,
+      }, status: 'processing', attemptToken, attemptNumber, attempts: attemptNumber,
         leaseUntil, startedAt: timestamp(time), startedBy: actorId, queryXml, querySha256, expected } });
       tx.set(r.lease, { environment: 'test', productionEnabled: false, attemptToken, submissionId, leaseUntil }, { merge: true });
       return { claimed: true, companyId, submissionId, invoiceId: job.invoiceId, fiscalRecordId: job.fiscalRecordId,
@@ -84,7 +100,7 @@ function createAeatReconciliationWorker({ db, timestamp, assertTenantEnabled, lo
       const invoiceRef = db.doc(`${r.base}/invoices/${c.invoiceId}`);
       const snaps = await Promise.all([r.job, r.lease, invoiceRef].map(ref => tx.get(ref)));
       const [job, lease, invoice] = snaps.map(snap => snap.data() || {});
-      if (!isTestSubmissionEligible(job, c.companyId) || job.status !== 'needs_review' ||
+      if (!isTestSubmissionEligible(job, c.companyId) || !canReconcile(job, channel) ||
           job.reconciliation?.attemptToken !== c.attemptToken || lease.attemptToken !== c.attemptToken) {
         return { ignored: true, reason: 'stale_query' };
       }
@@ -115,7 +131,7 @@ function createAeatReconciliationWorker({ db, timestamp, assertTenantEnabled, lo
         productionEnabled: false, type: accepted ? 'aeat_test_reconciliation_confirmed' : 'aeat_test_reconciliation_review',
         actorId: c.actorId, submissionId: c.submissionId, invoiceId: c.invoiceId, fiscalRecordId: c.fiscalRecordId,
         details: { outcome: evaluation.outcome, recordState: evidence?.state || '' }, createdAt: timestamp(time) });
-      return { submissionId: c.submissionId, status: accepted ? evaluation.outcome : 'needs_review',
+      return { submissionId: c.submissionId, status: accepted ? evaluation.outcome : job.status,
         reconciliationStatus: reconciliation.status, message: reconciliation.message, environment: 'test', productionEnabled: false };
     });
   }
@@ -127,7 +143,7 @@ function createAeatReconciliationWorker({ db, timestamp, assertTenantEnabled, lo
       const [job, settings, rawCertificate, lease] = snaps.map(snap => snap.data() || {});
       const certificate = certificateData(rawCertificate);
       const time = now();
-      return isTestSubmissionEligible(job, c.companyId) && job.status === 'needs_review' &&
+      return isTestSubmissionEligible(job, c.companyId) && canReconcile(job, channel) &&
         job.reconciliation?.attemptToken === c.attemptToken && millis(job.reconciliation?.leaseUntil) > time &&
         lease.attemptToken === c.attemptToken && millis(lease.leaseUntil) > time &&
         settings.verifactuEnabled === true && settings.verifactuMode === 'test' &&
@@ -219,4 +235,4 @@ function createAeatReconciliationWorker({ db, timestamp, assertTenantEnabled, lo
   return local ? { requestLocal, claimLocal, resultLocal } : { run, claim, complete };
 }
 
-module.exports = { createAeatReconciliationWorker, QUERY_LEASE_MS };
+module.exports = { createAeatReconciliationWorker, QUERY_LEASE_MS, isHistoricalDuplicate };

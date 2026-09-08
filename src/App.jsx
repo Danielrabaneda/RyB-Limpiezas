@@ -94,6 +94,8 @@ const CommunitiesPage = lazy(() => import("./pages/admin/CommunitiesPage"));
 const OperariosPage = lazy(() => import("./pages/admin/OperariosPage"));
 const ReportsPage = lazy(() => import("./pages/admin/ReportsPage"));
 const InvoicesPage = lazy(() => import("./pages/admin/InvoicesPage"));
+const QuotesPage = lazy(() => import("./pages/admin/QuotesPage"));
+const PipelinePage = lazy(() => import("./pages/admin/PipelinePage"));
 const KilometrajePage = lazy(() => import("./pages/admin/KilometrajePage"));
 const InventoryPage = lazy(() => import("./pages/admin/InventoryPage"));
 const ControlHorarioPage = lazy(
@@ -342,6 +344,8 @@ function AdminLayout() {
     { path: "/admin/control-horario", icon: "⏱️", label: "Control Horario" },
     { path: "/admin/ausencias", icon: "🌴", label: "Ausencias" },
     { path: "/admin/informes", icon: "📈", label: "Informes" },
+    { path: "/admin/pipeline", icon: "🎯", label: "Gestión comercial" },
+    { path: "/admin/presupuestos", icon: "🧾", label: "Presupuestos" },
     { path: "/admin/facturas", icon: "📄", label: "Facturación" },
     { path: "/admin/evidencias", icon: "📸", label: "Evidencias" },
     { path: "/admin/kilometraje", icon: "🚗", label: "Kilometraje" },
@@ -964,6 +968,8 @@ export default function App() {
                   />
                   <Route path="informes" element={<ReportsPage />} />
                   <Route path="facturas" element={<InvoicesPage />} />
+                  <Route path="presupuestos" element={<QuotesPage />} />
+                  <Route path="pipeline" element={<PipelinePage />} />
                   <Route path="evidencias" element={<EvidenceReportsPage />} />
                   <Route path="kilometraje" element={<KilometrajePage />} />
                   <Route path="inventory" element={<InventoryPage />} />

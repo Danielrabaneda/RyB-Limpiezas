@@ -8,6 +8,11 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$updateParent = Join-Path $env:LOCALAPPDATA 'LimpiaGest'
+New-Item -ItemType Directory -Path $updateParent -Force | Out-Null
+try { $updateGuard = [IO.File]::Open((Join-Path $updateParent 'connector-update.lock'), 'OpenOrCreate', 'ReadWrite', 'ReadWrite') }
+catch { throw 'LimpiaGest se esta actualizando. Espera a que termine antes de abrir el conector.' }
+try {
 if ($CompanyId -notmatch '^[a-zA-Z0-9_-]{1,128}$') { throw "Identificador de empresa no valido." }
 . (Join-Path $PSScriptRoot "ConnectorProtocol.ps1")
 Add-Type -AssemblyName System.Net.Http
@@ -224,3 +229,4 @@ try {
   if ($ownsMutex) { $mutex.ReleaseMutex() }
   $mutex.Dispose()
 }
+} finally { $updateGuard.Dispose() }

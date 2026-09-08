@@ -5,6 +5,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'InstallerPreflight.ps1')
+. (Join-Path $PSScriptRoot 'InstallerTransaction.ps1')
 $installDirectory = Join-Path $env:LOCALAPPDATA "LimpiaGest\ConectorVeriFactu"
 $connectorSource = Join-Path $PSScriptRoot "Connect-LimpiaGest.ps1"
 $connectorTarget = Join-Path $installDirectory "Connect-LimpiaGest.ps1"
@@ -25,17 +27,16 @@ if (-not $CompanyId) {
   $CompanyId = Read-Host "Escribe el identificador de empresa que muestra LimpiaGest"
 }
 if ($CompanyId -notmatch '^[a-zA-Z0-9_-]{1,128}$') { throw "Identificador de empresa no valido." }
+$checkedVersion = Assert-LimpiaGestInstallReady -SourceDirectory $PSScriptRoot -InstallDirectory $installDirectory
+Write-Host "Paquete de pruebas comprobado. No se enviaran facturas durante la vinculacion." -ForegroundColor Cyan
 $existingCredential = Join-Path $installDirectory ($CompanyId + ".json")
 if (-not $PairingCode -and -not (Test-Path -LiteralPath $existingCredential)) {
   $PairingCode = Read-Host "Escribe el codigo de 10 caracteres que muestra LimpiaGest"
 }
 
-New-Item -ItemType Directory -Path $installDirectory -Force | Out-Null
-Copy-Item -LiteralPath $connectorSource -Destination $connectorTarget -Force
-Copy-Item -LiteralPath $protocolHandlerSource -Destination $protocolHandlerTarget -Force
-Copy-Item -LiteralPath $validatorSource -Destination (Join-Path $installDirectory "Test-OfficialSoapSchema.ps1") -Force
-Copy-Item -LiteralPath $protocolSource -Destination (Join-Path $installDirectory "ConnectorProtocol.ps1") -Force
-Copy-Item -LiteralPath $schemasSource -Destination (Join-Path $installDirectory "schemas") -Recurse -Force
+Install-LimpiaGestFiles -SourceDirectory $PSScriptRoot -InstallDirectory $installDirectory -Validate {
+  Assert-LimpiaGestInstallReady -SourceDirectory $PSScriptRoot -InstallDirectory $installDirectory
+}
 
 if ($PairingCode) { & $connectorTarget -CompanyId $CompanyId -PairingCode $PairingCode -ForcePair -PairOnly }
 else { & $connectorTarget -CompanyId $CompanyId -PairOnly }

@@ -543,6 +543,25 @@ service cloud.firestore {
       }
 
       // invoices (VERIFACTU logic)
+      // Presupuestos comerciales y su historial de versiones. Solo el equipo
+      // administrador puede consultar o modificar información económica.
+      match /quotes/{id} {
+        allow read, create, update: if isTenant(companyId) && isAdminActive();
+        allow delete: if isTenant(companyId) && isAdminActive()
+          && resource.data.status == 'draft';
+      }
+
+      match /quoteVersions/{id} {
+        allow read, create: if isTenant(companyId) && isAdminActive();
+        allow update, delete: if false;
+      }
+
+      // CRM comercial. Las oportunidades contienen únicamente información de
+      // negocio del tenant y están restringidas al equipo administrador.
+      match /opportunities/{id} {
+        allow read, create, update, delete: if isTenant(companyId) && isAdminActive();
+      }
+
       match /invoices/{id} {
         allow read: if isTenant(companyId) && isAdminActive();
         allow create: if isTenant(companyId)

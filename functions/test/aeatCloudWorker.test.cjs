@@ -308,7 +308,8 @@ test('production reference is never written by the worker', async () => {
 test('deployed entrypoints remain inert without explicit runtime gate', async () => {
   const source = fs.readFileSync(require.resolve('../index.js'), 'utf8');
   let accesses = 0;
-  const scope = { exports: {}, onDocumentCreated: (_options, fn) => fn, onSchedule: (_options, fn) => fn,
+  const scope = { createAeatRecoveryScheduler: require('../lib/aeatRecoveryScheduler').createAeatRecoveryScheduler,
+    exports: {}, onDocumentCreated: (_options, fn) => fn, onSchedule: (_options, fn) => fn,
     automaticAeatTestEnabled: () => false, cloudTestWorker: { run: () => { accesses++; } },
     db: { collectionGroup: () => { accesses++; throw new Error('unexpected access'); } } };
   vm.runInNewContext(source.slice(source.indexOf('exports.onAeatCloudTestSubmissionCreated ='),
@@ -324,9 +325,11 @@ test('recovery scans past equal-timestamp successors and across pages to find th
   const cursors = [];
   let page = 0;
   const query = { where: () => query, orderBy: () => query, limit: () => query,
-    startAfter: cursor => { cursors.push(cursor.id); return query; },
-    get: async () => ({ empty: false, docs: (page++ === 0 ? ['later1', 'later2'] : ['earliest']).map(id => ({ id })) }) };
-  const scope = { automaticAeatTestEnabled: () => true, db: { collection: () => query },
+    startAfter: (_time, ref) => { cursors.push(ref.id); return query; },
+    get: async () => ({ empty: false, docs: (page++ === 0 ? ['later1', 'later2'] : ['earliest']).map(id => ({ id,
+      ref: { path: `companies/a/aeatSubmissions/${id}` }, data: () => ({ createdAt: 1 }) })) }) };
+  const scope = { automaticAeatTestEnabled: () => true, db: { collection: () => query,
+    doc: path => ({ id: path.split('/').at(-1), get: async () => ({ data: () => ({}) }), set: async () => {} }) },
     cloudTestWorker: { run: async ({ submissionId }) => { seen.push(submissionId);
       return submissionId === 'earliest' ? { status: 'accepted' } : { blocked: 'predecessor_pending' }; } } };
   vm.runInNewContext(source.slice(source.indexOf('async function recoverAeatCompanyTest('),

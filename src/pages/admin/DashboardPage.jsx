@@ -680,6 +680,16 @@ export default function DashboardPage() {
       <h3 className="section-title mb-4">⚡ Acciones Rápidas</h3>
       <div className="grid grid-3 gap-3 mb-8">
         <button
+          onClick={() => navigate("/admin/presupuestos")}
+          className="btn btn-ghost p-4 flex flex-col items-center gap-2 border border-slate-100 hover:border-primary hover:bg-white shadow-sm"
+          style={{ height: "auto", background: "white" }}
+        >
+          <span style={{ fontSize: "1.5rem" }}>🧾</span>
+          <span className="text-xs font-bold uppercase tracking-wider">
+            Nuevo presupuesto
+          </span>
+        </button>
+        <button
           onClick={() => navigate("/admin/inventory")}
           className="btn btn-ghost p-4 flex flex-col items-center gap-2 border border-slate-100 hover:border-primary hover:bg-white shadow-sm"
           style={{ height: "auto", background: "white" }}
