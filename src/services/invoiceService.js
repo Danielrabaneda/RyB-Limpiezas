@@ -125,6 +125,11 @@ export async function saveBillingSettings(companyId, data) {
   const ref = tenantDoc(db, companyId, "settings", "billing");
   // Never send back stale server-owned state when saving document preferences.
   const editable = { ...data };
+  // An empty password means "keep the one already configured". This prevents
+  // unrelated billing or PDF preference updates from clearing SMTP access.
+  if (!String(editable.smtpPassword || "").trim()) {
+    delete editable.smtpPassword;
+  }
   for (const key of ["lastInvoiceHash", "lastFiscalRecordId", "seriesCounters", "lastEmissionMode", "verifactuProduction"]) {
     delete editable[key];
   }

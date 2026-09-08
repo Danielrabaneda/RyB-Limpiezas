@@ -3511,8 +3511,16 @@ exports.sendQuoteEmail = onCall(
     ]);
     if (!quoteSnap.exists) throw new HttpsError("not-found", "El presupuesto no existe.");
     const settings = settingsSnap.data() || {};
-    if (!settings.smtpHost || !settings.smtpEmail || !settings.smtpPassword) {
-      throw new HttpsError("failed-precondition", "Configura el correo de empresa en Ajustes antes de enviar.");
+    const missingEmailSettings = [
+      !settings.smtpHost && "servidor SMTP",
+      !settings.smtpEmail && "email emisor",
+      !settings.smtpPassword && "contraseña SMTP o contraseña de aplicación",
+    ].filter(Boolean);
+    if (missingEmailSettings.length) {
+      throw new HttpsError(
+        "failed-precondition",
+        `Falta ${missingEmailSettings.join(" y ")} en Ajustes. Los datos que ya están guardados no necesitan configurarse de nuevo.`,
+      );
     }
     const quote = quoteSnap.data();
     const to = String(recipient || quote.clientEmail || "").trim();
