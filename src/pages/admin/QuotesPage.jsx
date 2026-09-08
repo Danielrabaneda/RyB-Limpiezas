@@ -220,10 +220,23 @@ export default function QuotesPage() {
       const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
-      const scale = Math.min(pageWidth / canvas.width, pageHeight / canvas.height);
-      const imageWidth = canvas.width * scale;
-      const imageHeight = canvas.height * scale;
-      pdf.addImage(canvas.toDataURL("image/png"), "PNG", (pageWidth - imageWidth) / 2, 0, imageWidth, imageHeight, undefined, "FAST");
+      const pageHeightPixels = Math.floor(canvas.width * pageHeight / pageWidth);
+      let offsetY = 0;
+      let pageIndex = 0;
+      while (offsetY < canvas.height) {
+        const sliceHeight = Math.min(pageHeightPixels, canvas.height - offsetY);
+        const pageCanvas = document.createElement("canvas");
+        pageCanvas.width = canvas.width;
+        pageCanvas.height = sliceHeight;
+        const context = pageCanvas.getContext("2d");
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+        context.drawImage(canvas, 0, offsetY, canvas.width, sliceHeight, 0, 0, canvas.width, sliceHeight);
+        if (pageIndex > 0) pdf.addPage();
+        pdf.addImage(pageCanvas.toDataURL("image/png"), "PNG", 0, 0, pageWidth, sliceHeight * pageWidth / canvas.width, undefined, "FAST");
+        offsetY += sliceHeight;
+        pageIndex += 1;
+      }
       if (download) { pdf.save(`${editing.number || "Presupuesto"}.pdf`); return null; }
       return pdf.output("blob");
     } finally {
