@@ -107,9 +107,21 @@ export default function QuotesPage() {
     setLoading(true);
     try {
       const [allQuotes, clients, billing] = await Promise.all([getQuotes(companyId), getCommunities(companyId), getBillingSettings(companyId)]);
-      setQuotes(allQuotes); setCommunities(clients); setSettings(billing || {});
+      const commercialStatuses = new Set(["sent", "viewed", "accepted", "rejected", "expired", "converted_service", "converted_invoice"]);
+      const quotesWithPipeline = await Promise.all(allQuotes.map(async (quote) => {
+        const hasClient = Boolean(String(quote.clientId || "").trim() || String(quote.clientName || "").trim());
+        if (quote.opportunityId || !hasClient || !commercialStatuses.has(quote.status)) return quote;
+        try {
+          const synced = await setQuoteStatus(companyId, quote, quote.status, currentUser);
+          return { ...quote, opportunityId: synced.opportunityId || "", activity: synced.activity || quote.activity || [] };
+        } catch (error) {
+          console.error("No se pudo vincular un presupuesto existente con Gestión comercial", quote.id, error);
+          return quote;
+        }
+      }));
+      setQuotes(quotesWithPipeline); setCommunities(clients); setSettings(billing || {});
       const openId = params.get("editar");
-      if (openId) setEditing(allQuotes.find((item) => item.id === openId) || null);
+      if (openId) setEditing(quotesWithPipeline.find((item) => item.id === openId) || null);
     } finally { setLoading(false); }
   };
   useEffect(() => { if (companyId) load(); }, [companyId]);
