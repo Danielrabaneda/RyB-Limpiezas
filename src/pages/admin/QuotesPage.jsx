@@ -11,6 +11,7 @@ import {
   convertQuoteToService,
   createQuote,
   deleteDraftQuote,
+  deleteSentTestQuote,
   duplicateQuote,
   getQuotes,
   setQuoteStatus,
@@ -193,13 +194,18 @@ export default function QuotesPage() {
   };
   const closeEditor = async () => { clearTimeout(autosaveRef.current); await updateQuote(companyId, editing.id, { ...editing, contentChanged: true }, currentUser); setEditing(null); setParams({}); await load(); };
   const statusAction = async (status, extra = {}) => { await setQuoteStatus(companyId, editing, status, currentUser, extra); setEditing((old) => ({ ...old, status, ...extra })); setQuotes((old) => old.map((q) => q.id === editing.id ? { ...q, status, ...extra } : q)); };
-  const removeDraft = async (quote) => {
-    if (!confirm(`¿Eliminar el borrador ${quote.number || "seleccionado"}? Esta acción no se puede deshacer.`)) return;
+  const removeQuote = async (quote) => {
+    const isSentTest = quote.status === "sent" && !String(quote.clientId || "").trim() && !String(quote.clientName || "").trim();
+    const message = isSentTest
+      ? `¿Eliminar definitivamente el presupuesto enviado de prueba «${quote.number || quote.title || "seleccionado"}»? También se borrarán sus versiones y el PDF.`
+      : `¿Eliminar el borrador ${quote.number || "seleccionado"}? Esta acción no se puede deshacer.`;
+    if (!confirm(message)) return;
     try {
-      await deleteDraftQuote(companyId, quote.id);
+      if (isSentTest) await deleteSentTestQuote(quote.id);
+      else await deleteDraftQuote(companyId, quote.id);
       setQuotes((current) => current.filter((item) => item.id !== quote.id));
     } catch (error) {
-      alert(error.message || "No se pudo eliminar el borrador.");
+      alert(error.message || "No se pudo eliminar el presupuesto.");
     }
   };
 
@@ -252,7 +258,7 @@ export default function QuotesPage() {
     <div className="quotes-hero"><div><span className="quotes-eyebrow">COMERCIAL</span><h2>Presupuestos</h2><p>Crea propuestas profesionales y conviértelas en servicios sin volver a introducir datos.</p></div><button className="quote-primary" onClick={() => startQuote()}>＋ Nuevo presupuesto</button></div>
     <div className="quote-stats"><article><span>Pendientes de respuesta</span><strong>{stats.open}</strong><small>{money.format(stats.value)} en negociación</small></article><article><span>Tasa de conversión</span><strong>{stats.conversion}%</strong><small>Sobre presupuestos enviados</small></article><article><span>Total este año</span><strong>{quotes.length}</strong><small>{quotes.filter((q) => q.status === "draft").length} en borrador</small></article></div>
     <div className="quote-toolbar"><div className="quote-search">⌕<input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por cliente o número…" /></div><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option value="all">Todos los estados</option>{Object.entries(STATUS).map(([key, val]) => <option key={key} value={key}>{val[0]}</option>)}</select><button className="quote-secondary" onClick={() => document.getElementById("templates")?.scrollIntoView({ behavior: "smooth" })}>Ver plantillas</button></div>
-    <div className="quote-table-card">{loading ? <div className="quote-empty">Cargando presupuestos…</div> : filtered.length === 0 ? <div className="quote-empty"><div>🧾</div><h3>Aún no hay presupuestos</h3><p>Empieza desde una plantilla específica de limpieza.</p><button className="quote-primary" onClick={() => startQuote()}>Crear el primero</button></div> : <table><thead><tr><th>Presupuesto</th><th>Cliente</th><th>Servicio</th><th>Estado</th><th>Validez</th><th className="right">Importe</th><th>Acciones</th></tr></thead><tbody>{filtered.map((q) => <tr key={q.id} onClick={() => { setEditing(q); setParams({ editar: q.id }); }}><td><strong>{q.number}</strong><small>v{q.version || 1} · {formatQuoteDate(q.issueDate, q.dateFormat)}</small></td><td><strong>{q.clientName || "Sin asignar"}</strong><small>{q.clientAddress || "—"}</small></td><td>{TEMPLATES.find((t) => t.id === q.serviceType)?.name || q.title}</td><td><span className={`quote-status ${STATUS[q.status]?.[1] || "gray"}`}>● {STATUS[q.status]?.[0] || q.status}</span></td><td>{formatQuoteDate(q.validUntil, q.dateFormat)}</td><td className="right"><strong>{money.format(q.total || 0)}</strong></td><td><div className="quote-row-actions">{q.status === "draft" && <button className="quote-delete-draft" title="Eliminar borrador" aria-label={`Eliminar ${q.number}`} onClick={(event) => { event.stopPropagation(); removeDraft(q); }}>🗑</button>}<button className="quote-icon" title="Abrir presupuesto">›</button></div></td></tr>)}</tbody></table>}</div>
+    <div className="quote-table-card">{loading ? <div className="quote-empty">Cargando presupuestos…</div> : filtered.length === 0 ? <div className="quote-empty"><div>🧾</div><h3>Aún no hay presupuestos</h3><p>Empieza desde una plantilla específica de limpieza.</p><button className="quote-primary" onClick={() => startQuote()}>Crear el primero</button></div> : <table><thead><tr><th>Presupuesto</th><th>Cliente</th><th>Servicio</th><th>Estado</th><th>Validez</th><th className="right">Importe</th><th>Acciones</th></tr></thead><tbody>{filtered.map((q) => { const canDelete = q.status === "draft" || (q.status === "sent" && !String(q.clientId || "").trim() && !String(q.clientName || "").trim()); return <tr key={q.id} onClick={() => { setEditing(q); setParams({ editar: q.id }); }}><td><strong>{q.number}</strong><small>v{q.version || 1} · {formatQuoteDate(q.issueDate, q.dateFormat)}</small></td><td><strong>{q.clientName || "Sin asignar"}</strong><small>{q.clientAddress || "—"}</small></td><td>{TEMPLATES.find((t) => t.id === q.serviceType)?.name || q.title}</td><td><span className={`quote-status ${STATUS[q.status]?.[1] || "gray"}`}>● {STATUS[q.status]?.[0] || q.status}</span></td><td>{formatQuoteDate(q.validUntil, q.dateFormat)}</td><td className="right"><strong>{money.format(q.total || 0)}</strong></td><td><div className="quote-row-actions">{canDelete && <button className="quote-delete-draft" title={q.status === "draft" ? "Eliminar borrador" : "Eliminar prueba enviada"} aria-label={`Eliminar ${q.number}`} onClick={(event) => { event.stopPropagation(); removeQuote(q); }}>🗑</button>}<button className="quote-icon" title="Abrir presupuesto">›</button></div></td></tr>; })}</tbody></table>}</div>
     <section id="templates" className="quote-templates"><div className="section-heading"><div><span className="quotes-eyebrow">ATAJOS</span><h3>Empezar desde una plantilla</h3></div><p>Partidas y precios editables</p></div><div className="template-grid">{TEMPLATES.map((template) => <button key={template.id} onClick={() => startQuote(template)}><span>{template.icon}</span><strong>{template.name}</strong><small>{template.subtitle}</small><em>Usar plantilla →</em></button>)}</div></section>
   </div>;
 }

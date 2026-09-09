@@ -3550,6 +3550,57 @@ exports.sendQuoteEmail = onCall(
   },
 );
 
+exports.deleteSentTestQuote = onCall(
+  { region: "europe-west1", memory: "256MiB", timeoutSeconds: 60 },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    const companyId = request.auth.token.companyId;
+    const { quoteId } = request.data || {};
+    if (!companyId || !quoteId || !/^[a-zA-Z0-9_-]{1,128}$/.test(quoteId)) {
+      throw new HttpsError("invalid-argument", "Presupuesto no válido.");
+    }
+    await assertTenantEnabled(companyId);
+    const userDoc = await db.collection("users").doc(request.auth.uid).get();
+    if (!userDoc.exists || userDoc.data().role !== "admin") {
+      throw new HttpsError("permission-denied", "No tienes permisos para eliminar presupuestos.");
+    }
+
+    const quoteRef = db.collection(`companies/${companyId}/quotes`).doc(quoteId);
+    const quoteSnap = await quoteRef.get();
+    if (!quoteSnap.exists) return { success: true, deleted: false };
+    const quote = quoteSnap.data();
+    const isUnassigned = !String(quote.clientId || "").trim() && !String(quote.clientName || "").trim();
+    if (quote.status !== "sent" || !isUnassigned) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Solo se pueden eliminar pruebas enviadas que no tengan un cliente asignado.",
+      );
+    }
+
+    const versionsSnap = await db
+      .collection(`companies/${companyId}/quoteVersions`)
+      .where("quoteId", "==", quoteId)
+      .get();
+    const batch = db.batch();
+    versionsSnap.docs.forEach((versionDoc) => batch.delete(versionDoc.ref));
+    batch.delete(quoteRef);
+    await batch.commit();
+
+    try {
+      await getStorage().bucket().deleteFiles({
+        prefix: `companies/${companyId}/quotes/${quoteId}/`,
+      });
+    } catch (error) {
+      console.error("No se pudieron retirar todos los PDF de la prueba eliminada", {
+        companyId,
+        quoteId,
+        error: error?.message || String(error),
+      });
+    }
+    return { success: true, deleted: true };
+  },
+);
+
 exports.sendGroupedInvoiceEmails = onCall(
   {
     region: "europe-west1",

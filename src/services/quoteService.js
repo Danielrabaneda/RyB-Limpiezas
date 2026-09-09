@@ -135,6 +135,12 @@ export async function deleteDraftQuote(companyId, quoteId) {
   await deleteDoc(ref);
 }
 
+export async function deleteSentTestQuote(quoteId) {
+  const fn = httpsCallable(functions, "deleteSentTestQuote");
+  const result = await fn({ quoteId });
+  return result.data;
+}
+
 export async function convertQuoteToInvoice(companyId, quote) {
   const now = new Date();
   const invoiceId = await createInvoice(companyId, {
