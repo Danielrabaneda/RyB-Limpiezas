@@ -1,10 +1,17 @@
-const { getWeekOfMonth, lastDayOfMonth, startOfWeek, getMonth, isSameDay, startOfDay } = require('date-fns');
+const {
+  getWeekOfMonth,
+  lastDayOfMonth,
+  startOfWeek,
+  getMonth,
+  isSameDay,
+  startOfDay,
+} = require("date-fns");
 
 function shouldScheduleOnDay(task, date) {
   const dayOfWeek = date.getDay(); // 0=Sunday, 1=Monday...
   const dayOfMonth = date.getDate();
   const currentMonthIdx = date.getMonth(); // 0-11
-  
+
   if (task.weekOfMonth) {
     const weekNum = getWeekOfMonth(date, { weekStartsOn: 1 });
     if (parseInt(task.weekOfMonth) === 5) {
@@ -29,7 +36,7 @@ function shouldScheduleOnDay(task, date) {
   };
 
   switch (task.frequencyType) {
-    case 'monthly':
+    case "monthly":
       if (task.monthDays && task.monthDays.length > 0) {
         return task.monthDays.includes(dayOfMonth);
       }
@@ -40,9 +47,9 @@ function shouldScheduleOnDay(task, date) {
 }
 
 const task = {
-  weekOfMonth: '5',
-  frequencyType: 'monthly',
-  createdAt: new Date('2024-01-01')
+  weekOfMonth: "5",
+  frequencyType: "monthly",
+  createdAt: new Date("2024-01-01"),
 };
 
 // Test for April 2026

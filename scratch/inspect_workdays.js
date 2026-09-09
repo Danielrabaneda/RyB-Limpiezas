@@ -16,17 +16,19 @@ const db = getFirestore(app);
 async function main() {
   console.log("Fetching all workdays...");
   const snap = await getDocs(collection(db, "workdays"));
-  const workdays = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const workdays = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
   console.log(`Total workdays in DB: ${workdays.length}`);
 
-  const activeWorkdays = workdays.filter(w => w.status === 'active');
+  const activeWorkdays = workdays.filter((w) => w.status === "active");
   console.log(`\nActive Workdays: ${activeWorkdays.length}`);
-  activeWorkdays.forEach(w => {
-    const startTimeDate = w.startTime?.toDate ? w.startTime.toDate() : new Date(w.startTime);
+  activeWorkdays.forEach((w) => {
+    const startTimeDate = w.startTime?.toDate
+      ? w.startTime.toDate()
+      : new Date(w.startTime);
     console.log(`- Workday ID: ${w.id}`);
-    console.log(`  User: ${w.userName || 'Unknown'} (${w.userId})`);
-    console.log(`  Companion UID: ${w.currentCompanionId || 'None'}`);
+    console.log(`  User: ${w.userName || "Unknown"} (${w.userId})`);
+    console.log(`  Companion UID: ${w.currentCompanionId || "None"}`);
     console.log(`  StartTime: ${startTimeDate.toISOString()}`);
   });
 

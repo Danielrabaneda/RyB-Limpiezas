@@ -1,9 +1,14 @@
 {
   "name": "LimpiaGest",
   "short_name": "LimpiaGest",
+  "id": "/",
   "description": "Gestión de servicios de limpieza de comunidades",
-  "start_url": "/",
+  "start_url": "/app",
+  "scope": "/",
   "display": "standalone",
+  "launch_handler": {
+    "client_mode": "navigate-existing"
+  },
   "background_color": "#0f172a",
   "theme_color": "#2563eb",
   "orientation": "portrait",

@@ -1,5 +1,15 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore, doc, getDoc, getDocs, collection, query, where, orderBy, limit } from "firebase/firestore";
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  getDocs,
+  collection,
+  query,
+  where,
+  orderBy,
+  limit,
+} from "firebase/firestore";
 import { getAuth, signInAnonymously } from "firebase/auth";
 
 const firebaseConfig = {
@@ -18,11 +28,13 @@ const auth = getAuth(app);
 async function testPortal(token) {
   try {
     console.log(`\nTesting with token: ${token}`);
-    
-    console.log("Step 0: Skipping anonymous login (testing unauthenticated access)...");
+
+    console.log(
+      "Step 0: Skipping anonymous login (testing unauthenticated access)...",
+    );
 
     console.log("Step 1: Fetching publicPortal document...");
-    const portalRef = doc(db, 'publicPortals', token);
+    const portalRef = doc(db, "publicPortals", token);
     const portalSnap = await getDoc(portalRef);
     if (!portalSnap.exists()) {
       console.error("  -> Portal document does not exist!");
@@ -33,7 +45,7 @@ async function testPortal(token) {
 
     const communityId = portalData.communityId;
     console.log(`Step 2: Fetching community document ${communityId}...`);
-    const communityRef = doc(db, 'communities', communityId);
+    const communityRef = doc(db, "communities", communityId);
     const communitySnap = await getDoc(communityRef);
     if (!communitySnap.exists()) {
       console.error("  -> Community document does not exist!");
@@ -44,33 +56,32 @@ async function testPortal(token) {
 
     console.log("Step 3: Querying checkIns...");
     const reportsQ = query(
-      collection(db, 'checkIns'),
-      where('communityId', '==', communityId),
-      orderBy('checkInTime', 'desc'),
-      limit(10)
+      collection(db, "checkIns"),
+      where("communityId", "==", communityId),
+      orderBy("checkInTime", "desc"),
+      limit(10),
     );
     const reportsSnap = await getDocs(reportsQ);
     console.log(`  -> Found ${reportsSnap.size} check-ins.`);
 
     console.log("Step 4: Querying evidence...");
     const evidenceQ = query(
-      collection(db, 'evidenceReports'),
-      where('communityId', '==', communityId),
-      orderBy('createdAt', 'desc'),
-      limit(50)
+      collection(db, "evidenceReports"),
+      where("communityId", "==", communityId),
+      orderBy("createdAt", "desc"),
+      limit(50),
     );
     const evidenceSnap = await getDocs(evidenceQ);
     console.log(`  -> Found ${evidenceSnap.size} evidence reports.`);
 
     console.log("Step 5: Querying tasks...");
     const tasksQ = query(
-      collection(db, 'communityTasks'),
-      where('communityId', '==', communityId),
-      where('active', '==', true)
+      collection(db, "communityTasks"),
+      where("communityId", "==", communityId),
+      where("active", "==", true),
     );
     const tasksSnap = await getDocs(tasksQ);
     console.log(`  -> Found ${tasksSnap.size} active tasks.`);
-
   } catch (err) {
     console.error("  -> FAILED WITH ERROR:", err);
   }

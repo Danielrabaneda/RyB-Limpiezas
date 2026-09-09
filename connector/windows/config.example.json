@@ -1,0 +1,10 @@
+{
+  "environment": "test",
+  "certificateStore": "LocalMachine",
+  "certificateThumbprint": "11077B274C7F60F7432C29F916B32E516D920453",
+  "expectedIssuerTaxId": "B04843843",
+  "aeatEndpoint": "https://prewww1.aeat.es/wlpl/TIKE-CONT/ws/SistemaFacturacion/VerifactuSOAP",
+  "aeatWsdl": "https://prewww2.aeat.es/static_files/common/internet/dep/aplicaciones/es/aeat/tikeV1.0/cont/ws/SistemaFacturacion.wsdl",
+  "connectorApiUrl": "PENDING_DEPLOYMENT",
+  "pollIntervalSeconds": 30
+}

@@ -1,25 +1,35 @@
-import { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { useAuth } from '../../contexts/AuthContext';
-import { useGeolocation } from '../../hooks/useGeolocation';
-import { useServiceData } from '../../hooks/useServiceData';
-import { useCheckInFlow } from '../../hooks/useCheckInFlow';
-import { useServiceEvidence } from '../../hooks/useServiceEvidence';
-import { transferService, rescheduleService } from '../../services/transferService';
-import TransferModal from '../../components/TransferModal';
-import RescheduleModal from '../../components/RescheduleModal';
-import SignatureCanvas from '../../components/SignatureCanvas';
-import CommunityInfoCard from '../../components/operario/CommunityInfoCard';
-import CommunityDocsCard from '../../components/operario/CommunityDocsCard';
-import CheckInControl from '../../components/operario/CheckInControl';
-import TasksList from '../../components/operario/TasksList';
-import GeneralEvidenceCard from '../../components/operario/GeneralEvidenceCard';
-import CompanionsCard from '../../components/operario/CompanionsCard';
+import { useState } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import { useAuth } from "../../contexts/AuthContext";
+import { useTenant } from "../../contexts/TenantContext";
+import { useGeolocation } from "../../hooks/useGeolocation";
+import { useServiceData } from "../../hooks/useServiceData";
+import { useCheckInFlow } from "../../hooks/useCheckInFlow";
+import { useServiceEvidence } from "../../hooks/useServiceEvidence";
+import {
+  transferService,
+  rescheduleService,
+} from "../../services/transferService";
+import TransferModal from "../../components/TransferModal";
+import RescheduleModal from "../../components/RescheduleModal";
+import ExceptionPromptModal from "../../components/operario/ExceptionPromptModal";
+import SignatureCanvas from "../../components/SignatureCanvas";
+import CommunityInfoCard from "../../components/operario/CommunityInfoCard";
+import CommunityDocsCard from "../../components/operario/CommunityDocsCard";
+import CheckInControl from "../../components/operario/CheckInControl";
+import TasksList from "../../components/operario/TasksList";
+import GeneralEvidenceCard from "../../components/operario/GeneralEvidenceCard";
+import CompanionsCard from "../../components/operario/CompanionsCard";
 
 export default function ServiceDetailPage() {
   const { serviceId } = useParams();
   const { userProfile } = useAuth();
-  const { getCurrentPosition, getFilteredPosition, loading: geoLoading } = useGeolocation();
+  const { companyId } = useTenant();
+  const {
+    getCurrentPosition,
+    getFilteredPosition,
+    loading: geoLoading,
+  } = useGeolocation();
   const navigate = useNavigate();
 
   // Integrar hook de datos del servicio
@@ -29,6 +39,7 @@ export default function ServiceDetailPage() {
     community,
     tasks,
     taskExecutions,
+    completedDate,
     activeCheckIn,
     otherActiveCheckIn,
     loading,
@@ -47,7 +58,7 @@ export default function ServiceDetailPage() {
 
   // Integrar hook de evidencias y firma (pasando setActionLoading para bloquear UI al firmar)
   const serviceEvidence = useServiceEvidence(serviceId, userProfile, service, {
-    setActionLoading
+    setActionLoading,
   });
   const {
     showSignatureModal,
@@ -64,7 +75,7 @@ export default function ServiceDetailPage() {
     uploadingSignature,
     handleGeneralPhotoUpload,
     handleSubmitGeneralEvidence,
-    handleSaveSignature
+    handleSaveSignature,
   } = serviceEvidence;
 
   // Integrar hook de flujo de check-in (pasando clientSignature, setClientSignature y actionLoading compartido)
@@ -75,7 +86,7 @@ export default function ServiceDetailPage() {
     clientSignature,
     setClientSignature,
     actionLoading,
-    setActionLoading
+    setActionLoading,
   });
 
   const {
@@ -85,6 +96,8 @@ export default function ServiceDetailPage() {
     suggestedIn,
     entrySource,
     suggestedOut,
+    entryDetails,
+    handleDismissSuggestion,
     estimatedIn,
     estimatedOut,
     showManualEntryForm,
@@ -97,30 +110,34 @@ export default function ServiceDetailPage() {
     setManualEntryTime,
     manualExitTime,
     setManualExitTime,
+    pendingAction,
+    setPendingAction,
+    cancelPendingAction,
     handleCheckIn,
     handleCheckOut,
     handleFullManualSubmit,
     handleForceComplete,
-    sendGPSLocation
+    sendGPSLocation,
+    executeCheckIn,
+    executeCheckOut,
+    executeFullManual,
   } = checkInFlow;
-
-
 
   async function handleTransferConfirm(toUserId) {
     if (!toUserId) return;
     setActionLoading(true);
     try {
-      await transferService({
+      await transferService(companyId, {
         serviceId,
         fromUserId: userProfile.uid,
         toUserId,
-        requesterRole: 'operario'
+        requesterRole: "operario",
       });
-      alert('Traspaso solicitado correctamente.');
+      alert("Traspaso solicitado correctamente.");
       setTransferModalOpen(false);
-      navigate('/operario');
+      navigate("/operario");
     } catch (err) {
-      alert('Error en el traspaso: ' + err.message);
+      alert("Error en el traspaso: " + err.message);
     } finally {
       setActionLoading(false);
     }
@@ -129,33 +146,55 @@ export default function ServiceDetailPage() {
   async function handleRescheduleConfirm(newDate) {
     setActionLoading(true);
     try {
-      await rescheduleService({
+      await rescheduleService(companyId, {
         serviceId,
         newDate,
-        requesterRole: 'operario',
-        userId: userProfile.uid
+        requesterRole: "operario",
+        userId: userProfile.uid,
       });
-      alert('Cambio de fecha solicitado. El administrador deberá validarlo.');
+      alert("Cambio de fecha solicitado. El administrador deberá validarlo.");
       setRescheduleModalOpen(false);
       loadStaticData();
     } catch (err) {
-      alert('Error en el cambio de fecha: ' + err.message);
+      alert("Error en el cambio de fecha: " + err.message);
     } finally {
       setActionLoading(false);
     }
   }
 
+  async function handleConfirmException(reason) {
+    if (!pendingAction) return;
+    const action = pendingAction;
+    setPendingAction(null); // Close modal
+
+    if (action.type === "checkin") {
+      await executeCheckIn(action.pos, action.manualTime, reason);
+    } else if (action.type === "checkout") {
+      await executeCheckOut(action.pos, action.lat, action.lng, action.manualTime, action.clientSignature, reason);
+    } else if (action.type === "fullManual") {
+      await executeFullManual(action.entryDate, action.exitDate, reason);
+    }
+  }
+
   if (loading) {
-    return <div className="flex justify-center p-6"><div className="spinner"></div></div>;
+    return (
+      <div className="flex justify-center p-6">
+        <div className="spinner"></div>
+      </div>
+    );
   }
 
   if (!service) {
-    return <div className="empty-state"><p>Servicio no encontrado</p></div>;
+    return (
+      <div className="empty-state">
+        <p>Servicio no encontrado</p>
+      </div>
+    );
   }
 
   const isCheckedIn = !!activeCheckIn;
-  const isCompleted = service.status === 'completed';
-  const isInProgress = service.status === 'in_progress';
+  const isCompleted = service.status === "completed";
+  const isInProgress = service.status === "in_progress";
   const isTitular = service.assignedUserId === userProfile.uid;
   const isCompanion = !isTitular;
   // Can edit if titular checked in OR is active companion and service is in progress
@@ -165,7 +204,11 @@ export default function ServiceDetailPage() {
   return (
     <div className="animate-fadeIn">
       {/* Back button */}
-      <button className="btn btn-ghost mb-4" onClick={() => navigate('/operario')} style={{ marginLeft: '-8px' }}>
+      <button
+        className="btn btn-ghost mb-4"
+        onClick={() => navigate("/operario")}
+        style={{ marginLeft: "-8px" }}
+      >
         ← Volver
       </button>
 
@@ -184,9 +227,19 @@ export default function ServiceDetailPage() {
         sendGPSLocation={sendGPSLocation}
       />
 
+      <TasksList
+        tasks={tasks}
+        taskExecutions={taskExecutions}
+        service={service}
+        groupedServices={groupedServices}
+        completedDate={completedDate}
+        canEdit={canEdit}
+        toggleTaskStatus={toggleTaskStatus}
+      />
+
       <CommunityDocsCard communityDocs={communityDocs} />
 
-      <TransferModal 
+      <TransferModal
         isOpen={transferModalOpen}
         onClose={() => setTransferModalOpen(false)}
         onConfirm={handleTransferConfirm}
@@ -194,7 +247,7 @@ export default function ServiceDetailPage() {
         title={`Traspasar servicio ${community?.name}`}
       />
 
-      <RescheduleModal 
+      <RescheduleModal
         isOpen={rescheduleModalOpen}
         onClose={() => setRescheduleModalOpen(false)}
         onConfirm={handleRescheduleConfirm}
@@ -202,7 +255,33 @@ export default function ServiceDetailPage() {
         loading={actionLoading}
       />
 
+      <ExceptionPromptModal
+        isOpen={!!pendingAction}
+        onClose={cancelPendingAction}
+        onConfirm={handleConfirmException}
+        title={pendingAction?.type === "checkin" ? "Excepción de Entrada" : pendingAction?.type === "checkout" ? "Excepción de Salida" : "Fichaje Retroactivo"}
+        message={
+          pendingAction?.type === "checkin"
+            ? pendingAction.isOutOfBounds
+              ? `Estás fuera de rango. Introduce el motivo de la excepción de entrada para la comunidad ${community?.name} (obligatorio):`
+              : "Introduce el motivo de la excepción de entrada manual (obligatorio):"
+            : pendingAction?.type === "checkout"
+              ? pendingAction.isOutOfBounds
+                ? `Estás fuera de rango. Introduce el motivo de la excepción de salida para la comunidad ${community?.name} (obligatorio):`
+                : "Introduce el motivo de la excepción de salida manual (obligatorio):"
+              : "Indica el motivo del fichaje manual o retroactivo (obligatorio):"
+        }
+        loading={actionLoading}
+      />
 
+      <CompanionsCard
+        isTitular={isTitular}
+        activeWorkday={activeWorkday}
+        service={service}
+        isCompleted={isCompleted}
+        operariosMap={operariosMap}
+        handleRemoveCompanion={handleRemoveCompanion}
+      />
 
       <CheckInControl
         isCheckedIn={isCheckedIn}
@@ -215,6 +294,8 @@ export default function ServiceDetailPage() {
         estimatedOut={estimatedOut}
         activeWorkday={activeWorkday}
         suggestedOut={suggestedOut}
+        entryDetails={entryDetails}
+        handleDismissSuggestion={handleDismissSuggestion}
         showManualEntryForm={showManualEntryForm}
         setShowManualEntryForm={setShowManualEntryForm}
         manualEntryTime={manualEntryTime}
@@ -239,15 +320,6 @@ export default function ServiceDetailPage() {
         handleForceComplete={handleForceComplete}
       />
 
-      <TasksList
-        showTasks={showTasks}
-        tasks={tasks}
-        taskExecutions={taskExecutions}
-        service={service}
-        canEdit={canEdit}
-        toggleTaskStatus={toggleTaskStatus}
-      />
-
       <GeneralEvidenceCard
         showTasks={showTasks}
         canEdit={canEdit}
@@ -261,17 +333,8 @@ export default function ServiceDetailPage() {
         submittingGeneralEvidence={submittingGeneralEvidence}
       />
 
-      <CompanionsCard
-        isTitular={isTitular}
-        activeWorkday={activeWorkday}
-        service={service}
-        isCompleted={isCompleted}
-        operariosMap={operariosMap}
-        handleRemoveCompanion={handleRemoveCompanion}
-      />
-
       {showSignatureModal && (
-        <SignatureCanvas 
+        <SignatureCanvas
           onSave={handleSaveSignature}
           onCancel={() => setShowSignatureModal(false)}
         />

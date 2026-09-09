@@ -1,17 +1,25 @@
-import React, { useState, useEffect } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { getConsent, setConsent, acceptAll, rejectAll, initializeConsent } from '../utils/cookieConsent';
+import React, { useState, useEffect } from "react";
+import { Link, useLocation } from "react-router-dom";
+import {
+  getConsent,
+  setConsent,
+  acceptAll,
+  rejectAll,
+  initializeConsent,
+} from "../utils/cookieConsent";
 
 export default function CookieBanner() {
   const [isVisible, setIsVisible] = useState(false);
   const [showConfig, setShowConfig] = useState(false);
   const [preferences, setPreferences] = useState({
     analytical: false,
-    marketing: false
+    marketing: false,
   });
-  
+
   const location = useLocation();
-  const isAdminOrOperario = location.pathname.startsWith('/admin') || location.pathname.startsWith('/operario');
+  const isAdminOrOperario =
+    location.pathname.startsWith("/admin") ||
+    location.pathname.startsWith("/operario");
 
   // Inicializar al montar
   useEffect(() => {
@@ -22,7 +30,7 @@ export default function CookieBanner() {
     } else {
       setPreferences({
         analytical: current.analytical,
-        marketing: current.marketing
+        marketing: current.marketing,
       });
     }
 
@@ -31,7 +39,7 @@ export default function CookieBanner() {
       const updated = e.detail;
       setPreferences({
         analytical: updated.analytical,
-        marketing: updated.marketing
+        marketing: updated.marketing,
       });
     };
 
@@ -41,12 +49,18 @@ export default function CookieBanner() {
       setShowConfig(true);
     };
 
-    window.addEventListener('ryb-cookie-consent-changed', handleConsentChange);
-    window.addEventListener('ryb-open-cookie-settings', handleOpenSettings);
-    
+    window.addEventListener("ryb-cookie-consent-changed", handleConsentChange);
+    window.addEventListener("ryb-open-cookie-settings", handleOpenSettings);
+
     return () => {
-      window.removeEventListener('ryb-cookie-consent-changed', handleConsentChange);
-      window.removeEventListener('ryb-open-cookie-settings', handleOpenSettings);
+      window.removeEventListener(
+        "ryb-cookie-consent-changed",
+        handleConsentChange,
+      );
+      window.removeEventListener(
+        "ryb-open-cookie-settings",
+        handleOpenSettings,
+      );
     };
   }, []);
 
@@ -65,16 +79,16 @@ export default function CookieBanner() {
   const handleSaveConfig = () => {
     setConsent({
       analytical: preferences.analytical,
-      marketing: preferences.marketing
+      marketing: preferences.marketing,
     });
     setIsVisible(false);
     setShowConfig(false);
   };
 
   const togglePreference = (key) => {
-    setPreferences(prev => ({
+    setPreferences((prev) => ({
       ...prev,
-      [key]: !prev[key]
+      [key]: !prev[key],
     }));
   };
 
@@ -98,28 +112,58 @@ export default function CookieBanner() {
   }
 
   return (
-    <div className="cookie-banner-wrapper" role="dialog" aria-labelledby="cookie-title" aria-describedby="cookie-desc">
+    <div
+      className="cookie-banner-wrapper"
+      role="dialog"
+      aria-labelledby="cookie-title"
+      aria-describedby="cookie-desc"
+    >
       <div className="cookie-banner-title" id="cookie-title">
         <span>🍪</span> Configuración de Privacidad y Cookies
       </div>
-      
+
       <div className="cookie-banner-text" id="cookie-desc">
-        Utilizamos cookies propias y de terceros para garantizar el correcto funcionamiento del portal, 
-        analizar el uso de nuestros servicios y mostrarte publicidad relacionada con tus preferencias. 
-        Puedes aceptarlas todas, rechazarlas o configurar tus preferencias. Más información en nuestra{' '}
-        <Link to="/politica-de-cookies" onClick={() => { setIsVisible(false); }}>Política de Cookies</Link> y{' '}
-        <Link to="/politica-de-privacidad" onClick={() => { setIsVisible(false); }}>Política de Privacidad</Link>.
+        Utilizamos cookies propias y de terceros para garantizar el correcto
+        funcionamiento del portal, analizar el uso de nuestros servicios y
+        mostrarte publicidad relacionada con tus preferencias. Puedes aceptarlas
+        todas, rechazarlas o configurar tus preferencias. Más información en
+        nuestra{" "}
+        <Link
+          to="/politica-de-cookies"
+          onClick={() => {
+            setIsVisible(false);
+          }}
+        >
+          Política de Cookies
+        </Link>{" "}
+        y{" "}
+        <Link
+          to="/politica-de-privacidad"
+          onClick={() => {
+            setIsVisible(false);
+          }}
+        >
+          Política de Privacidad
+        </Link>
+        .
       </div>
 
       <div className="cookie-buttons-container">
-        <button onClick={handleAcceptAll} className="cookie-btn" style={{ fontWeight: '700' }}>
+        <button
+          onClick={handleAcceptAll}
+          className="cookie-btn"
+          style={{ fontWeight: "700" }}
+        >
           Aceptar
         </button>
         <button onClick={handleRejectAll} className="cookie-btn">
           Rechazar
         </button>
-        <button onClick={() => setShowConfig(!showConfig)} className="cookie-btn">
-          {showConfig ? 'Ocultar panel' : 'Configurar'}
+        <button
+          onClick={() => setShowConfig(!showConfig)}
+          className="cookie-btn"
+        >
+          {showConfig ? "Ocultar panel" : "Configurar"}
         </button>
       </div>
 
@@ -128,9 +172,12 @@ export default function CookieBanner() {
           {/* Técnicas (Obligatorias) */}
           <div className="cookie-config-option">
             <div className="cookie-config-info">
-              <span className="cookie-config-label">Cookies Técnicas (Necesarias)</span>
+              <span className="cookie-config-label">
+                Cookies Técnicas (Necesarias)
+              </span>
               <span className="cookie-config-desc">
-                Imprescindibles para que la web funcione (inicio de sesión, seguridad, etc.). No se pueden desactivar.
+                Imprescindibles para que la web funcione (inicio de sesión,
+                seguridad, etc.). No se pueden desactivar.
               </span>
             </div>
             <label className="cookie-switch">
@@ -144,14 +191,15 @@ export default function CookieBanner() {
             <div className="cookie-config-info">
               <span className="cookie-config-label">Cookies Analíticas</span>
               <span className="cookie-config-desc">
-                Nos permiten medir el número de visitas y conocer cómo navegas para mejorar el servicio.
+                Nos permiten medir el número de visitas y conocer cómo navegas
+                para mejorar el servicio.
               </span>
             </div>
             <label className="cookie-switch">
               <input
                 type="checkbox"
                 checked={preferences.analytical}
-                onChange={() => togglePreference('analytical')}
+                onChange={() => togglePreference("analytical")}
               />
               <span className="cookie-slider" />
             </label>
@@ -160,16 +208,19 @@ export default function CookieBanner() {
           {/* Publicitarias (GDPR desmarcadas por defecto) */}
           <div className="cookie-config-option">
             <div className="cookie-config-info">
-              <span className="cookie-config-label">Cookies Publicitarias / Marketing</span>
+              <span className="cookie-config-label">
+                Cookies Publicitarias / Marketing
+              </span>
               <span className="cookie-config-desc">
-                Se utilizan para mostrarte anuncios relevantes basados en tus intereses y perfil de navegación.
+                Se utilizan para mostrarte anuncios relevantes basados en tus
+                intereses y perfil de navegación.
               </span>
             </div>
             <label className="cookie-switch">
               <input
                 type="checkbox"
                 checked={preferences.marketing}
-                onChange={() => togglePreference('marketing')}
+                onChange={() => togglePreference("marketing")}
               />
               <span className="cookie-slider" />
             </label>
@@ -179,7 +230,12 @@ export default function CookieBanner() {
             <button
               onClick={handleSaveConfig}
               className="cookie-btn"
-              style={{ background: 'var(--color-primary)', borderColor: 'var(--color-primary-light)', paddingLeft: '24px', paddingRight: '24px' }}
+              style={{
+                background: "var(--color-primary)",
+                borderColor: "var(--color-primary-light)",
+                paddingLeft: "24px",
+                paddingRight: "24px",
+              }}
             >
               Guardar Configuración
             </button>
