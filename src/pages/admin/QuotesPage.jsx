@@ -193,7 +193,7 @@ export default function QuotesPage() {
     }, 500);
   };
   const closeEditor = async () => { clearTimeout(autosaveRef.current); await updateQuote(companyId, editing.id, { ...editing, contentChanged: true }, currentUser); setEditing(null); setParams({}); await load(); };
-  const statusAction = async (status, extra = {}) => { await setQuoteStatus(companyId, editing, status, currentUser, extra); setEditing((old) => ({ ...old, status, ...extra })); setQuotes((old) => old.map((q) => q.id === editing.id ? { ...q, status, ...extra } : q)); };
+  const statusAction = async (status, extra = {}) => { clearTimeout(autosaveRef.current); const synced = await setQuoteStatus(companyId, editing, status, currentUser, extra); const statusData = { status, ...extra, opportunityId: synced.opportunityId || editing.opportunityId || "", activity: synced.activity || editing.activity || [] }; setEditing((old) => ({ ...old, ...statusData })); setQuotes((old) => old.map((q) => q.id === editing.id ? { ...q, ...statusData } : q)); };
   const removeQuote = async (quote) => {
     const isSentTest = quote.status === "sent" && !String(quote.clientId || "").trim() && !String(quote.clientName || "").trim();
     const message = isSentTest

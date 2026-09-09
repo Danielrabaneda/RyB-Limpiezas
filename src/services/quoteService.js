@@ -9,6 +9,7 @@ import {
   serverTimestamp,
   updateDoc,
   where,
+  writeBatch,
 } from "firebase/firestore";
 import { db } from "../config/firebase";
 import { functions, storage } from "../config/firebase";
@@ -17,6 +18,7 @@ import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
 import { createInvoice } from "./invoiceService";
 import { createCommunityTask } from "./taskService";
+import { buildQuoteOpportunityData } from "../utils/quotePipeline";
 
 const COLLECTION = "quotes";
 
@@ -93,27 +95,75 @@ export async function setQuoteStatus(companyId, quote, status, user, extra = {})
     converted_service: "Convertido a servicio",
     converted_invoice: "Convertido a factura",
   }[status] || "Estado actualizado";
-  await updateDoc(tenantDoc(db, companyId, COLLECTION, quote.id), {
+  const now = new Date().toISOString();
+  const quoteActivity = [...(quote.activity || []), { type: status, label, at: now, by: user?.email || "" }];
+  const opportunityData = buildQuoteOpportunityData(quote, status);
+  let opportunityId = quote.opportunityId || "";
+  let opportunityRef = null;
+  let opportunity = null;
+
+  if (opportunityData) {
+    if (opportunityId) {
+      opportunityRef = tenantDoc(db, companyId, "opportunities", opportunityId);
+      const opportunitySnap = await getDoc(opportunityRef);
+      if (opportunitySnap.exists()) opportunity = opportunitySnap.data();
+      else opportunityId = "";
+    }
+    if (!opportunityId) {
+      opportunityId = `quote_${quote.id}`;
+      opportunityRef = tenantDoc(db, companyId, "opportunities", opportunityId);
+      const opportunitySnap = await getDoc(opportunityRef);
+      if (opportunitySnap.exists()) opportunity = opportunitySnap.data();
+    }
+  }
+
+  const batch = writeBatch(db);
+  batch.update(tenantDoc(db, companyId, COLLECTION, quote.id), {
     status,
     ...extra,
-    activity: [...(quote.activity || []), { type: status, label, at: new Date().toISOString(), by: user?.email || "" }],
+    ...(opportunityId ? { opportunityId } : {}),
+    activity: quoteActivity,
     updatedAt: serverTimestamp(),
   });
-  if (quote.opportunityId && ["sent", "accepted", "rejected", "converted_service"].includes(status)) {
-    const opportunityStage = { sent: "quote_sent", accepted: "won", rejected: "lost", converted_service: "won" }[status];
-    const opportunityRef = tenantDoc(db, companyId, "opportunities", quote.opportunityId);
-    const opportunitySnap = await getDoc(opportunityRef);
-    if (opportunitySnap.exists()) {
-      const opportunity = opportunitySnap.data();
-      await updateDoc(opportunityRef, {
-        stage: opportunityStage,
-        quoteId: quote.id,
-        lastActivityAt: new Date().toISOString(),
-        activities: [...(opportunity.activities || []), { type: "quote", title: label, quoteId: quote.id, at: new Date().toISOString(), by: user?.email || "" }],
-        updatedAt: serverTimestamp(),
+
+  if (opportunityData && opportunityRef) {
+    const opportunityActivity = {
+      id: `${Date.now()}-${status}`,
+      type: "quote",
+      title: label,
+      quoteId: quote.id,
+      at: now,
+      by: user?.email || "",
+    };
+    const sharedData = {
+      ...opportunityData,
+      quoteId: quote.id,
+      quoteNumber: quote.number || "",
+      lastActivityAt: now,
+      updatedAt: serverTimestamp(),
+      ...(status === "rejected" ? { lossReason: extra.rejectionReason || "Presupuesto rechazado" } : {}),
+      ...(status === "expired" ? { lossReason: "Presupuesto caducado" } : {}),
+    };
+    if (opportunity) {
+      const { name, origin, priority, ...syncData } = sharedData;
+      batch.update(opportunityRef, {
+        ...syncData,
+        activities: [...(opportunity.activities || []), opportunityActivity],
+      });
+    } else {
+      batch.set(opportunityRef, {
+        ...sharedData,
+        createdBy: user?.uid || "",
+        createdAt: serverTimestamp(),
+        activities: [
+          { id: `${Date.now()}-created`, type: "created", title: "Oportunidad creada automáticamente desde el presupuesto", at: now, by: user?.email || "" },
+          opportunityActivity,
+        ],
       });
     }
   }
+  await batch.commit();
+  return { opportunityId, activity: quoteActivity };
 }
 
 export async function duplicateQuote(companyId, quote, user) {
