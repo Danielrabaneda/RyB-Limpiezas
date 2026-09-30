@@ -19,6 +19,12 @@ import {
   uploadQuotePdf,
   updateQuote,
 } from "../../services/quoteService";
+import {
+  PDF_PREVIEW_HEIGHT,
+  PDF_PREVIEW_WIDTH,
+  calculatePdfPreviewScale,
+  resolvePdfRenderWidth,
+} from "../../utils/pdfPreviewSizing";
 import "./QuotesPage.css";
 
 const money = new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" });
@@ -225,7 +231,7 @@ export default function QuotesPage() {
     const source = document.querySelector("[data-quote-pdf-preview]");
     if (!source) throw new Error("No se ha podido preparar la vista del presupuesto.");
     await document.fonts?.ready;
-    const sourceWidth = Math.max(480, Math.round(source.getBoundingClientRect().width || 520));
+    const sourceWidth = resolvePdfRenderWidth(source.offsetWidth, source.getBoundingClientRect().width);
     const renderHost = document.createElement("div");
     renderHost.className = "pdf-render-host";
     const renderedPreview = source.cloneNode(true);
@@ -314,7 +320,7 @@ function QuoteEditor({ quote, communities, settings, savedState, onChange, onCli
       <section className="editor-card insurance-card"><div className="insurance-heading"><div><h3>Seguros y garantías de la empresa</h3><p>Refuerza la confianza indicando las coberturas vigentes.</p></div><label className="switch-label"><input type="checkbox" checked={quote.showInsurance !== false} onChange={(e) => onChange("showInsurance", e.target.checked)} /> Mostrar al cliente</label></div>{quote.showInsurance !== false && <><div className="insurance-options">{INSURANCE_OPTIONS.map((insurance) => <label key={insurance} className={(quote.insurances || []).includes(insurance) ? "selected" : ""}><input type="checkbox" checked={(quote.insurances || []).includes(insurance)} onChange={() => toggleInsurance(insurance)} /><span>✓</span>{insurance}</label>)}</div><label className="insurance-details">Detalles de póliza, capital asegurado u otras coberturas<textarea value={quote.insuranceDetails || ""} onChange={(e) => onChange("insuranceDetails", e.target.value)} placeholder="Ej. Seguro de responsabilidad civil con cobertura de 600.000 €. Certificado disponible a petición." /></label></>}</section>
       <section className="editor-card pdf-style-card"><div className="pdf-style-heading"><div><h3>Diseño y contacto del PDF</h3><p>Personaliza la franja superior y facilita que el cliente contacte para aceptar.</p></div><span className="pdf-color-sample" style={{ background: headerColor }} /></div><div className="pdf-style-grid"><label>Formato de las fechas<select value={quote.dateFormat || "dmy"} onChange={(e) => onChange("dateFormat", e.target.value)}><option value="dmy">Día / mes / año</option><option value="ymd">Año - mes - día</option></select></label><label>Color de la franja superior<div className="color-control"><input type="color" value={headerColor} onChange={(e) => onChange("headerColor", e.target.value)} /><strong>{headerColor.toUpperCase()}</strong></div><small>Solo modifica la línea de la cabecera.</small></label><label className="wide">Teléfono destacado para aceptar<input type="tel" value={companyPhone} onChange={(e) => onChange("companyPhone", e.target.value)} placeholder="Ej. 687 983 162" /><small>Se mostrará destacado junto a los datos de la empresa.</small></label><label className="wide">Email de contacto para aceptar<input type="email" value={companyEmail} onChange={(e) => onChange("companyEmail", e.target.value)} placeholder="Ej. contacto@miempresa.es" /><small>Se mostrará justo debajo del teléfono.</small></label><label className="wide">Página web de la empresa<input type="url" value={companyWebsite} onChange={(e) => onChange("companyWebsite", e.target.value)} placeholder="https://www.miempresa.es" /></label><label>Posición de la web<select value={quote.websiteAlignment || "center"} onChange={(e) => onChange("websiteAlignment", e.target.value)}><option value="left">Izquierda</option><option value="center">Centro</option><option value="right">Derecha</option></select></label><label>Tamaño de la web<select value={quote.websiteFontSize || 9} onChange={(e) => onChange("websiteFontSize", Number(e.target.value))}><option value="8">Pequeño</option><option value="10">Mediano</option><option value="12">Grande</option><option value="14">Muy grande</option></select></label></div></section>
       <section className="editor-card"><h3>Notas y condiciones</h3><div className="notes-grid"><label>Visibles para el cliente<textarea value={quote.clientNotes} onChange={(e) => onChange("clientNotes", e.target.value)} /></label><label>Notas internas <span>Privadas</span><textarea value={quote.internalNotes} onChange={(e) => onChange("internalNotes", e.target.value)} /></label></div></section>
-    </main><aside className={tab === "preview" ? "pdf-side active" : "pdf-side"}><div className="preview-heading"><div><strong>Vista previa</strong><small>Se actualiza automáticamente</small></div><button onClick={() => onPdf(true)}>↗</button></div><PdfPreview quote={quote} settings={settings} /></aside></div>
+    </main><aside className={tab === "preview" ? "pdf-side active" : "pdf-side"}><div className="preview-heading"><div><strong>Vista previa</strong><small>Se actualiza automáticamente</small></div><button onClick={() => onPdf(true)}>↗</button></div><PdfPreviewViewport quote={quote} settings={settings} /></aside></div>
     {sendModal && <SendQuoteModal quote={quote} companyEmail={settings.smtpEmail} onClose={() => setSendModal(false)} onEmail={onEmail} onWhatsApp={onWhatsApp} />}
   </div>;
 }
@@ -334,6 +340,50 @@ function SendQuoteModal({ quote, companyEmail, onClose, onEmail, onWhatsApp }) {
   const [error, setError] = useState("");
   const submit = async () => { setSending(true); setError(""); try { if (channel === "email") await onEmail({ recipient, subject, message }); else await onWhatsApp(); onClose(); } catch (err) { setError(err?.message || "No se pudo realizar el envío."); } finally { setSending(false); } };
   return <div className="send-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}><div className="send-modal"><header><div><span className="quotes-eyebrow">COMPARTIR PRESUPUESTO</span><h3>¿Cómo quieres enviarlo?</h3></div><button onClick={onClose}>×</button></header><div className="send-channels"><button className={channel === "email" ? "active" : ""} onClick={() => setChannel("email")}><span>✉</span><b>Email</b><small>PDF adjunto desde la empresa</small></button><button className={channel === "whatsapp" ? "active whatsapp" : ""} onClick={() => setChannel("whatsapp")}><span>◉</span><b>WhatsApp</b><small>Comparte mensaje y PDF</small></button></div>{channel === "email" ? <div className="send-form"><p className="sender-note">Se enviará desde <b>{companyEmail || "el correo configurado en Ajustes"}</b></p><label>Destinatario<input type="email" value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="cliente@empresa.com" /></label><label>Asunto<input value={subject} onChange={(e) => setSubject(e.target.value)} /></label><label>Mensaje<textarea rows="6" value={message} onChange={(e) => setMessage(e.target.value)} /></label></div> : <div className="whatsapp-info"><span>◉</span><div><b>Se abrirá WhatsApp para compartirlo</b><p>En móvil podrás enviar el PDF directamente. En ordenador se abrirá el chat y se descargará el PDF para adjuntarlo.</p><label>Teléfono del cliente<input value={quote.clientPhone || "No indicado en la ficha"} readOnly /></label></div></div>}{error && <div className="send-error">⚠ {error}</div>}<footer><button className="quote-secondary" onClick={onClose}>Cancelar</button><button className={`quote-primary ${channel === "whatsapp" ? "wa-button" : ""}`} disabled={sending || (channel === "email" && !recipient)} onClick={submit}>{sending ? "Enviando…" : channel === "email" ? "✉ Enviar email con PDF" : "◉ Abrir WhatsApp"}</button></footer></div></div>;
+}
+
+function PdfPreviewViewport({ quote, settings }) {
+  const viewportRef = useRef(null);
+  const [scale, setScale] = useState(1);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return undefined;
+
+    const updateScale = (width = viewport.clientWidth) => {
+      setScale(calculatePdfPreviewScale(width));
+    };
+
+    updateScale();
+    if (typeof ResizeObserver === "undefined") {
+      const handleResize = () => updateScale();
+      window.addEventListener("resize", handleResize);
+      return () => window.removeEventListener("resize", handleResize);
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      updateScale(entries[0]?.contentRect.width);
+    });
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, []);
+
+  return <div
+    ref={viewportRef}
+    className="pdf-preview-viewport"
+    data-pdf-preview-scale={scale.toFixed(4)}
+    style={{ "--pdf-preview-scaled-height": `${Math.ceil(PDF_PREVIEW_HEIGHT * scale)}px` }}
+  >
+    <div
+      className="pdf-preview-page"
+      style={{
+        "--pdf-preview-page-width": `${PDF_PREVIEW_WIDTH}px`,
+        "--pdf-preview-scale": scale,
+      }}
+    >
+      <PdfPreview quote={quote} settings={settings} />
+    </div>
+  </div>;
 }
 
 function PdfPreview({ quote, settings }) {
