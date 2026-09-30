@@ -21,6 +21,6 @@ describe("Quote PDF typography", function () {
 
   it("respeta los saltos de linea y usa negro en las descripciones", function () {
     assert.match(source, /className="paper-line-description"/);
-    assert.match(css, /\.paper-line-description\{[^}]*white-space:pre-line[^}]*color:#111827/);
+    assert.match(css, /\.paper\.paper-readable \.paper-line-description\{[^}]*white-space:pre-line[^}]*color:#111827/);
   });
 });
