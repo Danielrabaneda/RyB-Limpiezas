@@ -91,16 +91,16 @@ export default function useCommunitiesData({
     }
   }, [loadData, companyId]);
 
-  const openCreateModal = () => {
+  const openCreateModal = (draft = {}) => {
     setEditingCommunity(null);
     setForm({
-      name: "",
-      address: "",
+      name: draft.name || "",
+      address: draft.address || "",
       lat: "",
       lng: "",
-      type: "comunidad",
-      contactPerson: "",
-      contactPhone: "",
+      type: draft.type || "comunidad",
+      contactPerson: draft.contactPerson || "",
+      contactPhone: draft.contactPhone || "",
       individualTimeTracking: false,
       preferredTime: "",
       geofenceRadiusMeters: "50",
@@ -109,10 +109,10 @@ export default function useCommunitiesData({
       exitConfirmDelaySeconds: "300",
       autoCloseOnExit: false,
       billingCif: "",
-      billingAddress: "",
+      billingAddress: draft.billingAddress || draft.address || "",
       basePrice: "0",
       paymentMethod: "transferencia",
-      billingEmail: "",
+      billingEmail: draft.billingEmail || "",
       billingIban: "",
       billingMandateRef: "",
       billingMandateDate: "",

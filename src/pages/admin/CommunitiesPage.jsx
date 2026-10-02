@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   getCommunityTasks,
   getAssignmentsForCommunity,
@@ -33,6 +34,8 @@ export default function CommunitiesPage() {
 function CommunitiesContent() {
   const { userProfile } = useAuth();
   const { companyId } = useTenant();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [actionLoading, setActionLoading] = useState(false);
 
   // Custom Hooks
@@ -147,6 +150,13 @@ function CommunitiesContent() {
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState("all");
   const [filterAdmin, setFilterAdmin] = useState("all");
+  const communityDraft = location.state?.communityDraft;
+  useEffect(() => {
+    if (!communityDraft) return;
+    setActiveTab("list");
+    openCreateModal(communityDraft);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [communityDraft, location.pathname, navigate, openCreateModal]);
 
   // GPS Pending Real-time Listener
   const [pendingGPSCommunityIds, setPendingGPSCommunityIds] = useState(
