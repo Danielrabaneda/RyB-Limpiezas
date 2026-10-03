@@ -146,17 +146,19 @@ function CommunitiesContent() {
 
   // UI States (Area B)
   const modalRef = useRef(null);
+  const openedDraftKeyRef = useRef(null);
   const [activeTab, setActiveTab] = useState("list");
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState("all");
   const [filterAdmin, setFilterAdmin] = useState("all");
   const communityDraft = location.state?.communityDraft;
   useEffect(() => {
-    if (!communityDraft) return;
+    if (!communityDraft || openedDraftKeyRef.current === location.key) return;
+    openedDraftKeyRef.current = location.key;
     setActiveTab("list");
     openCreateModal(communityDraft);
     navigate(location.pathname, { replace: true, state: null });
-  }, [communityDraft, location.pathname, navigate, openCreateModal]);
+  }, [communityDraft, location.key, location.pathname, navigate, openCreateModal]);
 
   // GPS Pending Real-time Listener
   const [pendingGPSCommunityIds, setPendingGPSCommunityIds] = useState(
