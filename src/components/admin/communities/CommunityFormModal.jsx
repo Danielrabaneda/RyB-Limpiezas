@@ -1,6 +1,9 @@
 import React from "react";
 import { format } from "date-fns";
-import { parseCoordinatePair } from "../../../utils/coordinateInput";
+import {
+  getCoordinateFormPatch,
+  parseCoordinatePair,
+} from "../../../utils/coordinateInput";
 
 export default function CommunityFormModal({
   showModal,
@@ -117,11 +120,15 @@ export default function CommunityFormModal({
                     placeholder="Ej. 37.983810"
                     value={form.lat}
                     onChange={(e) =>
-                      setForm((f) => ({ ...f, lat: e.target.value }))
+                      setForm((f) => ({
+                        ...f,
+                        ...getCoordinateFormPatch("lat", e.target.value),
+                      }))
                     }
                     onPaste={(e) => {
                       const pair = parseCoordinatePair(
-                        e.clipboardData.getData("text"),
+                        e.clipboardData.getData("text/plain") ||
+                          e.clipboardData.getData("text"),
                       );
                       if (!pair) return;
                       e.preventDefault();
@@ -146,11 +153,15 @@ export default function CommunityFormModal({
                     placeholder="Ej. -1.129890"
                     value={form.lng}
                     onChange={(e) =>
-                      setForm((f) => ({ ...f, lng: e.target.value }))
+                      setForm((f) => ({
+                        ...f,
+                        ...getCoordinateFormPatch("lng", e.target.value),
+                      }))
                     }
                     onPaste={(e) => {
                       const pair = parseCoordinatePair(
-                        e.clipboardData.getData("text"),
+                        e.clipboardData.getData("text/plain") ||
+                          e.clipboardData.getData("text"),
                       );
                       if (!pair) return;
                       e.preventDefault();

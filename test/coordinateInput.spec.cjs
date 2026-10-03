@@ -3,11 +3,11 @@ const assert = require("node:assert/strict");
 describe("GPS coordinate input", function () {
   let parseCoordinateInput;
   let parseCoordinatePair;
+  let getCoordinateFormPatch;
 
   before(async function () {
-    ({ parseCoordinateInput, parseCoordinatePair } = await import(
-      "../src/utils/coordinateInput.js"
-    ));
+    ({ parseCoordinateInput, parseCoordinatePair, getCoordinateFormPatch } =
+      await import("../src/utils/coordinateInput.js"));
   });
 
   it("accepts coordinates written with a decimal point", function () {
@@ -42,6 +42,41 @@ describe("GPS coordinate input", function () {
     assert.deepEqual(parseCoordinatePair("37,983810; -1,129890"), {
       lat: "37.983810",
       lng: "-1.129890",
+    });
+  });
+
+  it("accepts the decorated text that Google Maps can place on the clipboard", function () {
+    assert.deepEqual(
+      parseCoordinatePair("\u200E(37.983810, \u22121.129890)\r\n"),
+      {
+        lat: "37.983810",
+        lng: "-1.129890",
+      },
+    );
+  });
+
+  it("extracts coordinates when Google Maps copies a URL", function () {
+    assert.deepEqual(
+      parseCoordinatePair(
+        "https://www.google.com/maps/@37.983810,-1.129890,17z",
+      ),
+      {
+        lat: "37.983810",
+        lng: "-1.129890",
+      },
+    );
+  });
+
+  it("fills both fields even when the browser delivers a paste as a normal input change", function () {
+    assert.deepEqual(
+      getCoordinateFormPatch("lat", "37.983810, -1.129890"),
+      {
+        lat: "37.983810",
+        lng: "-1.129890",
+      },
+    );
+    assert.deepEqual(getCoordinateFormPatch("lng", "-1.12"), {
+      lng: "-1.12",
     });
   });
 });

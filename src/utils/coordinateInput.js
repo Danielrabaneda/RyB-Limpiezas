@@ -8,18 +8,19 @@ export function parseCoordinateInput(value, maxAbs = 180) {
 }
 
 export function parseCoordinatePair(value) {
-  const text = String(value ?? "").trim();
+  const text = String(value ?? "")
+    .normalize("NFKC")
+    .replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, "")
+    .replace(/[\u2212\u2012-\u2014]/g, "-")
+    .trim();
   if (!text) return null;
 
-  let parts;
-  if (text.includes(";")) {
-    parts = text.split(";");
-  } else {
-    const match = text.match(
-      /^([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)$/,
-    );
-    parts = match ? [match[1], match[2]] : [];
-  }
+  const mapUrlMatch = text.match(
+    /@([+-]?\d{1,2}(?:\.\d+)?),([+-]?\d{1,3}(?:\.\d+)?)(?=,|\/|$)/,
+  );
+  const parts = mapUrlMatch
+    ? [mapUrlMatch[1], mapUrlMatch[2]]
+    : text.match(/[+-]?\d{1,3}(?:[.,]\d+)?/g) || [];
   if (parts.length !== 2) return null;
 
   const lat = parseCoordinateInput(parts[0], 90);
@@ -30,4 +31,8 @@ export function parseCoordinatePair(value) {
     lat: String(parts[0]).trim().replace(",", "."),
     lng: String(parts[1]).trim().replace(",", "."),
   };
+}
+
+export function getCoordinateFormPatch(field, value) {
+  return parseCoordinatePair(value) || { [field]: value };
 }
