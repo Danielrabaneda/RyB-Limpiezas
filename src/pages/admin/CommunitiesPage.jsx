@@ -22,6 +22,7 @@ import CommunityDetailPanel from "../../components/admin/communities/CommunityDe
 import CommunityFormModal from "../../components/admin/communities/CommunityFormModal";
 import { RequireTenant, useTenant } from "../../contexts/TenantContext";
 import TaskFormModal from "../../components/admin/communities/TaskFormModal";
+import { ThinkingOrb } from "thinking-orbs";
 
 export default function CommunitiesPage() {
   return (
@@ -448,11 +449,20 @@ function CommunitiesContent() {
       {showAssignModal && (
         <div
           className="modal-overlay"
-          onClick={() => setShowAssignModal(false)}
+          onClick={() => !actionLoading && setShowAssignModal(false)}
         >
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="assign-operator-title"
+            aria-busy={actionLoading}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="modal-header">
-              <h3 className="modal-title">Asignar operario</h3>
+              <h3 className="modal-title" id="assign-operator-title">
+                Asignar operario
+              </h3>
               <button
                 className="btn btn-ghost btn-sm"
                 onClick={() => setShowAssignModal(false)}
@@ -470,6 +480,8 @@ function CommunitiesContent() {
                     onChange={(e) => setAssignUserId(e.target.value)}
                     required
                   >
+                disabled={actionLoading}
+                aria-label="Cerrar asignación"
                     <option value="">— Elige un operario —</option>
                     {operarios
                       .filter(
@@ -482,6 +494,7 @@ function CommunitiesContent() {
                           {op.name} ({op.email})
                         </option>
                       ))}
+                    disabled={actionLoading}
                   </select>
                 </div>
               </div>
@@ -493,8 +506,26 @@ function CommunitiesContent() {
                 >
                   Cancelar
                 </button>
-                <button type="submit" className="btn btn-primary">
-                  Asignar
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={actionLoading}
+                  aria-busy={actionLoading}
+                >
+                  {actionLoading ? (
+                    <>
+                      <ThinkingOrb
+                        state="weaving"
+                        size={20}
+                  disabled={actionLoading}
+                        theme="dark"
+                        aria-hidden="true"
+                      />
+                      <span>Asignando…</span>
+                    </>
+                  ) : (
+                    "Asignar"
+                  )}
                 </button>
               </div>
             </form>
