@@ -68,4 +68,15 @@ describe("Pipeline ganado y alta de comunidad", function () {
     assert.match(communities, /location\.state\?\.communityDraft/);
     assert.match(communities, /openCreateModal\(communityDraft\)/);
   });
+
+  it("permite reabrir la ficha desde una oportunidad ganada sin comunidad vinculada", function () {
+    const pipeline = fs.readFileSync(
+      path.join(__dirname, "../src/pages/admin/PipelinePage.jsx"),
+      "utf8",
+    );
+
+    assert.match(pipeline, /stage\.id === "won" && !o\.clientId/);
+    assert.match(pipeline, /Crear ficha de comunidad/);
+    assert.match(pipeline, /onClick=\{\(\) => openCommunityForm\(o\)\}/);
+  });
 });
