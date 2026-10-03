@@ -1,5 +1,6 @@
 import React from "react";
 import { format } from "date-fns";
+import { parseCoordinatePair } from "../../../utils/coordinateInput";
 
 export default function CommunityFormModal({
   showModal,
@@ -100,27 +101,61 @@ export default function CommunityFormModal({
                 style={{ marginTop: "var(--space-2)", marginBottom: 0 }}
               >
                 <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label text-xs">Latitud</label>
+                  <label
+                    className="form-label text-xs"
+                    htmlFor="community-latitude"
+                  >
+                    Latitud
+                  </label>
                   <input
+                    id="community-latitude"
                     className="form-input"
-                    type="number"
-                    step="any"
+                    type="text"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="Ej. 37.983810"
                     value={form.lat}
                     onChange={(e) =>
                       setForm((f) => ({ ...f, lat: e.target.value }))
                     }
+                    onPaste={(e) => {
+                      const pair = parseCoordinatePair(
+                        e.clipboardData.getData("text"),
+                      );
+                      if (!pair) return;
+                      e.preventDefault();
+                      setForm((f) => ({ ...f, ...pair }));
+                    }}
                   />
                 </div>
                 <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label text-xs">Longitud</label>
+                  <label
+                    className="form-label text-xs"
+                    htmlFor="community-longitude"
+                  >
+                    Longitud
+                  </label>
                   <input
+                    id="community-longitude"
                     className="form-input"
-                    type="number"
-                    step="any"
+                    type="text"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="Ej. -1.129890"
                     value={form.lng}
                     onChange={(e) =>
                       setForm((f) => ({ ...f, lng: e.target.value }))
                     }
+                    onPaste={(e) => {
+                      const pair = parseCoordinatePair(
+                        e.clipboardData.getData("text"),
+                      );
+                      if (!pair) return;
+                      e.preventDefault();
+                      setForm((f) => ({ ...f, ...pair }));
+                    }}
                   />
                 </div>
               </div>

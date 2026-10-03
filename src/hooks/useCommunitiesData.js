@@ -13,6 +13,7 @@ import {
   rejectSuggestion,
 } from "../services/gpsSuggestionService";
 import { useTenant } from "../contexts/TenantContext";
+import { parseCoordinateInput } from "../utils/coordinateInput";
 
 export default function useCommunitiesData({
   actionLoading,
@@ -270,8 +271,8 @@ export default function useCommunitiesData({
       const communityData = {
         name: form.name,
         address: form.address,
-        lat: parseFloat(form.lat) || 0,
-        lng: parseFloat(form.lng) || 0,
+        lat: parseCoordinateInput(form.lat, 90) ?? 0,
+        lng: parseCoordinateInput(form.lng, 180) ?? 0,
         type: form.type,
         contactPerson: form.contactPerson,
         contactPhone: form.contactPhone,
