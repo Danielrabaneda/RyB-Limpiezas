@@ -1,0 +1,6 @@
+{
+  "connectorVersion": "2.1.0-preview",
+  "protocolVersion": 2,
+  "environment": "test",
+  "productionEnabled": false
+}

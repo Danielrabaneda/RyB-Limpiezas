@@ -1,13 +1,26 @@
-import { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
-import { 
-  signInWithEmailAndPassword, 
+import {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+} from "react";
+import {
+  signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
-  signOut, 
-  onAuthStateChanged
-} from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { auth, db } from '../config/firebase';
-import { createUserWithoutLogout } from '../services/adminAuthService';
+  deleteUser,
+  signOut,
+  onAuthStateChanged,
+} from "firebase/auth";
+import { httpsCallable } from "firebase/functions";
+import {
+  doc,
+  getDoc,
+  onSnapshot,
+} from "firebase/firestore";
+import { auth, db, functions } from "../config/firebase";
+import { createUserWithoutLogout } from "../services/adminAuthService";
 
 const AuthContext = createContext();
 
@@ -19,70 +32,118 @@ export function AuthProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [companyId, setCompanyId] = useState(null);
+  const [authClaimsLoaded, setAuthClaimsLoaded] = useState(false);
+
+  const buildUserProfile = useCallback((authUid, data) => ({
+    ...data,
+    legacyUid: data?.uid && data.uid !== authUid ? data.uid : null,
+    uid: authUid,
+  }), []);
 
   const login = useCallback(async (email, password) => {
     const cred = await signInWithEmailAndPassword(auth, email, password);
-    const snap = await getDoc(doc(db, 'users', cred.user.uid));
+    const snap = await getDoc(doc(db, "users", cred.user.uid));
     let profile = null;
     if (snap.exists()) {
-      profile = { uid: cred.user.uid, ...snap.data() };
+      profile = buildUserProfile(cred.user.uid, snap.data());
       setUserProfile(profile);
     }
     if (!profile || profile.active === false) {
       await signOut(auth);
       setUserProfile(null);
-      throw new Error('Su cuenta está inactiva o ha sido dada de baja.');
+      throw new Error("Su cuenta está inactiva o ha sido dada de baja.");
     }
     return { user: cred.user, profile };
-  }, []);
+  }, [buildUserProfile]);
 
   const logout = useCallback(async () => {
     setUserProfile(null);
+    setCompanyId(null);
+    setAuthClaimsLoaded(false);
     return signOut(auth);
   }, []);
 
-  const createOperario = useCallback(async (email, password, name, phone, allowDirectTransfers = false) => {
-    // We create the user via secondary app to avoid logging out the admin
-    const user = await createUserWithoutLogout(email, password);
-    const profile = {
-      uid: user.uid,
-      name,
-      email,
-      phone: phone || '',
-      role: 'operario',
-      active: true,
-      allowDirectTransfers: !!allowDirectTransfers,
-      createdAt: serverTimestamp(),
-    };
-    await setDoc(doc(db, 'users', user.uid), profile);
-    return profile;
-  }, []);
+  const createOperario = useCallback(
+    async (email, password, name, phone, allowDirectTransfers = false) => {
+      if (!companyId) throw new Error("No hay una empresa activa para crear el operario.");
+      return createUserWithoutLogout(email, password, {
+        name,
+        phone: phone || "",
+        allowDirectTransfers: !!allowDirectTransfers,
+      });
+    },
+    [companyId],
+  );
 
-  const signup = useCallback(async (email, password, name) => {
+  const signup = useCallback(async (email, password, name, accessCode) => {
     const cred = await createUserWithEmailAndPassword(auth, email, password);
-    const profile = {
-      uid: cred.user.uid,
-      name,
-      email,
-      role: 'operario',
-      active: true,
-      allowDirectTransfers: false,
-      createdAt: serverTimestamp(),
-    };
-    await setDoc(doc(db, 'users', cred.user.uid), profile);
+    try {
+      const completeRegistration = httpsCallable(functions, "completeTenantRegistration");
+      await completeRegistration({ name, accessCode });
+    } catch (error) {
+      await deleteUser(cred.user).catch(() => {});
+      throw error;
+    }
+
+    // Esperar reactivamente a que la Cloud Function asigne los claims
+    let claimConfirmed = false;
+    let attempts = 5;
+    let delay = 300; // ms inicial
+
+    for (let i = 0; i < attempts; i++) {
+      try {
+        console.log(
+          `signup: Verificando claims (intento ${i + 1}/${attempts})...`,
+        );
+        const tokenResult = await cred.user.getIdTokenResult(true);
+        if (tokenResult.claims && tokenResult.claims.role) {
+          console.log(
+            "signup: Claims asignados con éxito:",
+            tokenResult.claims,
+          );
+          claimConfirmed = true;
+          break;
+        }
+      } catch (err) {
+        console.error(
+          `signup: Error en intento ${i + 1} de refresco de token:`,
+          err,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      delay *= 2; // retraso exponencial
+    }
+
+    if (!claimConfirmed) {
+      console.warn(
+        "signup: La Cloud Function tardó demasiado en aplicar los claims. Se prosigue con el flujo.",
+      );
+    }
+
+    const profileSnap = await getDoc(doc(db, "users", cred.user.uid));
+    const profile = profileSnap.exists()
+      ? buildUserProfile(cred.user.uid, profileSnap.data())
+      : null;
     setUserProfile(profile);
-    return { user: cred.user, profile };
-  }, []);
+    return {
+      user: cred.user,
+      profile,
+    };
+  }, [buildUserProfile]);
 
   useEffect(() => {
     let active = true;
+    let unsubscribeProfile = null;
 
     // Safety timeout to prevent startup hangs
     const safetyTimer = setTimeout(() => {
       if (active) {
-        setLoading(prev => {
+        setLoading((prev) => {
           if (prev) {
-            console.warn('AuthContext safety timeout reached - forcing loading to false');
+            console.warn(
+              "AuthContext safety timeout reached - forcing loading to false",
+            );
             return false;
           }
           return prev;
@@ -91,70 +152,160 @@ export function AuthProvider({ children }) {
     }, 10000); // 10 seconds
 
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      console.log('Auth state changed:', user ? 'Logged in' : 'Logged out');
+      console.log("Auth state changed:", user ? "Logged in" : "Logged out");
+
+      if (unsubscribeProfile) {
+        unsubscribeProfile();
+        unsubscribeProfile = null;
+      }
+
       if (!active) return;
 
       setCurrentUser(user);
       if (user) {
-        try {
-          const snap = await getDoc(doc(db, 'users', user.uid));
-          if (!active) return;
+        // Escuchar el perfil en Firestore en tiempo real para reaccionar a cambios al instante
+        unsubscribeProfile = onSnapshot(
+          doc(db, "users", user.uid),
+          async (snap) => {
+            if (!active) return;
 
-          if (snap.exists()) {
-            const profile = { uid: user.uid, ...snap.data() };
-            if (profile.active === false) {
-              console.warn('AuthContext: User profile inactive. Forcing logout.');
+            if (snap.exists()) {
+              const profile = buildUserProfile(user.uid, snap.data());
+
+              // Si el operario o administrador es desactivado, forzar deslogueo inmediato
+              if (profile.active === false) {
+                console.warn(
+                  "AuthContext: User profile inactive. Forcing logout.",
+                );
+                if (unsubscribeProfile) {
+                  unsubscribeProfile();
+                  unsubscribeProfile = null;
+                }
+                await signOut(auth);
+                if (active) {
+                  setUserProfile(null);
+                  setCurrentUser(null);
+                  setCompanyId(null);
+                  setAuthClaimsLoaded(false);
+                  setLoading(false);
+                  clearTimeout(safetyTimer);
+                }
+                return;
+              }
+
+              // Sincronización proactiva de Claims
+              try {
+                let tokenResult = await user.getIdTokenResult();
+                let currentClaimRole = tokenResult.claims.role;
+                let currentClaimActive = tokenResult.claims.active;
+                let currentClaimCompanyId = tokenResult.claims.companyId;
+
+                // Evitar bucle infinito si la nube tarda: solo intentamos refrescar si hay discrepancia real.
+                // profile.companyId puede ser undefined si el backend aún no lo inyectó, así que comparamos si no encajan.
+                if (
+                  currentClaimRole !== profile.role ||
+                  currentClaimActive !== profile.active ||
+                  (profile.companyId && currentClaimCompanyId !== profile.companyId)
+                ) {
+                  console.log(
+                    "AuthContext: Claims locales desincronizados. Refrescando token...",
+                  );
+                  await user.getIdToken(true);
+                  console.log(
+                    "AuthContext: Token de autenticación refrescado exitosamente.",
+                  );
+                  tokenResult = await user.getIdTokenResult();
+                  currentClaimCompanyId = tokenResult.claims.companyId;
+                }
+                
+                if (active) {
+                  setCompanyId(currentClaimCompanyId || null);
+                  setAuthClaimsLoaded(true);
+                  profile.platformAdmin =
+                    tokenResult.claims.platformAdmin === true ||
+                    tokenResult.claims.email === "admin@ryblimpiezas.com";
+                }
+              } catch (err) {
+                console.error(
+                  "Error al comprobar o refrescar claims en el cliente:",
+                  err,
+                );
+                if (active) {
+                  setAuthClaimsLoaded(true); // Evitar colgar la UI en caso de error
+                }
+              }
+
+              if (active) {
+                setUserProfile(profile);
+              }
+            } else {
+              console.warn(
+                "AuthContext: User profile not found. Forcing logout.",
+              );
+              if (unsubscribeProfile) {
+                unsubscribeProfile();
+                unsubscribeProfile = null;
+              }
               await signOut(auth);
               if (active) {
                 setUserProfile(null);
                 setCurrentUser(null);
+                setCompanyId(null);
+                setAuthClaimsLoaded(false);
               }
-            } else {
-              setUserProfile(profile);
             }
-          } else {
-            console.warn('AuthContext: User profile not found. Forcing logout.');
-            await signOut(auth);
+
             if (active) {
-              setUserProfile(null);
-              setCurrentUser(null);
+              setLoading(false);
+              clearTimeout(safetyTimer);
             }
-          }
-        } catch (err) {
-          console.error('Error fetching user profile during init:', err);
-        }
+          },
+          (err) => {
+            console.error("Error en el snapshot del perfil de usuario:", err);
+            if (active) {
+              setLoading(false);
+              clearTimeout(safetyTimer);
+            }
+          },
+        );
       } else {
-        setUserProfile(null);
-      }
-      
-      if (active) {
-        setLoading(false);
-        clearTimeout(safetyTimer);
+        if (active) {
+          setUserProfile(null);
+          setCompanyId(null);
+          setAuthClaimsLoaded(false);
+          setLoading(false);
+          clearTimeout(safetyTimer);
+        }
       }
     });
 
     return () => {
       active = false;
       unsubscribe();
+      if (unsubscribeProfile) {
+        unsubscribeProfile();
+      }
       clearTimeout(safetyTimer);
     };
-  }, []);
+  }, [buildUserProfile]);
 
-  const value = useMemo(() => ({
-    currentUser,
-    userProfile,
-    loading,
-    login,
-    logout,
-    signup,
-    createOperario,
-    isAdmin: userProfile?.role === 'admin',
-    isOperario: userProfile?.role === 'operario' || userProfile?.isOperario === true,
-  }), [currentUser, userProfile, loading, login, logout, signup, createOperario]);
-
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
+  const value = useMemo(
+    () => ({
+      currentUser,
+      userProfile,
+      companyId,
+      authClaimsLoaded,
+      loading,
+      login,
+      logout,
+      signup,
+      createOperario,
+      isAdmin: userProfile?.role === "admin",
+      isOperario:
+        userProfile?.role === "operario" || userProfile?.isOperario === true,
+    }),
+    [currentUser, userProfile, companyId, authClaimsLoaded, loading, login, logout, signup, createOperario],
   );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

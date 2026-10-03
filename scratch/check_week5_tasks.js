@@ -1,12 +1,18 @@
-import { collection, getDocs, query, where } from 'firebase/firestore';
-import { db } from '../src/config/firebase.js';
+import { collection, getDocs, query, where } from "firebase/firestore";
+import { db } from "../src/config/firebase.js";
 
 async function main() {
-  const tasksSnap = await getDocs(query(collection(db, 'communityTasks'), where('active', '==', true), where('weekOfMonth', '==', 5)));
-  const tasks = tasksSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const tasksSnap = await getDocs(
+    query(
+      collection(db, "communityTasks"),
+      where("active", "==", true),
+      where("weekOfMonth", "==", 5),
+    ),
+  );
+  const tasks = tasksSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   console.log(`Found ${tasks.length} active tasks with weekOfMonth: 5`);
-  
-  tasks.forEach(t => {
+
+  tasks.forEach((t) => {
     console.log(`- CommunityID: ${t.communityId} | Task: ${t.taskName}`);
   });
 

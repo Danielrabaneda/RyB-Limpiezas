@@ -1,8 +1,12 @@
-import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
-import { getStorage } from 'firebase/storage';
-import { getFunctions } from 'firebase/functions';
+import { initializeApp } from "firebase/app";
+import { getAuth } from "firebase/auth";
+import {
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+} from "firebase/firestore";
+import { getStorage } from "firebase/storage";
+import { getFunctions } from "firebase/functions";
 
 export const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -18,9 +22,11 @@ export const auth = getAuth(app);
 
 // Inicializar Firestore con persistencia offline moderna multidispositivo
 export const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager(),
+  }),
 });
 
 export const storage = getStorage(app);
-export const functions = getFunctions(app, 'europe-west1');
+export const functions = getFunctions(app, "europe-west1");
 export default app;

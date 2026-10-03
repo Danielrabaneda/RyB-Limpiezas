@@ -1,14 +1,17 @@
-import fs from 'fs';
+import fs from "fs";
 
-const userId = 'AuSojNbpE8dN7JbD3g3RWLyGGaH3'; // Alexandra Párraga
+const userId = "AuSojNbpE8dN7JbD3g3RWLyGGaH3"; // Alexandra Párraga
 
-const workdaysFile = 'C:/Users/Hp/.gemini/antigravity/brain/be6fae65-5b88-45e7-89a7-6eaf6b16e0c6/.system_generated/steps/206/output.txt';
-const checkInsFile = 'C:/Users/Hp/.gemini/antigravity/brain/be6fae65-5b88-45e7-89a7-6eaf6b16e0c6/.system_generated/steps/218/output.txt';
-const servicesFile = 'C:/Users/Hp/.gemini/antigravity/brain/be6fae65-5b88-45e7-89a7-6eaf6b16e0c6/.system_generated/steps/221/output.txt';
+const workdaysFile =
+  "C:/Users/Hp/.gemini/antigravity/brain/be6fae65-5b88-45e7-89a7-6eaf6b16e0c6/.system_generated/steps/206/output.txt";
+const checkInsFile =
+  "C:/Users/Hp/.gemini/antigravity/brain/be6fae65-5b88-45e7-89a7-6eaf6b16e0c6/.system_generated/steps/218/output.txt";
+const servicesFile =
+  "C:/Users/Hp/.gemini/antigravity/brain/be6fae65-5b88-45e7-89a7-6eaf6b16e0c6/.system_generated/steps/221/output.txt";
 
 function parseFirestoreJson(filePath) {
   try {
-    const raw = fs.readFileSync(filePath, 'utf8');
+    const raw = fs.readFileSync(filePath, "utf8");
     return JSON.parse(raw);
   } catch (e) {
     console.error(`Error reading ${filePath}:`, e.message);
@@ -23,14 +26,14 @@ function runParse() {
   const wdData = parseFirestoreJson(workdaysFile);
   let activeWdCount = 0;
   if (wdData && wdData.documents) {
-    wdData.documents.forEach(doc => {
+    wdData.documents.forEach((doc) => {
       const fields = doc.fields || {};
       const docUserId = fields.userId?.stringValue;
       if (docUserId === userId) {
         const status = fields.status?.stringValue;
-        if (status === 'active') {
+        if (status === "active") {
           activeWdCount++;
-          const docId = doc.name.split('/').pop();
+          const docId = doc.name.split("/").pop();
           const date = fields.date?.timestampValue;
           const startTime = fields.startTime?.timestampValue;
           console.log(`[FOUND OPEN WORKDAY]`);
@@ -48,14 +51,17 @@ function runParse() {
   const ciData = parseFirestoreJson(checkInsFile);
   let openCiCount = 0;
   if (ciData && ciData.documents) {
-    ciData.documents.forEach(doc => {
+    ciData.documents.forEach((doc) => {
       const fields = doc.fields || {};
       const docUserId = fields.userId?.stringValue;
       if (docUserId === userId) {
-        const checkOutTime = fields.checkOutTime?.nullValue !== undefined ? null : fields.checkOutTime?.timestampValue;
+        const checkOutTime =
+          fields.checkOutTime?.nullValue !== undefined
+            ? null
+            : fields.checkOutTime?.timestampValue;
         if (checkOutTime === null || checkOutTime === undefined) {
           openCiCount++;
-          const docId = doc.name.split('/').pop();
+          const docId = doc.name.split("/").pop();
           const checkInTime = fields.checkInTime?.timestampValue;
           const scheduledServiceId = fields.scheduledServiceId?.stringValue;
           const communityId = fields.communityId?.stringValue;
@@ -74,14 +80,14 @@ function runParse() {
   const ssData = parseFirestoreJson(servicesFile);
   let inProgressServiceCount = 0;
   if (ssData && ssData.documents) {
-    ssData.documents.forEach(doc => {
+    ssData.documents.forEach((doc) => {
       const fields = doc.fields || {};
       const docUserId = fields.assignedUserId?.stringValue;
       if (docUserId === userId) {
         const status = fields.status?.stringValue;
-        if (status === 'in_progress') {
+        if (status === "in_progress") {
           inProgressServiceCount++;
-          const docId = doc.name.split('/').pop();
+          const docId = doc.name.split("/").pop();
           const date = fields.date?.timestampValue;
           const communityId = fields.communityId?.stringValue;
           console.log(`[FOUND IN_PROGRESS SERVICE]`);

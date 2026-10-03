@@ -1,28 +1,39 @@
-import { useState, useEffect } from 'react';
-import { getProducts, createMaterialRequest } from '../../services/materialService';
-import { useAuth } from '../../contexts/AuthContext';
+import { useState, useEffect } from "react";
+import {
+  getProducts,
+  createMaterialRequest,
+} from "../../services/materialService";
+import { useAuth } from "../../contexts/AuthContext";
+import { useTenant } from "../../contexts/TenantContext";
 
-export default function MaterialRequestModal({ isOpen, onClose, communityId, communityName }) {
+export default function MaterialRequestModal({
+  isOpen,
+  onClose,
+  communityId,
+  communityName,
+}) {
+  const { companyId } = useTenant();
   const { userProfile } = useAuth();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [formData, setFormData] = useState({
-    productId: '',
+    productId: "",
     quantity: 1,
-    notes: ''
+    notes: "",
   });
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && companyId) {
       loadProducts();
     }
-  }, [isOpen]);
+  }, [isOpen, companyId]);
 
   const loadProducts = async () => {
+    if (!companyId) return;
     setLoading(true);
     try {
-      const data = await getProducts();
+      const data = await getProducts(companyId);
       setProducts(data);
     } catch (err) {
       console.error(err);
@@ -33,26 +44,26 @@ export default function MaterialRequestModal({ isOpen, onClose, communityId, com
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.productId || !userProfile?.uid) return;
+    if (!formData.productId || !userProfile?.uid || !companyId) return;
 
     setSending(true);
     try {
-      const selectedProduct = products.find(p => p.id === formData.productId);
-      
-      await createMaterialRequest({
+      const selectedProduct = products.find((p) => p.id === formData.productId);
+
+      await createMaterialRequest(companyId, {
         userId: userProfile.uid,
         communityId: communityId,
         productId: formData.productId,
         productName: selectedProduct.name,
         unit: selectedProduct.unit,
         quantity: formData.quantity,
-        notes: formData.notes
+        notes: formData.notes,
       });
-      
-      alert('Pedido enviado correctamente');
+
+      alert("Pedido enviado correctamente");
       onClose();
     } catch (err) {
-      alert('Error al enviar pedido');
+      alert("Error al enviar pedido");
     } finally {
       setSending(false);
     }
@@ -62,12 +73,18 @@ export default function MaterialRequestModal({ isOpen, onClose, communityId, com
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '400px' }}>
+      <div
+        className="modal"
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: "400px" }}
+      >
         <div className="modal-header">
           <h3 className="modal-title">📦 Pedir Material</h3>
-          <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}>
+            ✕
+          </button>
         </div>
-        
+
         <form onSubmit={handleSubmit}>
           <div className="modal-body">
             <p className="text-xs text-muted mb-4">
@@ -76,23 +93,21 @@ export default function MaterialRequestModal({ isOpen, onClose, communityId, com
 
             <div className="form-group">
               <label className="form-label">Producto</label>
-              <select 
-                className="form-select" 
+              <select
+                className="form-select"
                 required
                 value={formData.productId}
-                onChange={e => setFormData({...formData, productId: e.target.value})}
+                onChange={(e) =>
+                  setFormData({ ...formData, productId: e.target.value })
+                }
               >
                 <option value="">— Elegir producto —</option>
-                {products.map(p => {
-                  const isOutOfStock = p.currentStock !== undefined && p.currentStock <= 0;
+                {products.map((p) => {
+                  const isOutOfStock =
+                    p.currentStock !== undefined && p.currentStock <= 0;
                   return (
-                    <option 
-                      key={p.id} 
-                      value={p.id} 
-                      disabled={isOutOfStock} 
-                      style={{ color: isOutOfStock ? 'red' : 'inherit' }}
-                    >
-                      {p.name} ({p.unit}){isOutOfStock ? ' - SIN STOCK' : ''}
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.unit}){isOutOfStock ? " — SIN STOCK" : ""}
                     </option>
                   );
                 })}
@@ -101,33 +116,47 @@ export default function MaterialRequestModal({ isOpen, onClose, communityId, com
 
             <div className="form-group">
               <label className="form-label">Cantidad</label>
-              <input 
-                type="number" 
-                className="form-input" 
-                min="0.5" 
+              <input
+                type="number"
+                className="form-input"
+                min="0.5"
                 step="0.5"
                 required
                 value={formData.quantity}
-                onChange={e => setFormData({...formData, quantity: e.target.value})}
+                onChange={(e) =>
+                  setFormData({ ...formData, quantity: e.target.value })
+                }
               />
             </div>
 
             <div className="form-group">
               <label className="form-label">Notas (opcional)</label>
-              <textarea 
-                className="form-input" 
+              <textarea
+                className="form-input"
                 placeholder="Ej: Solo si hay repartidor cerca..."
                 rows="2"
                 value={formData.notes}
-                onChange={e => setFormData({...formData, notes: e.target.value})}
+                onChange={(e) =>
+                  setFormData({ ...formData, notes: e.target.value })
+                }
               ></textarea>
             </div>
           </div>
 
           <div className="modal-footer">
-            <button type="button" className="btn btn-secondary" onClick={onClose}>Cancelar</button>
-            <button type="submit" className="btn btn-primary" disabled={sending || loading}>
-              {sending ? 'Enviando...' : 'Enviar Pedido'}
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={onClose}
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={sending || loading}
+            >
+              {sending ? "Enviando..." : "Enviar Pedido"}
             </button>
           </div>
         </form>

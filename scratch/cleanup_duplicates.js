@@ -16,22 +16,26 @@ const db = getFirestore(app);
 const auth = getAuth(app);
 
 async function main() {
-  await signInWithEmailAndPassword(auth, "admin@ryblimpiezas.com", "Admin2024!");
+  await signInWithEmailAndPassword(
+    auth,
+    "admin@ryblimpiezas.com",
+    "Admin2024!",
+  );
   console.log("Signed in successfully!");
-  
+
   const toDelete = [
     "EkBrX1uSXnf3vcdoy62n", // Albarda May 15 duplicate
     "k0dvscn6CLTnpEkumudI", // Cadiz May 15 duplicate
     "JI0Mw5yakQP7WEE8ubUX", // Albarda Jul 6 rollover duplicate
-    "FfZmFTpgY1gp4UZlm9QU"  // Cadiz Jul 6 rollover duplicate
+    "FfZmFTpgY1gp4UZlm9QU", // Cadiz Jul 6 rollover duplicate
   ];
-  
+
   for (const id of toDelete) {
     console.log(`Deleting document: ${id}`);
     await deleteDoc(doc(db, "scheduledServices", id));
     console.log(`Deleted ${id} successfully.`);
   }
-  
+
   console.log("Cleanup finished.");
   process.exit(0);
 }

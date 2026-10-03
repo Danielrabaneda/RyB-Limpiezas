@@ -1,65 +1,85 @@
-import { useState } from 'react';
-import { createAdministrator, updateAdministrator, deleteAdministrator } from '../services/administratorService';
+import { useState } from "react";
+import {
+  createAdministrator,
+  updateAdministrator,
+  deleteAdministrator,
+} from "../services/administratorService";
+import { useTenant } from "../contexts/TenantContext";
 
-export default function useAdministrators({ onRefresh, actionLoading, setActionLoading }) {
+export default function useAdministrators({
+  onRefresh,
+  actionLoading,
+  setActionLoading,
+}) {
+  const { companyId } = useTenant();
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [editingAdmin, setEditingAdmin] = useState(null);
   const [adminForm, setAdminForm] = useState({
-    name: '',
-    email: '',
-    phone: '',
-    contactPerson: ''
+    name: "",
+    email: "",
+    phone: "",
+    contactPerson: "",
   });
 
   const openCreateAdminModal = () => {
     setEditingAdmin(null);
-    setAdminForm({ name: '', email: '', phone: '', contactPerson: '' });
+    setAdminForm({ name: "", email: "", phone: "", contactPerson: "" });
     setShowAdminModal(true);
   };
 
   const openEditAdminModal = (admin) => {
     setEditingAdmin(admin);
     setAdminForm({
-      name: admin.name || '',
-      email: admin.email || '',
-      phone: admin.phone || '',
-      contactPerson: admin.contactPerson || ''
+      name: admin.name || "",
+      email: admin.email || "",
+      phone: admin.phone || "",
+      contactPerson: admin.contactPerson || "",
     });
     setShowAdminModal(true);
   };
 
-  const handleSaveAdmin = async (e) => {
+  const handleSaveAdmin = async (e, formOverride) => {
     if (e) e.preventDefault();
     if (actionLoading) return; // Prevent concurrent submissions
+    const formData = formOverride || adminForm;
     setActionLoading(true);
     try {
       if (editingAdmin) {
-        await updateAdministrator(editingAdmin.id, adminForm);
+        await updateAdministrator(companyId, editingAdmin.id, formData);
       } else {
-        await createAdministrator(adminForm);
+        await createAdministrator(companyId, formData);
       }
       setShowAdminModal(false);
       if (onRefresh) await onRefresh();
-      alert(editingAdmin ? 'Administrador actualizado correctamente.' : 'Administrador creado correctamente.');
+      alert(
+        editingAdmin
+          ? "Administrador actualizado correctamente."
+          : "Administrador creado correctamente.",
+      );
     } catch (err) {
       console.error(err);
-      alert('Error al guardar administrador: ' + err.message);
+      alert("Error al guardar administrador: " + err.message);
     } finally {
       setActionLoading(false);
     }
   };
 
   const handleDeleteAdmin = async (id) => {
-    if (!confirm('¿Estás seguro de que deseas eliminar este Administrador de Fincas? Se desactivará de la lista.')) return;
+    if (
+      !confirm(
+        "¿Estás seguro de que deseas eliminar este Administrador de Fincas? Se desactivará de la lista.",
+      )
+    )
+      return;
     if (actionLoading) return; // Prevent concurrent submissions
     setActionLoading(true);
     try {
-      await deleteAdministrator(id);
+      await deleteAdministrator(companyId, id);
       if (onRefresh) await onRefresh();
-      alert('Administrador eliminado correctamente.');
+      alert("Administrador eliminado correctamente.");
     } catch (err) {
       console.error(err);
-      alert('Error al eliminar administrador: ' + err.message);
+      alert("Error al eliminar administrador: " + err.message);
     } finally {
       setActionLoading(false);
     }
@@ -74,6 +94,6 @@ export default function useAdministrators({ onRefresh, actionLoading, setActionL
     openCreateAdminModal,
     openEditAdminModal,
     handleSaveAdmin,
-    handleDeleteAdmin
+    handleDeleteAdmin,
   };
 }

@@ -1,28 +1,45 @@
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import App from './App.jsx'
-import './index.css'
-import { registerSW } from 'virtual:pwa-register';
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import App from "./App.jsx";
+import "./index.css";
+import { registerSW } from "virtual:pwa-register";
+import { Capacitor } from "@capacitor/core";
 
-// Register service worker for PWA only if not in a client portal,
-// otherwise unregister any existing service worker to avoid caching issues on client portals.
-if (!window.location.pathname.includes('/portal/')) {
-  registerSW({ immediate: true });
-} else {
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.getRegistrations().then(function(registrations) {
-      for (let registration of registrations) {
-        registration.unregister();
-      }
-    });
-  }
+// Register service worker for PWA only if not in a client portal.
+if (
+  !Capacitor.isNativePlatform() &&
+  !window.location.pathname.startsWith("/portal/")
+) {
+  let refreshing = false;
+  navigator.serviceWorker?.addEventListener("controllerchange", () => {
+    if (refreshing) return;
+    refreshing = true;
+    window.location.reload();
+  });
+
+  const updateSW = registerSW({
+    immediate: true,
+    onNeedRefresh() {
+      // Activate first; controllerchange reloads only when the new worker owns the page.
+      updateSW(true);
+    },
+    onRegisteredSW(_swUrl, registration) {
+      // iOS standalone PWAs do not always check promptly for a newer worker.
+      registration?.update().catch((error) => {
+        console.warn("No se pudo comprobar la actualización de la PWA:", error);
+      });
+    },
+    onOfflineReady() {
+      console.log("App lista para uso offline.");
+    },
+  });
 }
 
-createRoot(document.getElementById('root')).render(
+createRoot(document.getElementById("root")).render(
   <StrictMode>
     <App />
   </StrictMode>,
 );
 
 // Señalizar que la aplicación se ha montado correctamente
-window.dispatchEvent(new CustomEvent('app-mounted'));
+window.dispatchEvent(new CustomEvent("app-mounted"));
