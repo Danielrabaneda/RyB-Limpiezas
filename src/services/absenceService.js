@@ -1,14 +1,31 @@
-import { 
-  collection, doc, addDoc, getDocs, query, where, updateDoc, 
-  serverTimestamp, limit, getDoc 
-} from 'firebase/firestore';
-import { db } from '../config/firebase';
+import {
+  collection,
+  doc,
+  addDoc,
+  getDocs,
+  query,
+  where,
+  updateDoc,
+  serverTimestamp,
+  limit,
+  getDoc,
+} from "firebase/firestore";
+import { db } from "../config/firebase";
+import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
 
 /**
  * Solicita una nueva ausencia o baja médica (Operario).
  */
-export async function requestAbsence({ userId, userName, type, startDate, endDate, reason = '', docUrl = '' }) {
-  const absenceRef = collection(db, 'absences');
+export async function requestAbsence(companyId, {
+  userId,
+  userName,
+  type,
+  startDate,
+  endDate,
+  reason = "",
+  docUrl = "",
+}) {
+  const absenceRef = tenantCollection(db, companyId, "absences");
   const docData = {
     userId,
     userName,
@@ -17,8 +34,8 @@ export async function requestAbsence({ userId, userName, type, startDate, endDat
     endDate: endDate instanceof Date ? endDate : new Date(endDate),
     reason,
     docUrl, // Enlace a foto en Storage si aplica (justificante)
-    status: 'pending',
-    createdAt: serverTimestamp()
+    status: "pending",
+    createdAt: serverTimestamp(),
   };
   const docRef = await addDoc(absenceRef, docData);
   return { id: docRef.id, ...docData };
@@ -27,43 +44,43 @@ export async function requestAbsence({ userId, userName, type, startDate, endDat
 /**
  * Aprueba una ausencia solicitada (Admin).
  */
-export async function approveAbsence(absenceId, adminId) {
-  const ref = doc(db, 'absences', absenceId);
+export async function approveAbsence(companyId, absenceId, adminId) {
+  const ref = tenantDoc(db, companyId, "absences", absenceId);
   await updateDoc(ref, {
-    status: 'approved',
+    status: "approved",
     resolvedBy: adminId,
-    resolvedAt: serverTimestamp()
+    resolvedAt: serverTimestamp(),
   });
 }
 
 /**
  * Rechaza una ausencia solicitada (Admin).
  */
-export async function rejectAbsence(absenceId, adminId) {
-  const ref = doc(db, 'absences', absenceId);
+export async function rejectAbsence(companyId, absenceId, adminId) {
+  const ref = tenantDoc(db, companyId, "absences", absenceId);
   await updateDoc(ref, {
-    status: 'rejected',
+    status: "rejected",
     resolvedBy: adminId,
-    resolvedAt: serverTimestamp()
+    resolvedAt: serverTimestamp(),
   });
 }
 
 /**
  * Obtiene todas las solicitudes de ausencia pendientes.
  */
-export async function getPendingAbsences() {
-  const q = query(collection(db, 'absences'), where('status', '==', 'pending'));
+export async function getPendingAbsences(companyId) {
+  const q = query(tenantCollection(db, companyId, "absences"), where("status", "==", "pending"));
   const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
 /**
  * Obtiene todas las solicitudes de ausencia de un usuario.
  */
-export async function getUserAbsences(userId) {
-  const q = query(collection(db, 'absences'), where('userId', '==', userId));
+export async function getUserAbsences(companyId, userId) {
+  const q = query(tenantCollection(db, companyId, "absences"), where("userId", "==", userId));
   const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
 /**
@@ -72,24 +89,28 @@ export async function getUserAbsences(userId) {
  * @param {Date} date - Fecha a validar.
  * @returns {Promise<boolean>} True si el operario está de baja/vacaciones en esa fecha.
  */
-export async function checkUserAbsenceForDate(userId, date) {
+export async function checkUserAbsenceForDate(companyId, userId, date) {
   const q = query(
-    collection(db, 'absences'), 
-    where('userId', '==', userId), 
-    where('status', '==', 'approved')
+    tenantCollection(db, companyId, "absences"),
+    where("userId", "==", userId),
+    where("status", "==", "approved"),
   );
   const snap = await getDocs(q);
   const checkTime = date.getTime();
 
   for (const d of snap.docs) {
     const data = d.data();
-    const start = data.startDate?.toDate ? data.startDate.toDate().getTime() : new Date(data.startDate).getTime();
-    const end = data.endDate?.toDate ? data.endDate.toDate().getTime() : new Date(data.endDate).getTime();
-    
+    const start = data.startDate?.toDate
+      ? data.startDate.toDate().getTime()
+      : new Date(data.startDate).getTime();
+    const end = data.endDate?.toDate
+      ? data.endDate.toDate().getTime()
+      : new Date(data.endDate).getTime();
+
     // Normalizar a fechas sin hora para la comprobación diaria
-    const startDateNormalized = new Date(start).setHours(0,0,0,0);
-    const endDateNormalized = new Date(end).setHours(23,59,59,999);
-    
+    const startDateNormalized = new Date(start).setHours(0, 0, 0, 0);
+    const endDateNormalized = new Date(end).setHours(23, 59, 59, 999);
+
     if (checkTime >= startDateNormalized && checkTime <= endDateNormalized) {
       return true;
     }
@@ -100,8 +121,8 @@ export async function checkUserAbsenceForDate(userId, date) {
 /**
  * Obtiene todas las solicitudes de ausencia (Admin).
  */
-export async function getAllAbsences() {
-  const q = query(collection(db, 'absences'));
+export async function getAllAbsences(companyId) {
+  const q = query(tenantCollection(db, companyId, "absences"));
   const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }

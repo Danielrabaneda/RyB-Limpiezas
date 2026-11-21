@@ -9,15 +9,19 @@ Firebase publicó la versión `c80499dcfa5dcc58` el **20 de noviembre de 2026 a 
 | `hosting-config.json` | Reglas de publicación y caché de la web |
 | `verify.mjs` | Comprobación local y comparación opcional con ambos dominios |
 
-La página carga `assets/index-hQ_PNSgh.js`. Esta entrada utiliza `assets/InvoicesPage-DGQEYQLS-wa20261120.js`, que conserva el cálculo de importes netos durante la edición, la referencia de la factura rectificada en el listado y el PDF, y la opción de compartir el PDF por WhatsApp. El inventario contiene también las revisiones anteriores que permanecían alojadas.
+La página publicada carga `assets/index-hQ_PNSgh.js`. Esta entrada utiliza `assets/InvoicesPage-DGQEYQLS-wa20261120.js`, que conserva el cálculo de importes netos durante la edición, la referencia de la factura rectificada en el listado y el PDF, y la opción de compartir el PDF por WhatsApp. El inventario contiene también las revisiones anteriores que permanecían alojadas.
 
-Para comprobar los archivos desde la raíz del repositorio:
+## Comprobación
 
 ```powershell
 node releases/hosting/c80499dcfa5dcc58/verify.mjs
 node releases/hosting/c80499dcfa5dcc58/verify.mjs --live
 ```
 
-La primera comprobación sirve para conservar la referencia histórica. La segunda comprueba que los archivos siguen disponibles en `ryb-limpiezas-app.web.app` y `limpiagest.es`. Para verificar cuál está activa en cada momento, hay que consultar además el canal `live` de Firebase.
+La primera orden coteja los archivos del repositorio con el inventario. La segunda los compara también con los dos dominios oficiales. Para saber qué versión está activa en cada momento, consulta además el canal `live` de Firebase.
 
-`site/` es el resultado publicado. Los archivos editables del repositorio tienen su propio historial y todavía no reproducen esta publicación. Esta referencia corresponde a la web y a sus recursos públicos. Firestore, Authentication, las funciones y las credenciales se gestionan en Firebase.
+## Código editable
+
+El código editable está en `src/` y se compila con `npm run build`. La reconstrucción partió de la compilación local más próxima y reincorporó las correcciones observadas en el archivo de facturas publicado. De los 69 módulos y hojas de estilo alcanzables desde la entrada, 68 coincidieron tras normalizar los nombres generados y los comentarios de licencia. Se cotejaron los textos y propiedades del módulo de facturas y se comprobaron siete recorridos de WhatsApp contra la versión publicada, con datos ficticios. Cuatro casos de rectificación coincidieron en el listado y el PDF. Pasó también la comprobación de importes netos y decimales.
+
+`site/` conserva la publicación original byte por byte. La nueva compilación genera sus propios nombres de archivo. El registro cubre Hosting, incluida su configuración pública. Las funciones de Firebase y las reglas de acceso tienen sus propias versiones.

@@ -1,0 +1,9 @@
+.garage-poster-overlay{position:fixed;inset:0;z-index:1000;background:rgba(15,23,42,.72);display:flex;justify-content:center;align-items:flex-start;overflow:auto;padding:24px}
+.garage-poster-dialog{width:min(100%,1200px);background:#fff;border-radius:16px;padding:20px;box-shadow:0 20px 60px #0004}
+.garage-poster-toolbar,.garage-poster-actions{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.garage-poster-toolbar h2{font-size:1.25rem;margin:0}.garage-poster-toolbar p{margin:4px 0;color:#64748b}
+.garage-poster-controls{display:flex;flex-wrap:wrap;gap:12px;margin:18px 0}.garage-poster-controls label{display:flex;flex-direction:column;gap:5px;font-size:.85rem;font-weight:600;color:#334155}.garage-poster-controls input,.garage-poster-controls select,.garage-poster-controls textarea{min-height:38px;border:1px solid #cbd5e1;border-radius:7px;padding:7px;background:#fff;color:#0f172a}.garage-poster-controls textarea{min-width:200px;min-height:70px}.garage-poster-box-control{display:flex;flex-wrap:wrap;gap:10px;padding:10px;border:1px solid #e2e8f0;border-radius:8px}
+.garage-poster-controls .garage-poster-checkbox{flex-direction:row;align-items:center;align-self:center;gap:8px;cursor:pointer}.garage-poster-controls .garage-poster-checkbox input{min-height:auto;width:18px;height:18px;margin:0;cursor:pointer}
+.garage-poster-preview-scroll{overflow:auto;background:#e2e8f0;padding:16px;border-radius:10px}.garage-poster-render{display:block;width:1122px;height:794px;max-width:none}
+.garage-poster-message{color:#9a3412;margin:12px 0}.garage-poster-actions{justify-content:flex-end;margin-top:16px;flex-wrap:wrap}
+@media(max-width:640px){.garage-poster-overlay{padding:8px}.garage-poster-dialog{padding:12px}.garage-poster-preview-scroll{padding:8px}.garage-poster-actions .btn{width:100%}}

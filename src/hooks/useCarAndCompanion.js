@@ -1,53 +1,73 @@
-import { useState, useEffect, useMemo } from 'react';
-import { getOperarios } from '../services/authService';
-import { updateWorkdayCompanion, activateCar, deactivateCar } from '../services/workdayService';
-import { saveManualMileage } from '../services/mileageService';
-import { addCompanionToService, removeCompanionFromService } from '../services/scheduleService';
-import { createCheckIn } from '../services/checkInService';
-import { getDistance } from '../utils/geolocation';
-import { format } from 'date-fns';
-import { collection, query, where, getDocs, deleteDoc } from 'firebase/firestore';
-import { db } from '../config/firebase';
+import { useState, useEffect, useMemo } from "react";
+import { getOperarios } from "../services/authService";
+import {
+  updateWorkdayCompanion,
+  activateCar,
+  deactivateCar,
+} from "../services/workdayService";
+import { saveManualMileage } from "../services/mileageService";
+import {
+  addCompanionToService,
+  removeCompanionFromService,
+} from "../services/scheduleService";
+import { createCheckIn, deleteCheckIn } from "../services/checkInService";
+import { getDistance } from "../utils/geolocation";
+import { format } from "date-fns";
+import { collection, query, where, getDocs } from "firebase/firestore";
+import { db } from "../config/firebase";
+import { useTenant } from "../contexts/TenantContext";
+import { tenantCollection } from "../utils/tenantFirestore";
 
-export function useCarAndCompanion(userProfile, {
-  activeWorkday,
-  activeCheckIn,
-  activeWorkdaysList,
-  loadToday,
-  actionLoading,
-  setActionLoading
-}) {
+export function useCarAndCompanion(
+  userProfile,
+  {
+    activeWorkday,
+    activeCheckIn,
+    activeWorkdaysList,
+    loadToday,
+    actionLoading,
+    setActionLoading,
+  },
+) {
+  const { companyId } = useTenant();
   const [allOperarios, setAllOperarios] = useState([]);
   const [companionSelectorOpen, setCompanionSelectorOpen] = useState(false);
   const [mileageModalOpen, setMileageModalOpen] = useState(false);
-  const [manualKm, setManualKm] = useState('');
+  const [manualKm, setManualKm] = useState("");
 
   // Cargar lista de operarios
   useEffect(() => {
     async function loadOps() {
-      if (!userProfile?.uid) return;
+      if (!userProfile?.uid || !companyId) return;
       try {
-        const ops = await getOperarios();
-        setAllOperarios(ops.filter(o => o.uid !== userProfile.uid && o.active));
+        const ops = await getOperarios(companyId);
+        setAllOperarios(
+          ops.filter((o) => o.uid !== userProfile.uid && o.active),
+        );
       } catch (err) {
         console.error("Error loading operarios", err);
       }
     }
     loadOps();
-  }, [userProfile]);
+  }, [userProfile, companyId]);
 
   // Wake lock y watchPosition para registrar el trayecto del vehículo
   useEffect(() => {
     let watchId = null;
     let wakeLock = null;
+    let lastRecoveryAt = 0;
+    let restartWatch = () => {};
 
     const requestWakeLock = async () => {
       try {
-        if ('wakeLock' in navigator) {
-          wakeLock = await navigator.wakeLock.request('screen');
+        if ("wakeLock" in navigator) {
+          wakeLock = await navigator.wakeLock.request("screen");
         }
       } catch (err) {
-        console.warn('[WakeLock] No se pudo activar el bloqueo de pantalla:', err);
+        console.warn(
+          "[WakeLock] No se pudo activar el bloqueo de pantalla:",
+          err,
+        );
       }
     };
 
@@ -58,65 +78,117 @@ export function useCarAndCompanion(userProfile, {
           wakeLock = null;
         }
       } catch (err) {
-        console.error('[WakeLock] Error al liberar bloqueo:', err);
+        console.error("[WakeLock] Error al liberar bloqueo:", err);
       }
     };
 
     const handleVisibilityChange = async () => {
-      if (document.visibilityState === 'visible' && activeWorkday?.carActive) {
+      if (document.visibilityState === "visible" && activeWorkday?.carActive) {
         await requestWakeLock();
+        restartWatch(true);
       }
     };
 
     if (activeWorkday && activeWorkday.carActive) {
       requestWakeLock();
-      document.addEventListener('visibilitychange', handleVisibilityChange);
+      document.addEventListener("visibilitychange", handleVisibilityChange);
 
       const processPosition = (pos) => {
         const currentBreadcrumb = {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
-          timestamp: Date.now()
+          accuracy: pos.coords.accuracy,
+          speed: pos.coords.speed,
+          provider: pos.nativeProvider || null,
+          timestamp: pos.timestamp || Date.now(),
         };
 
         try {
-          const existing = JSON.parse(localStorage.getItem('ryb_car_breadcrumbs') || '[]');
-          
+          const existing = JSON.parse(
+            localStorage.getItem("ryb_car_breadcrumbs") || "[]",
+          );
+
           if (existing.length > 0) {
             const last = existing[existing.length - 1];
-            const dist = getDistance(last.lat, last.lng, currentBreadcrumb.lat, currentBreadcrumb.lng);
+            const dist = getDistance(
+              last.lat,
+              last.lng,
+              currentBreadcrumb.lat,
+              currentBreadcrumb.lng,
+            );
             const timeDiff = currentBreadcrumb.timestamp - last.timestamp;
+            const uncertainty =
+              (Number(last.accuracy) || 25) +
+              (Number(currentBreadcrumb.accuracy) || 25);
+            const movementThreshold = Math.max(50, uncertainty);
 
-            // Guardar si se ha movido > 50m o pasaron > 2 minutos (120s)
-            if (dist >= 50 || timeDiff >= 120000) {
+            // La posición oscila incluso con el teléfono quieto. Guardamos un
+            // punto solo si el desplazamiento supera la incertidumbre del GPS.
+            const confirmedMovement = dist >= movementThreshold;
+            const usefulHeartbeat =
+              timeDiff >= 120000 && dist >= movementThreshold / 2;
+            if (confirmedMovement || usefulHeartbeat) {
               existing.push(currentBreadcrumb);
-              localStorage.setItem('ryb_car_breadcrumbs', JSON.stringify(existing));
+              if (existing.length > 1000) {
+                existing.splice(0, existing.length - 1000);
+              }
+              localStorage.setItem(
+                "ryb_car_breadcrumbs",
+                JSON.stringify(existing),
+              );
             }
           } else {
             existing.push(currentBreadcrumb);
-            localStorage.setItem('ryb_car_breadcrumbs', JSON.stringify(existing));
+            localStorage.setItem(
+              "ryb_car_breadcrumbs",
+              JSON.stringify(existing),
+            );
           }
         } catch (e) {
-          console.error('[GPS] Error guardando breadcrumb en watchPosition:', e);
+          console.error(
+            "[GPS] Error guardando breadcrumb en watchPosition:",
+            e,
+          );
         }
       };
 
       if ("geolocation" in navigator) {
-        watchId = navigator.geolocation.watchPosition(
-          processPosition,
-          (error) => console.warn('[GPS] watchPosition error:', error),
-          {
-            enableHighAccuracy: true, 
-            timeout: 20000, 
-            maximumAge: 30000 
+        restartWatch = (requestFresh = false) => {
+          if (document.visibilityState !== "visible") return;
+          const now = Date.now();
+          if (requestFresh && now - lastRecoveryAt < 1500) return;
+          if (requestFresh) lastRecoveryAt = now;
+          if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+          watchId = navigator.geolocation.watchPosition(
+            processPosition,
+            (error) => console.warn("[GPS] watchPosition error:", error),
+            {
+              enableHighAccuracy: true,
+              timeout: 20000,
+              maximumAge: 30000,
+            },
+          );
+          if (requestFresh) {
+            navigator.geolocation.getCurrentPosition(
+              processPosition,
+              (error) => console.warn("[GPS] recovery error:", error),
+              { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+            );
           }
-        );
+        };
+        restartWatch();
+        window.addEventListener("focus", handleVisibilityChange);
+        window.addEventListener("pageshow", handleVisibilityChange);
+        window.addEventListener("online", handleVisibilityChange);
       }
     }
 
     return () => {
       releaseWakeLock();
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleVisibilityChange);
+      window.removeEventListener("pageshow", handleVisibilityChange);
+      window.removeEventListener("online", handleVisibilityChange);
       if (watchId !== null && "geolocation" in navigator) {
         navigator.geolocation.clearWatch(watchId);
       }
@@ -128,30 +200,44 @@ export function useCarAndCompanion(userProfile, {
     const oldCompanionId = activeWorkday.currentCompanionId;
     setActionLoading(true);
     try {
-      await updateWorkdayCompanion(activeWorkday.id, companionId);
-      
+      await updateWorkdayCompanion(companyId, activeWorkday.id, companionId);
+
       if (activeCheckIn?.scheduledServiceId) {
         // Eliminar acompañante viejo
         if (oldCompanionId && oldCompanionId !== companionId) {
           try {
-            await removeCompanionFromService(activeCheckIn.scheduledServiceId, oldCompanionId);
-            
+            await removeCompanionFromService(
+              companyId,
+              activeCheckIn.scheduledServiceId,
+              oldCompanionId,
+            );
+
             const qComp = query(
-              collection(db, 'checkIns'),
-              where('scheduledServiceId', '==', activeCheckIn.scheduledServiceId),
-              where('userId', '==', oldCompanionId),
-              where('checkOutTime', '==', null)
+              tenantCollection(db, companyId, "checkIns"),
+              where(
+                "scheduledServiceId",
+                "==",
+                activeCheckIn.scheduledServiceId,
+              ),
+              where("userId", "==", oldCompanionId),
+              where("checkOutTime", "==", null),
             );
             const compSnap = await getDocs(qComp);
             for (const docSnap of compSnap.docs) {
-              await deleteDoc(docSnap.ref);
+              await deleteCheckIn(docSnap.id);
             }
-          } catch (e) { console.warn("Could not remove old companion check-in", e); }
+          } catch (e) {
+            console.warn("Could not remove old companion check-in", e);
+          }
         }
         // Añadir nuevo acompañante
         if (companionId && companionId !== oldCompanionId) {
-          await addCompanionToService(activeCheckIn.scheduledServiceId, companionId);
-          
+          await addCompanionToService(
+            companyId,
+            activeCheckIn.scheduledServiceId,
+            companionId,
+          );
+
           try {
             await createCheckIn({
               userId: companionId,
@@ -159,14 +245,18 @@ export function useCarAndCompanion(userProfile, {
               scheduledServiceId: activeCheckIn.scheduledServiceId,
               lat: activeCheckIn.checkInLocation?.latitude || 0,
               lng: activeCheckIn.checkInLocation?.longitude || 0,
-              manualTime: activeCheckIn.checkInTime?.toDate ? activeCheckIn.checkInTime.toDate() : new Date(activeCheckIn.checkInTime)
+              manualTime: activeCheckIn.checkInTime?.toDate
+                ? activeCheckIn.checkInTime.toDate()
+                : new Date(activeCheckIn.checkInTime),
+              exceptionReason:
+                "Incorporación de acompañante durante un servicio ya iniciado.",
             });
           } catch (e) {
             console.warn("Could not create check-in for new companion", e);
           }
         }
       }
-      
+
       await loadToday();
       setCompanionSelectorOpen(false);
     } catch (err) {
@@ -181,16 +271,18 @@ export function useCarAndCompanion(userProfile, {
     setActionLoading(true);
     try {
       if (activeWorkday.carActive) {
-        const breadcrumbs = JSON.parse(localStorage.getItem('ryb_car_breadcrumbs') || '[]');
-        await deactivateCar(activeWorkday.id, breadcrumbs);
-        localStorage.removeItem('ryb_car_breadcrumbs');
+        const breadcrumbs = JSON.parse(
+          localStorage.getItem("ryb_car_breadcrumbs") || "[]",
+        );
+        await deactivateCar(companyId, activeWorkday.id, breadcrumbs);
+        localStorage.removeItem("ryb_car_breadcrumbs");
       } else {
-        localStorage.setItem('ryb_car_breadcrumbs', '[]');
-        await activateCar(activeWorkday.id);
+        localStorage.setItem("ryb_car_breadcrumbs", "[]");
+        await activateCar(companyId, activeWorkday.id);
       }
       await loadToday();
     } catch (err) {
-      alert('Error al cambiar modo coche: ' + err.message);
+      alert("Error al cambiar modo coche: " + err.message);
     } finally {
       setActionLoading(false);
     }
@@ -198,18 +290,18 @@ export function useCarAndCompanion(userProfile, {
 
   const handleManualMileage = async () => {
     if (!manualKm || isNaN(manualKm)) {
-      alert('Por favor, ingresa un número válido de kilómetros');
+      alert("Por favor, ingresa un número válido de kilómetros");
       return;
     }
     setActionLoading(true);
     try {
-      const name = userProfile.name || userProfile.displayName || 'Operario';
-      await saveManualMileage(userProfile.uid, name, new Date(), manualKm);
-      alert('Kilometraje guardado correctamente');
+      const name = userProfile.name || userProfile.displayName || "Operario";
+      await saveManualMileage(companyId, userProfile.uid, name, new Date(), manualKm);
+      alert("Kilometraje guardado correctamente");
       setMileageModalOpen(false);
-      setManualKm('');
+      setManualKm("");
     } catch (err) {
-      alert('Error al guardar kilometraje: ' + err.message);
+      alert("Error al guardar kilometraje: " + err.message);
     } finally {
       setActionLoading(false);
     }
@@ -221,12 +313,14 @@ export function useCarAndCompanion(userProfile, {
     try {
       if (companionDrives) {
         // Desactivar mi coche
-        const breadcrumbs = JSON.parse(localStorage.getItem('ryb_car_breadcrumbs') || '[]');
-        await deactivateCar(activeWorkday.id, breadcrumbs);
-        localStorage.removeItem('ryb_car_breadcrumbs');
+        const breadcrumbs = JSON.parse(
+          localStorage.getItem("ryb_car_breadcrumbs") || "[]",
+        );
+        await deactivateCar(companyId, activeWorkday.id, breadcrumbs);
+        localStorage.removeItem("ryb_car_breadcrumbs");
       } else {
         // Desactivar coche del compañero
-        await deactivateCar(companionInfo.workday.id, []);
+        await deactivateCar(companyId, companionInfo.workday.id, []);
       }
       await loadToday();
     } catch (e) {
@@ -239,32 +333,39 @@ export function useCarAndCompanion(userProfile, {
 
   // Obtener info del acompañante en tiempo real
   const companionInfo = useMemo(() => {
-    if (!activeWorkday) return { uid: null, workday: null, carActive: false, name: '' };
-    
+    if (!activeWorkday)
+      return { uid: null, workday: null, carActive: false, name: "" };
+
     let companionUid = activeWorkday.currentCompanionId;
-    
+
     if (!companionUid) {
-      const titularWd = activeWorkdaysList.find(d => d.currentCompanionId === userProfile?.uid && d.userId !== userProfile?.uid);
+      const titularWd = activeWorkdaysList.find(
+        (d) =>
+          d.currentCompanionId === userProfile?.uid &&
+          d.userId !== userProfile?.uid,
+      );
       if (titularWd) {
         companionUid = titularWd.userId;
       }
     }
-    
-    if (!companionUid) return { uid: null, workday: null, carActive: false, name: '' };
-    
-    const compWd = activeWorkdaysList.find(d => d.userId === companionUid);
-    const opInfo = allOperarios.find(o => o.uid === companionUid);
-    const name = opInfo?.name?.split(' ')[0] || 'Compañero';
-    
+
+    if (!companionUid)
+      return { uid: null, workday: null, carActive: false, name: "" };
+
+    const compWd = activeWorkdaysList.find((d) => d.userId === companionUid);
+    const opInfo = allOperarios.find((o) => o.uid === companionUid);
+    const name = opInfo?.name?.split(" ")[0] || "Compañero";
+
     return {
       uid: companionUid,
       workday: compWd || null,
       carActive: compWd?.carActive === true,
-      name: name
+      name: name,
     };
   }, [activeWorkday, activeWorkdaysList, allOperarios, userProfile?.uid]);
 
-  const hasCarConflict = activeWorkday?.carActive === true && companionInfo.carActive === true;
+  const hasCarConflict =
+    activeWorkday?.carActive === true && companionInfo.carActive === true;
 
   return {
     allOperarios,
@@ -279,6 +380,6 @@ export function useCarAndCompanion(userProfile, {
     handleManualMileage,
     handleResolveCarConflict,
     companionInfo,
-    hasCarConflict
+    hasCarConflict,
   };
 }

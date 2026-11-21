@@ -1,0 +1,18 @@
+.rgpd-field {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  max-width: 760px;
+  font-weight: 600;
+}
+
+.rgpd-field .input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  font-weight: 400;
+}
+
+.rgpd-field textarea {
+  resize: vertical;
+}

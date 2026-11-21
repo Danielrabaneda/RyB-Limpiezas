@@ -1,5 +1,18 @@
-import { db } from '../config/firebase';
-import { collection, addDoc, serverTimestamp, query, where, getDocs, writeBatch, Timestamp, doc, updateDoc } from 'firebase/firestore';
+import { db } from "../config/firebase";
+import {
+  collection,
+  addDoc,
+  serverTimestamp,
+  query,
+  where,
+  getDocs,
+  writeBatch,
+  Timestamp,
+  doc,
+  updateDoc,
+} from "firebase/firestore";
+import { tenantCollection, tenantDoc } from "../utils/tenantFirestore";
+
 
 const BATCH_LIMIT = 500;
 
@@ -19,36 +32,68 @@ async function commitInChunks(refs, operation) {
  * Crea una notificación de sistema para un usuario específico.
  * Se utiliza para activar el "punto rojo" (Badge) en la app.
  */
-export const createSystemNotification = async (userId, title, body, type = 'info', serviceId = null, targetUrl = null, triggerEvent = 'immediate') => {
+export const createSystemNotification = async (
+  companyId,
+  userId,
+  title,
+  body,
+  type = "info",
+  serviceId = null,
+  targetUrl = null,
+  triggerEvent = "immediate",
+) => {
+  if (!companyId) {
+    throw new Error("No se puede crear una notificación sin companyId.");
+  }
+  if (!userId) {
+    throw new Error("No se puede crear una notificación sin destinatario.");
+  }
+
   try {
-    await addDoc(collection(db, 'systemNotifications'), {
-      userId,
-      title,
-      body,
-      type,
-      serviceId,
-      targetUrl,
-      triggerEvent,
-      read: false,
-      createdAt: serverTimestamp(),
-    });
-    console.log(`[NotificationService] Alerta creada para ${userId}: ${title} (Trigger: ${triggerEvent})`);
+    const notificationRef = await addDoc(
+      tenantCollection(db, companyId, "systemNotifications"),
+      {
+        userId,
+        title,
+        body,
+        type,
+        serviceId,
+        targetUrl,
+        triggerEvent,
+        read: false,
+        createdAt: serverTimestamp(),
+      },
+    );
+    console.log(
+      `[NotificationService] Alerta creada para ${userId}: ${title} (Trigger: ${triggerEvent})`,
+    );
+    return notificationRef.id;
   } catch (error) {
-    console.error('[NotificationService] Error creando notificación:', error);
+    console.error("[NotificationService] Error creando notificación:", error);
+    throw error;
   }
 };
 
 /**
  * Marca una única notificación específica como leída.
  */
-export const markNotificationAsRead = async (notificationId) => {
-  if (!notificationId) return;
+export const markNotificationAsRead = async (companyId, notificationId) => {
+  if (!companyId) {
+    throw new Error("No se puede marcar una notificación sin companyId.");
+  }
+  if (!notificationId) {
+    throw new Error("No se puede marcar una notificación sin identificador.");
+  }
   try {
-    const ref = doc(db, 'systemNotifications', notificationId);
+    const ref = tenantDoc(db, companyId, "systemNotifications", notificationId);
     await updateDoc(ref, { read: true });
     console.log(`[NotificationService] Marcada como leída: ${notificationId}`);
   } catch (error) {
-    console.error('[NotificationService] Error marcando notificación como leída:', error);
+    console.error(
+      "[NotificationService] Error marcando notificación como leída:",
+      error,
+    );
+    throw error;
   }
 };
 
@@ -56,24 +101,36 @@ export const markNotificationAsRead = async (notificationId) => {
  * Marca todas las notificaciones de un usuario como leídas.
  * Soporta más de 500 notificaciones mediante chunking de batches.
  */
-export const markAllNotificationsAsRead = async (userId) => {
-  if (!userId) return;
+export const markAllNotificationsAsRead = async (companyId, userId) => {
+  if (!companyId) {
+    throw new Error("No se pueden marcar notificaciones sin companyId.");
+  }
+  if (!userId) {
+    throw new Error("No se pueden marcar notificaciones sin usuario.");
+  }
   try {
     const q = query(
-      collection(db, 'systemNotifications'),
-      where('userId', '==', userId),
-      where('read', '==', false)
+      tenantCollection(db, companyId, "systemNotifications"),
+      where("userId", "==", userId),
+      where("read", "==", false),
     );
     const snapshot = await getDocs(q);
-    if (snapshot.empty) return;
+    if (snapshot.empty) return 0;
 
     await commitInChunks(
-      snapshot.docs.map(d => d.ref),
-      (batch, ref) => batch.update(ref, { read: true })
+      snapshot.docs.map((d) => d.ref),
+      (batch, ref) => batch.update(ref, { read: true }),
     );
-    console.log(`[NotificationService] Marcadas como leídas: ${snapshot.size} para ${userId}`);
+    console.log(
+      `[NotificationService] Marcadas como leídas: ${snapshot.size} para ${userId}`,
+    );
+    return snapshot.size;
   } catch (error) {
-    console.error('[NotificationService] Error marcando notificaciones como leídas:', error);
+    console.error(
+      "[NotificationService] Error marcando notificaciones como leídas:",
+      error,
+    );
+    throw error;
   }
 };
 
@@ -83,7 +140,7 @@ export const markAllNotificationsAsRead = async (userId) => {
  * - No leídas con más de 30 días → se eliminan
  * Se ejecuta una vez por sesión de forma silenciosa.
  */
-export const deleteOldNotifications = async (userId) => {
+export const deleteOldNotifications = async (companyId, userId) => {
   if (!userId) return;
   try {
     const now = new Date();
@@ -94,29 +151,37 @@ export const deleteOldNotifications = async (userId) => {
 
     // Notificaciones leídas antiguas (>7 días)
     const readQ = query(
-      collection(db, 'systemNotifications'),
-      where('userId', '==', userId),
-      where('read', '==', true),
-      where('createdAt', '<', Timestamp.fromDate(sevenDaysAgo))
+      tenantCollection(db, companyId, "systemNotifications"),
+      where("userId", "==", userId),
+      where("read", "==", true),
+      where("createdAt", "<", Timestamp.fromDate(sevenDaysAgo)),
     );
 
     // Notificaciones no leídas muy antiguas (>30 días)
     const unreadQ = query(
-      collection(db, 'systemNotifications'),
-      where('userId', '==', userId),
-      where('read', '==', false),
-      where('createdAt', '<', Timestamp.fromDate(thirtyDaysAgo))
+      tenantCollection(db, companyId, "systemNotifications"),
+      where("userId", "==", userId),
+      where("read", "==", false),
+      where("createdAt", "<", Timestamp.fromDate(thirtyDaysAgo)),
     );
 
-    const [readSnap, unreadSnap] = await Promise.all([getDocs(readQ), getDocs(unreadQ)]);
-    const allRefs = [...readSnap.docs, ...unreadSnap.docs].map(d => d.ref);
+    const [readSnap, unreadSnap] = await Promise.all([
+      getDocs(readQ),
+      getDocs(unreadQ),
+    ]);
+    const allRefs = [...readSnap.docs, ...unreadSnap.docs].map((d) => d.ref);
 
     if (allRefs.length === 0) return;
 
     await commitInChunks(allRefs, (batch, ref) => batch.delete(ref));
-    console.log(`[NotificationService] Limpieza: eliminadas ${allRefs.length} notificaciones antiguas para ${userId}`);
+    console.log(
+      `[NotificationService] Limpieza: eliminadas ${allRefs.length} notificaciones antiguas para ${userId}`,
+    );
   } catch (error) {
     // Silencioso: la limpieza es best-effort, no debe interrumpir la UX
-    console.warn('[NotificationService] Error en limpieza de notificaciones antiguas:', error.message);
+    console.warn(
+      "[NotificationService] Error en limpieza de notificaciones antiguas:",
+      error.message,
+    );
   }
 };
