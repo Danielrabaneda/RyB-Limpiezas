@@ -1,0 +1,22 @@
+{
+  "headers": [
+    {
+      "headers": {
+        "Cache-Control": "no-cache, no-store, must-revalidate"
+      },
+      "glob": "**/*.@(html|js|json|css|mjs)"
+    },
+    {
+      "headers": {
+        "Cache-Control": "no-cache, no-store, must-revalidate"
+      },
+      "glob": "**/*sw*.@(js|mjs)"
+    }
+  ],
+  "rewrites": [
+    {
+      "glob": "**",
+      "path": "/index.html"
+    }
+  ]
+}
